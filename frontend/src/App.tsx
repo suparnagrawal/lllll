@@ -19,6 +19,11 @@ export default function App() {
   const [newBuilding, setNewBuilding] = useState("");
   const [rooms, setRooms] = useState<Record<number, Room[]>>({});
   const [newRoom, setNewRoom] = useState<Record<number, string>>({});
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editType, setEditType] = useState<"building" | "room" | null>(null);
+  const [editId, setEditId] = useState<number | null>(null);
+  const [editBuildingId, setEditBuildingId] = useState<number | null>(null);
+  const [editValue, setEditValue] = useState("");
 
   useEffect(() => {
     fetch(`${API}/buildings`)
@@ -96,6 +101,105 @@ export default function App() {
     }));
   };
 
+  const closeEditModal = () => {
+    setIsEditModalOpen(false);
+    setEditType(null);
+    setEditId(null);
+    setEditBuildingId(null);
+    setEditValue("");
+  };
+
+  const openBuildingEditModal = (building: Building) => {
+    setIsEditModalOpen(true);
+    setEditType("building");
+    setEditId(building.id);
+    setEditBuildingId(null);
+    setEditValue(building.name);
+  };
+
+  const openRoomEditModal = (room: Room) => {
+    setIsEditModalOpen(true);
+    setEditType("room");
+    setEditId(room.id);
+    setEditBuildingId(room.buildingId);
+    setEditValue(room.name);
+  };
+
+  const saveEdit = async () => {
+    if (!isEditModalOpen || !editType || editId === null) return;
+
+    const name = editValue.trim();
+    if (!name) return;
+
+    if (editType === "building") {
+      const current = buildings.find((b) => b.id === editId);
+      if (!current) {
+        closeEditModal();
+        return;
+      }
+
+      if (name === current.name) {
+        closeEditModal();
+        return;
+      }
+
+      const res = await fetch(`${API}/buildings/${editId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+
+      const payload = await res.json();
+      if (!res.ok) {
+        console.error(payload);
+        return;
+      }
+
+      const updated: Building = payload.data;
+      setBuildings((prev) =>
+        prev.map((building) =>
+          building.id === editId ? { ...building, ...updated } : building,
+        ),
+      );
+      closeEditModal();
+      return;
+    }
+
+    if (editBuildingId === null) return;
+
+    const current = (rooms[editBuildingId] || []).find((r) => r.id === editId);
+    if (!current) {
+      closeEditModal();
+      return;
+    }
+
+    if (name === current.name) {
+      closeEditModal();
+      return;
+    }
+
+    const res = await fetch(`${API}/rooms/${editId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+
+    const payload = await res.json();
+    if (!res.ok) {
+      console.error(payload);
+      return;
+    }
+
+    const updated: Room = payload.data;
+    setRooms((prev) => ({
+      ...prev,
+      [editBuildingId]: (prev[editBuildingId] || []).map((room) =>
+        room.id === editId ? { ...room, ...updated } : room,
+      ),
+    }));
+    closeEditModal();
+  };
+
   return (
     <div className="flex h-screen">
       <div className="w-64 bg-gray-900 text-white p-4">
@@ -125,18 +229,25 @@ export default function App() {
           {buildings.map((b) => (
             <div key={b.id} className="bg-white p-3 rounded shadow">
               <div className="flex justify-between items-center">
-                <div
-                  className="cursor-pointer font-medium"
-                  onClick={() => toggle(b.id)}
-                >
-                  {b.name}
+                <div className="font-medium">{b.name}</div>
+
+                <div className="flex items-center gap-3">
+                  <button className="text-gray-600" onClick={() => toggle(b.id)}>
+                    {expanded[b.id] ? "Hide" : "Show"}
+                  </button>
+                  <button
+                    className="text-blue-600"
+                    onClick={() => openBuildingEditModal(b)}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    className="text-red-500"
+                    onClick={() => deleteBuilding(b.id)}
+                  >
+                    Delete
+                  </button>
                 </div>
-                <button
-                  className="text-red-500"
-                  onClick={() => deleteBuilding(b.id)}
-                >
-                  Delete
-                </button>
               </div>
 
               {expanded[b.id] && (
@@ -167,13 +278,21 @@ export default function App() {
                         key={r.id}
                         className="flex justify-between bg-gray-100 p-2 rounded"
                       >
-                        {r.name}
-                        <button
-                          className="text-red-400"
-                          onClick={() => deleteRoom(r.id, b.id)}
-                        >
-                          Delete
-                        </button>
+                        <span>{r.name}</span>
+                        <div className="flex items-center gap-3">
+                          <button
+                            className="text-blue-500"
+                            onClick={() => openRoomEditModal(r)}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            className="text-red-400"
+                            onClick={() => deleteRoom(r.id, b.id)}
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </li>
                     ))}
                   </ul>
@@ -183,6 +302,29 @@ export default function App() {
           ))}
         </div>
       </div>
+
+      {isEditModalOpen && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
+          <div className="bg-white rounded p-4 w-80">
+            <h3 className="text-lg font-semibold mb-3">
+              {editType === "building" ? "Edit Building" : "Edit Room"}
+            </h3>
+            <input
+              className="border p-2 rounded w-full mb-3"
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+            />
+            <div className="flex justify-end gap-2">
+              <button className="px-3 py-1 border rounded" onClick={closeEditModal}>
+                Cancel
+              </button>
+              <button className="px-3 py-1 bg-black text-white rounded" onClick={() => void saveEdit()}>
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
