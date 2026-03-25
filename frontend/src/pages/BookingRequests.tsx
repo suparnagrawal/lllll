@@ -2,16 +2,26 @@ import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import {
   approveBookingRequest,
+  cancelBookingRequest,
   createBookingRequest,
+  forwardBookingRequest,
+  getAuthUser,
   getBookingRequests,
   getRooms,
   rejectBookingRequest,
 } from "../api/api";
-import type { BookingRequest, BookingStatus, Room } from "../api/api";
+import type { BookingRequest, BookingStatus, Room, UserRole } from "../api/api";
 
 type StatusFilter = "ALL" | BookingStatus;
 
-const STATUS_OPTIONS: StatusFilter[] = ["ALL", "PENDING", "APPROVED", "REJECTED", "CANCELLED"];
+const STATUS_OPTIONS: StatusFilter[] = [
+  "ALL",
+  "PENDING_FACULTY",
+  "PENDING_STAFF",
+  "APPROVED",
+  "REJECTED",
+  "CANCELLED",
+];
 
 export function BookingRequestsPage() {
   const [requests, setRequests] = useState<BookingRequest[]>([]);
@@ -27,6 +37,8 @@ export function BookingRequestsPage() {
   const [purpose, setPurpose] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [actingId, setActingId] = useState<number | null>(null);
+  const authUser = getAuthUser();
+  const currentRole: UserRole | null = authUser?.role ?? null;
 
   const roomNameById = new Map(rooms.map((room) => [room.id, room.name]));
 
@@ -140,6 +152,36 @@ export function BookingRequestsPage() {
     }
   };
 
+  const handleForward = async (id: number) => {
+    setActingId(id);
+    setError(null);
+
+    try {
+      await forwardBookingRequest(id);
+      await loadRequests(statusFilter);
+    } catch (requestError) {
+      const message = requestError instanceof Error ? requestError.message : "Forward failed";
+      setError(message);
+    } finally {
+      setActingId(null);
+    }
+  };
+
+  const handleCancel = async (id: number) => {
+    setActingId(id);
+    setError(null);
+
+    try {
+      await cancelBookingRequest(id);
+      await loadRequests(statusFilter);
+    } catch (requestError) {
+      const message = requestError instanceof Error ? requestError.message : "Cancel failed";
+      setError(message);
+    } finally {
+      setActingId(null);
+    }
+  };
+
   return (
     <section>
       <h2>Booking Requests</h2>
@@ -219,8 +261,18 @@ export function BookingRequestsPage() {
       {!loading && requests.length > 0 ? (
         <ul className="list panel">
           {requests.map((request) => {
-            const isPending = request.status === "PENDING";
+            const isPendingFaculty = request.status === "PENDING_FACULTY";
+            const isPendingStaff = request.status === "PENDING_STAFF";
+            const isPending = isPendingFaculty || isPendingStaff;
+            const isOwnRequest = authUser ? request.userId === authUser.id : false;
             const isActing = actingId === request.id;
+
+            const canApprove = currentRole === "STAFF" && isPendingStaff;
+            const canForward = currentRole === "FACULTY" && isPendingFaculty;
+            const canReject =
+              (currentRole === "FACULTY" && isPendingFaculty) ||
+              (currentRole === "STAFF" && isPendingStaff);
+            const canCancel = (currentRole === "ADMIN" || isOwnRequest) && isPending;
 
             return (
               <li key={request.id}>
@@ -234,17 +286,34 @@ export function BookingRequestsPage() {
 
                 <button
                   type="button"
-                  disabled={!isPending || isActing}
+                  disabled={!canForward || isActing}
+                  onClick={() => void handleForward(request.id)}
+                >
+                  {isActing ? "Working..." : "Forward"}
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!canApprove || isActing}
                   onClick={() => void handleApprove(request.id)}
                 >
                   {isActing ? "Working..." : "Approve"}
                 </button>
+
                 <button
                   type="button"
-                  disabled={!isPending || isActing}
+                  disabled={!canReject || isActing}
                   onClick={() => void handleReject(request.id)}
                 >
                   {isActing ? "Working..." : "Reject"}
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!canCancel || isActing}
+                  onClick={() => void handleCancel(request.id)}
+                >
+                  {isActing ? "Working..." : "Cancel"}
                 </button>
               </li>
             );

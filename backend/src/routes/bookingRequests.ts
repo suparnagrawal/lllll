@@ -1,17 +1,56 @@
 import { Router } from "express";
 import { db } from "../db";
-import { eq,lt,gt,and } from "drizzle-orm";
+import { eq, lt, gt, and, or } from "drizzle-orm";
 import { bookings, bookingRequests } from "../db/schema";
 import { authMiddleware } from "../middleware/auth";
+import { requireRole } from "../middleware/rbac";
 
 const router = Router();
+
+const ALL_STATUSES = [
+  "PENDING_FACULTY",
+  "PENDING_STAFF",
+  "APPROVED",
+  "REJECTED",
+  "CANCELLED",
+] as const;
+
+type BookingRequestStatus = (typeof ALL_STATUSES)[number];
+
+function isBookingRequestStatus(value: unknown): value is BookingRequestStatus {
+  return typeof value === "string" && (ALL_STATUSES as readonly string[]).includes(value);
+}
+
+function canViewRequest(
+  role: "ADMIN" | "STAFF" | "FACULTY" | "STUDENT",
+  userId: number,
+  request: { userId: number | null; status: BookingRequestStatus }
+) {
+  if (role === "ADMIN") {
+    return true;
+  }
+
+  if (role === "STUDENT") {
+    return request.userId === userId;
+  }
+
+  if (role === "FACULTY") {
+    return request.userId === userId || request.status === "PENDING_FACULTY";
+  }
+
+  if (role === "STAFF") {
+    return request.status === "PENDING_STAFF";
+  }
+
+  return false;
+}
 
 // GET /booking-requests/:id
 // Fetch a single booking request by ID
 // Returns: booking request object
 // Errors: 400 (invalid id), 404 (not found)
 
-router.get("/:id", async (req, res) => {
+router.get("/:id", authMiddleware, async (req, res) => {
   const id = Number(req.params.id);
 
   if (isNaN(id)) {
@@ -30,6 +69,10 @@ router.get("/:id", async (req, res) => {
       return res.status(404).json({ error: "Request not found" });
     }
 
+    if (!canViewRequest(req.user!.role, req.user!.id, bookingRequest)) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
     return res.json(bookingRequest);
   } catch (error) {
     console.error(error);
@@ -42,22 +85,44 @@ router.get("/:id", async (req, res) => {
 // Optional query param: ?status=PENDING | APPROVED | REJECTED | CANCELLED
 // Returns: array of booking requests
 
-router.get("/", async (req, res) => {
+router.get("/", authMiddleware, async (req, res) => {
   const { status } = req.query;
 
-  try {
-    let query;
+  if (status !== undefined && !isBookingRequestStatus(status)) {
+    return res.status(400).json({ error: "Invalid status" });
+  }
 
-    if (status && typeof status === "string") {
-      query = db
-        .select()
-        .from(bookingRequests)
-        .where(eq(bookingRequests.status, status as any));
+  try {
+    const role = req.user!.role;
+    const userId = req.user!.id;
+
+    let visibilityCondition;
+
+    if (role === "ADMIN") {
+      visibilityCondition = undefined;
+    } else if (role === "STUDENT") {
+      visibilityCondition = eq(bookingRequests.userId, userId);
+    } else if (role === "FACULTY") {
+      visibilityCondition = or(
+        eq(bookingRequests.userId, userId),
+        eq(bookingRequests.status, "PENDING_FACULTY")
+      );
     } else {
-      query = db.select().from(bookingRequests);
+      visibilityCondition = eq(bookingRequests.status, "PENDING_STAFF");
     }
 
-    const requests = await query;
+    const statusCondition = status
+      ? eq(bookingRequests.status, status)
+      : undefined;
+
+    const whereClause =
+      visibilityCondition && statusCondition
+        ? and(visibilityCondition, statusCondition)
+        : visibilityCondition ?? statusCondition;
+
+    const requests = whereClause
+      ? await db.select().from(bookingRequests).where(whereClause)
+      : await db.select().from(bookingRequests);
 
     return res.json(requests);
   } catch (error) {
@@ -66,7 +131,7 @@ router.get("/", async (req, res) => {
   }
 });
 
-router.post("/:id/reject", authMiddleware, async (req, res) => {
+router.post("/:id/reject", authMiddleware, requireRole(["FACULTY", "STAFF"]), async (req, res) => {
   const id = Number(req.params.id);
 
   if (isNaN(id)) {
@@ -97,12 +162,6 @@ router.post("/:id/reject", authMiddleware, async (req, res) => {
       });
     }
 
-    if (role !== "FACULTY" && role !== "STAFF") {
-      return res.status(403).json({
-        error: "Only faculty or staff can reject requests",
-      });
-    }
-
     const updated = await db
       .update(bookingRequests)
       .set({ status: "REJECTED" })
@@ -117,7 +176,7 @@ router.post("/:id/reject", authMiddleware, async (req, res) => {
   }
 });
 
-router.post("/:id/approve", authMiddleware, async (req, res) => {
+router.post("/:id/approve", authMiddleware, requireRole("STAFF"), async (req, res) => {
   const id = Number(req.params.id);
 
   if (isNaN(id)) {
@@ -125,11 +184,6 @@ router.post("/:id/approve", authMiddleware, async (req, res) => {
   }
 
   try {
-    // Only staff can approve
-    if (req.user!.role !== "STAFF") {
-      return res.status(403).json({ error: "Only staff can approve requests" });
-    }
-
     const booking = await db.transaction(async (tx) => {
       const rows = await tx
         .select()
@@ -186,7 +240,7 @@ router.post("/:id/approve", authMiddleware, async (req, res) => {
   }
 });
 
-router.post("/:id/forward", authMiddleware, async (req, res) => {
+router.post("/:id/forward", authMiddleware, requireRole("FACULTY"), async (req, res) => {
   const id = Number(req.params.id);
 
   if (isNaN(id)) {
@@ -194,11 +248,6 @@ router.post("/:id/forward", authMiddleware, async (req, res) => {
   }
 
   try {
-    // Only faculty can forward
-    if (req.user!.role !== "FACULTY") {
-      return res.status(403).json({ error: "Only faculty can forward requests" });
-    }
-
     // Fetch request
     const rows = await db
       .select()
@@ -245,6 +294,7 @@ router.post("/:id/cancel",authMiddleware, async (req, res) => {
     const existingRows = await db
       .select({
         id: bookingRequests.id,
+        userId: bookingRequests.userId,
         status: bookingRequests.status,
       })
       .from(bookingRequests)
@@ -255,6 +305,12 @@ router.post("/:id/cancel",authMiddleware, async (req, res) => {
 
     if (!existing) {
       return res.status(404).json({ error: "Request not found" });
+    }
+
+    if (req.user!.role !== "ADMIN") {
+      if (existing.userId !== req.user!.id) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
     }
 
     if (
@@ -280,7 +336,7 @@ router.post("/:id/cancel",authMiddleware, async (req, res) => {
   }
 });
 
-router.post("/",authMiddleware, async (req, res) => {
+router.post("/", authMiddleware, requireRole(["STUDENT", "FACULTY"]), async (req, res) => {
   try {
     const roomId = Number(req.body?.roomId);
     const startAt = req.body?.startAt;
@@ -349,8 +405,12 @@ router.post("/",authMiddleware, async (req, res) => {
       .from(bookingRequests)
       .where(
         and(
+          eq(bookingRequests.userId, req.user!.id),
           eq(bookingRequests.roomId, roomId),
-          eq(bookingRequests.status, "PENDING_FACULTY"),
+          or(
+            eq(bookingRequests.status, "PENDING_FACULTY"),
+            eq(bookingRequests.status, "PENDING_STAFF")
+          ),
           lt(bookingRequests.startAt, end),
           gt(bookingRequests.endAt, start)
         )
@@ -366,10 +426,12 @@ router.post("/",authMiddleware, async (req, res) => {
     const result = await db
       .insert(bookingRequests)
       .values({
+        userId: req.user!.id,
         roomId,
         startAt: start,
         endAt: end,
         purpose,
+        status: req.user!.role === "STUDENT" ? "PENDING_FACULTY" : "PENDING_STAFF",
       })
       .returning();
 

@@ -58,6 +58,10 @@ export const bookingStatusEnum = pgEnum("booking_status", [
 export const bookingRequests = pgTable("booking_requests", {
   id: serial("id").primaryKey(),
 
+  userId: integer("user_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
+
   roomId: integer("room_id")
     .notNull()
     .references(() => rooms.id, { onDelete: "cascade" }),

@@ -1,4 +1,14 @@
 const API_BASE_URL = "http://localhost:5000";
+const AUTH_TOKEN_KEY = "authToken";
+const AUTH_USER_KEY = "authUser";
+
+export type UserRole = "ADMIN" | "STAFF" | "FACULTY" | "STUDENT";
+
+export type AuthUser = {
+  id: number;
+  name: string;
+  role: UserRole;
+};
 
 export type Building = {
   id: number;
@@ -11,10 +21,16 @@ export type Room = {
   buildingId: number;
 };
 
-export type BookingStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
+export type BookingStatus =
+  | "PENDING_FACULTY"
+  | "PENDING_STAFF"
+  | "APPROVED"
+  | "REJECTED"
+  | "CANCELLED";
 
 export type BookingRequest = {
   id: number;
+  userId: number | null;
   roomId: number;
   startAt: string;
   endAt: string;
@@ -32,10 +48,53 @@ type ApiErrorPayload = {
   message?: string;
 };
 
+type LoginResponse = {
+  token: string;
+  user: AuthUser;
+};
+
+export function getAuthToken(): string | null {
+  return localStorage.getItem(AUTH_TOKEN_KEY);
+}
+
+export function clearAuth(): void {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  localStorage.removeItem(AUTH_USER_KEY);
+}
+
+export function getAuthUser(): AuthUser | null {
+  const raw = localStorage.getItem(AUTH_USER_KEY);
+
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(raw) as AuthUser;
+  } catch {
+    return null;
+  }
+}
+
+export async function login(email: string, password: string): Promise<AuthUser> {
+  const response = await request<LoginResponse>("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+
+  localStorage.setItem(AUTH_TOKEN_KEY, response.token);
+  localStorage.setItem(AUTH_USER_KEY, JSON.stringify(response.user));
+
+  return response.user;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getAuthToken();
+
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: {
       "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(init?.headers ?? {}),
     },
     ...init,
@@ -137,8 +196,20 @@ export async function approveBookingRequest(id: number): Promise<void> {
   });
 }
 
+export async function forwardBookingRequest(id: number): Promise<void> {
+  await request<unknown>(`/booking-requests/${id}/forward`, {
+    method: "POST",
+  });
+}
+
 export async function rejectBookingRequest(id: number): Promise<void> {
   await request<unknown>(`/booking-requests/${id}/reject`, {
+    method: "POST",
+  });
+}
+
+export async function cancelBookingRequest(id: number): Promise<void> {
+  await request<unknown>(`/booking-requests/${id}/cancel`, {
     method: "POST",
   });
 }

@@ -2,10 +2,12 @@ import { Router } from "express";
 import { db } from "../db";
 import { bookings, rooms } from "../db/schema";
 import { eq, and, lt, gt } from "drizzle-orm";
+import { authMiddleware } from "../middleware/auth";
+import { requireRole } from "../middleware/rbac";
 
 const router = Router();
 
-router.get("/:id", async (req, res) => {
+router.get("/:id", authMiddleware, async (req, res) => {
   try {
     const id = Number(req.params.id);
 
@@ -33,7 +35,7 @@ router.get("/:id", async (req, res) => {
 // GET /bookings
 // Optional query: ?roomId=1
 // -------------------------------------
-router.get("/", async (req, res) => {
+router.get("/", authMiddleware, async (req, res) => {
   try {
     const { startAt, endAt, roomId, buildingId } = req.query;
 
@@ -135,9 +137,9 @@ router.get("/", async (req, res) => {
 // POST /bookings
 // Body: { roomId, startAt, endAt }
 // -------------------------------------
-router.post("/", async (req, res) => {
+router.post("/", authMiddleware, requireRole(["ADMIN", "STAFF"]), async (req, res) => {
   try {
-    const { roomId, startAt, endAt } = req.body;
+    const { roomId, startAt, endAt } = req.body ?? {};
 
     // ------------------------
     // Validation
@@ -227,7 +229,7 @@ router.post("/", async (req, res) => {
 // -------------------------------------
 // DELETE /bookings/:id
 // -------------------------------------
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", authMiddleware, requireRole(["ADMIN", "STAFF"]), async (req, res) => {
   try {
     const id = Number(req.params.id);
 
