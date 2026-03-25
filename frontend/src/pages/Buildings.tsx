@@ -7,8 +7,12 @@ import {
   updateBuilding,
 } from "../api/api";
 import type { Building } from "../api/api";
+import { useAuth } from "../auth/AuthContext";
 
 export function BuildingsPage() {
+  const { user } = useAuth();
+  const canMutate = user?.role === "ADMIN" || user?.role === "STAFF";
+
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -24,16 +28,10 @@ export function BuildingsPage() {
   const loadBuildings = async () => {
     setLoading(true);
     setError(null);
-
     try {
-      const result = await getBuildings();
-      setBuildings(result);
-    } catch (requestError) {
-      const message =
-        requestError instanceof Error
-          ? requestError.message
-          : "Failed to load buildings";
-      setError(message);
+      setBuildings(await getBuildings());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load buildings");
     } finally {
       setLoading(false);
     }
@@ -45,52 +43,35 @@ export function BuildingsPage() {
 
   const handleCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-
-    const trimmedName = newName.trim();
-    if (!trimmedName) {
-      setError("Name is required");
-      return;
-    }
+    const trimmed = newName.trim();
+    if (!trimmed) { setError("Name is required"); return; }
 
     setIsSubmitting(true);
     setError(null);
-
     try {
-      await createBuilding(trimmedName);
+      await createBuilding(trimmed);
       setNewName("");
       await loadBuildings();
-    } catch (requestError) {
-      const message =
-        requestError instanceof Error
-          ? requestError.message
-          : "Failed to create building";
-      setError(message);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to create building");
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const handleUpdate = async (id: number) => {
-    const trimmedName = editingName.trim();
-    if (!trimmedName) {
-      setError("Name is required");
-      return;
-    }
+    const trimmed = editingName.trim();
+    if (!trimmed) { setError("Name is required"); return; }
 
     setIsUpdating(true);
     setError(null);
-
     try {
-      await updateBuilding(id, trimmedName);
+      await updateBuilding(id, trimmed);
       setEditingId(null);
       setEditingName("");
       await loadBuildings();
-    } catch (requestError) {
-      const message =
-        requestError instanceof Error
-          ? requestError.message
-          : "Failed to update building";
-      setError(message);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to update building");
     } finally {
       setIsUpdating(false);
     }
@@ -99,16 +80,11 @@ export function BuildingsPage() {
   const handleDelete = async (id: number) => {
     setDeletingId(id);
     setError(null);
-
     try {
       await deleteBuilding(id);
       await loadBuildings();
-    } catch (requestError) {
-      const message =
-        requestError instanceof Error
-          ? requestError.message
-          : "Failed to delete building";
-      setError(message);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to delete building");
     } finally {
       setDeletingId(null);
     }
@@ -116,91 +92,109 @@ export function BuildingsPage() {
 
   return (
     <section>
-      <h2>Buildings</h2>
+      <div className="page-header">
+        <h2>Buildings</h2>
+        <p>Manage campus buildings and facilities</p>
+      </div>
 
-      <form className="panel" onSubmit={handleCreate}>
-        <h3>Add Building</h3>
-        <label htmlFor="newBuildingName">Name</label>
-        <input
-          id="newBuildingName"
-          type="text"
-          value={newName}
-          onChange={(event) => setNewName(event.target.value)}
-          placeholder="Enter building name"
-          disabled={isSubmitting}
-        />
-        <button type="submit" disabled={isSubmitting}>
-          {isSubmitting ? "Adding..." : "Add Building"}
-        </button>
-      </form>
+      {canMutate && (
+        <form className="card section-gap" onSubmit={handleCreate}>
+          <div className="card-header">
+            <h3>Add Building</h3>
+          </div>
+          <div className="form-row">
+            <div className="form-field">
+              <label htmlFor="newBuildingName">Building name</label>
+              <input
+                id="newBuildingName"
+                className="input"
+                type="text"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="e.g. Science Block A"
+                disabled={isSubmitting}
+              />
+            </div>
+          </div>
+          <div>
+            <button type="submit" className="btn btn-primary" disabled={isSubmitting}>
+              {isSubmitting ? "Adding…" : "Add Building"}
+            </button>
+          </div>
+        </form>
+      )}
 
-      {error ? <p className="error">Error: {error}</p> : null}
-      {loading ? <p>Loading buildings...</p> : null}
+      {error && <div className="alert alert-error">{error}</div>}
+      {loading && <p className="loading-text">Loading buildings…</p>}
+      {!loading && buildings.length === 0 && <p className="empty-text">No buildings found.</p>}
 
-      {!loading && buildings.length === 0 ? <p>No buildings found.</p> : null}
-
-      {!loading && buildings.length > 0 ? (
-        <ul className="list panel">
-          {buildings.map((building) => {
-            const isEditing = editingId === building.id;
-            const isDeleting = deletingId === building.id;
+      {!loading && buildings.length > 0 && (
+        <div className="data-list">
+          {buildings.map((b) => {
+            const isEditing = editingId === b.id;
+            const isDeleting = deletingId === b.id;
 
             return (
-              <li key={building.id}>
+              <div className="data-item" key={b.id}>
                 {isEditing ? (
-                  <>
+                  <div className="inline-edit">
                     <input
+                      className="input"
                       type="text"
                       value={editingName}
-                      onChange={(event) => setEditingName(event.target.value)}
+                      onChange={(e) => setEditingName(e.target.value)}
                       disabled={isUpdating}
+                      autoFocus
                     />
                     <button
                       type="button"
+                      className="btn btn-primary btn-sm"
                       disabled={isUpdating}
-                      onClick={() => void handleUpdate(building.id)}
+                      onClick={() => void handleUpdate(b.id)}
                     >
-                      {isUpdating ? "Saving..." : "Save"}
+                      {isUpdating ? "Saving…" : "Save"}
                     </button>
                     <button
                       type="button"
+                      className="btn btn-ghost btn-sm"
                       disabled={isUpdating}
-                      onClick={() => {
-                        setEditingId(null);
-                        setEditingName("");
-                      }}
+                      onClick={() => { setEditingId(null); setEditingName(""); }}
                     >
                       Cancel
                     </button>
-                  </>
+                  </div>
                 ) : (
                   <>
-                    <span>
-                      #{building.id} - {building.name}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingId(building.id);
-                        setEditingName(building.name);
-                      }}
-                    >
-                      Rename
-                    </button>
-                    <button
-                      type="button"
-                      disabled={isDeleting}
-                      onClick={() => void handleDelete(building.id)}
-                    >
-                      {isDeleting ? "Deleting..." : "Delete"}
-                    </button>
+                    <div className="data-item-content">
+                      <div className="data-item-title">{b.name}</div>
+                      <div className="data-item-subtitle">ID: {b.id}</div>
+                    </div>
+                    {canMutate && (
+                      <div className="data-item-actions">
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => { setEditingId(b.id); setEditingName(b.name); }}
+                        >
+                          Rename
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-danger btn-sm"
+                          disabled={isDeleting}
+                          onClick={() => void handleDelete(b.id)}
+                        >
+                          {isDeleting ? "Deleting…" : "Delete"}
+                        </button>
+                      </div>
+                    )}
                   </>
                 )}
-              </li>
+              </div>
             );
           })}
-        </ul>
-      ) : null}
+        </div>
+      )}
     </section>
   );
 }

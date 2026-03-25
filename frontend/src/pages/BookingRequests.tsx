@@ -5,12 +5,12 @@ import {
   cancelBookingRequest,
   createBookingRequest,
   forwardBookingRequest,
-  getAuthUser,
   getBookingRequests,
   getRooms,
   rejectBookingRequest,
 } from "../api/api";
-import type { BookingRequest, BookingStatus, Room, UserRole } from "../api/api";
+import type { BookingRequest, BookingStatus, Room } from "../api/api";
+import { useAuth } from "../auth/AuthContext";
 
 type StatusFilter = "ALL" | BookingStatus;
 
@@ -23,7 +23,37 @@ const STATUS_OPTIONS: StatusFilter[] = [
   "CANCELLED",
 ];
 
+const STATUS_LABELS: Record<BookingStatus, string> = {
+  PENDING_FACULTY: "Pending Faculty",
+  PENDING_STAFF: "Pending Staff",
+  APPROVED: "Approved",
+  REJECTED: "Rejected",
+  CANCELLED: "Cancelled",
+};
+
+function statusBadgeClass(status: BookingStatus): string {
+  const map: Record<BookingStatus, string> = {
+    PENDING_FACULTY: "badge-pending-faculty",
+    PENDING_STAFF: "badge-pending-staff",
+    APPROVED: "badge-approved",
+    REJECTED: "badge-rejected",
+    CANCELLED: "badge-cancelled",
+  };
+  return `badge ${map[status]}`;
+}
+
+function formatDatetime(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
 export function BookingRequestsPage() {
+  const { user } = useAuth();
+  const currentRole = user?.role ?? null;
+  const canCreate = currentRole === "STUDENT" || currentRole === "FACULTY";
+
   const [requests, setRequests] = useState<BookingRequest[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
@@ -31,43 +61,30 @@ export function BookingRequestsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [roomId, setRoomId] = useState<number | "">("");
+  const [roomId, setRoomId] = useState<number | "">(""); 
   const [startAt, setStartAt] = useState("");
   const [endAt, setEndAt] = useState("");
   const [purpose, setPurpose] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [actingId, setActingId] = useState<number | null>(null);
-  const authUser = getAuthUser();
-  const currentRole: UserRole | null = authUser?.role ?? null;
 
-  const roomNameById = new Map(rooms.map((room) => [room.id, room.name]));
+  const roomNameById = new Map(rooms.map((r) => [r.id, r.name]));
 
   const loadRequests = async (filter: StatusFilter) => {
     setLoading(true);
     setError(null);
-
     try {
-      const result = await getBookingRequests(filter === "ALL" ? undefined : filter);
-      setRequests(result);
-    } catch (requestError) {
-      const message =
-        requestError instanceof Error
-          ? requestError.message
-          : "Failed to load booking requests";
-      setError(message);
+      setRequests(await getBookingRequests(filter === "ALL" ? undefined : filter));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load booking requests");
     } finally {
       setLoading(false);
     }
   };
 
   const loadRooms = async () => {
-    try {
-      const result = await getRooms();
-      setRooms(result);
-    } catch (requestError) {
-      const message = requestError instanceof Error ? requestError.message : "Failed to load rooms";
-      setError(message);
-    }
+    try { setRooms(await getRooms()); }
+    catch (e) { setError(e instanceof Error ? e.message : "Failed to load rooms"); }
   };
 
   useEffect(() => {
@@ -77,33 +94,20 @@ export function BookingRequestsPage() {
     })();
   }, []);
 
-  const handleFilterChange = async (value: StatusFilter) => {
+  const handleFilterChange = (value: StatusFilter) => {
     setStatusFilter(value);
-    await loadRequests(value);
+    void loadRequests(value);
   };
 
   const handleCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-
-    if (roomId === "") {
-      setError("Room is required");
-      return;
-    }
-
-    if (!startAt || !endAt) {
-      setError("startAt and endAt are required");
-      return;
-    }
-
+    if (roomId === "") { setError("Room is required"); return; }
+    if (!startAt || !endAt) { setError("Start and end times are required"); return; }
     const trimmedPurpose = purpose.trim();
-    if (!trimmedPurpose) {
-      setError("Purpose is required");
-      return;
-    }
+    if (!trimmedPurpose) { setError("Purpose is required"); return; }
 
     setIsSubmitting(true);
     setError(null);
-
     try {
       await createBookingRequest({ roomId, startAt, endAt, purpose: trimmedPurpose });
       setRoomId("");
@@ -111,72 +115,21 @@ export function BookingRequestsPage() {
       setEndAt("");
       setPurpose("");
       await loadRequests(statusFilter);
-    } catch (requestError) {
-      const message =
-        requestError instanceof Error
-          ? requestError.message
-          : "Failed to create booking request";
-      setError(message);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to create request");
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleApprove = async (id: number) => {
+  const runAction = async (id: number, action: () => Promise<void>) => {
     setActingId(id);
     setError(null);
-
     try {
-      await approveBookingRequest(id);
+      await action();
       await loadRequests(statusFilter);
-    } catch (requestError) {
-      const message = requestError instanceof Error ? requestError.message : "Approval failed";
-      setError(message);
-    } finally {
-      setActingId(null);
-    }
-  };
-
-  const handleReject = async (id: number) => {
-    setActingId(id);
-    setError(null);
-
-    try {
-      await rejectBookingRequest(id);
-      await loadRequests(statusFilter);
-    } catch (requestError) {
-      const message = requestError instanceof Error ? requestError.message : "Reject failed";
-      setError(message);
-    } finally {
-      setActingId(null);
-    }
-  };
-
-  const handleForward = async (id: number) => {
-    setActingId(id);
-    setError(null);
-
-    try {
-      await forwardBookingRequest(id);
-      await loadRequests(statusFilter);
-    } catch (requestError) {
-      const message = requestError instanceof Error ? requestError.message : "Forward failed";
-      setError(message);
-    } finally {
-      setActingId(null);
-    }
-  };
-
-  const handleCancel = async (id: number) => {
-    setActingId(id);
-    setError(null);
-
-    try {
-      await cancelBookingRequest(id);
-      await loadRequests(statusFilter);
-    } catch (requestError) {
-      const message = requestError instanceof Error ? requestError.message : "Cancel failed";
-      setError(message);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Action failed");
     } finally {
       setActingId(null);
     }
@@ -184,142 +137,184 @@ export function BookingRequestsPage() {
 
   return (
     <section>
-      <h2>Booking Requests</h2>
-
-      <div className="panel">
-        <h3>Filter Requests</h3>
-        <label htmlFor="requestStatusFilter">Status</label>
-        <select
-          id="requestStatusFilter"
-          value={statusFilter}
-          onChange={(event) => void handleFilterChange(event.target.value as StatusFilter)}
-        >
-          {STATUS_OPTIONS.map((status) => (
-            <option key={status} value={status}>
-              {status}
-            </option>
-          ))}
-        </select>
+      <div className="page-header">
+        <h2>Booking Requests</h2>
+        <p>Submit and manage room booking requests</p>
       </div>
 
-      <form className="panel" onSubmit={handleCreate}>
-        <h3>Create Booking Request</h3>
+      {/* Filter chips */}
+      <div className="filter-bar">
+        {STATUS_OPTIONS.map((s) => (
+          <button
+            key={s}
+            type="button"
+            className={`filter-chip ${statusFilter === s ? "active" : ""}`}
+            onClick={() => handleFilterChange(s)}
+          >
+            {s === "ALL" ? "All" : STATUS_LABELS[s]}
+          </button>
+        ))}
+      </div>
 
-        <label htmlFor="newRequestRoomId">Room</label>
-        <select
-          id="newRequestRoomId"
-          value={roomId}
-          onChange={(event) => setRoomId(event.target.value === "" ? "" : Number(event.target.value))}
-          disabled={isSubmitting}
-        >
-          <option value="">Select a room</option>
-          {rooms.map((room) => (
-            <option key={room.id} value={room.id}>
-              #{room.id} - {room.name}
-            </option>
-          ))}
-        </select>
+      {/* Create form */}
+      {canCreate && (
+        <form className="card section-gap" onSubmit={handleCreate}>
+          <div className="card-header">
+            <h3>New Request</h3>
+          </div>
+          <div className="form-row">
+            <div className="form-field">
+              <label htmlFor="newRequestRoomId">Room</label>
+              <select
+                id="newRequestRoomId"
+                className="input"
+                value={roomId}
+                onChange={(e) => setRoomId(e.target.value === "" ? "" : Number(e.target.value))}
+                disabled={isSubmitting}
+              >
+                <option value="">Select a room</option>
+                {rooms.map((r) => (
+                  <option key={r.id} value={r.id}>{r.name} (#{r.id})</option>
+                ))}
+              </select>
+            </div>
+            <div className="form-field">
+              <label htmlFor="newRequestStartAt">Start</label>
+              <input
+                id="newRequestStartAt"
+                className="input"
+                type="datetime-local"
+                value={startAt}
+                onChange={(e) => setStartAt(e.target.value)}
+                disabled={isSubmitting}
+              />
+            </div>
+            <div className="form-field">
+              <label htmlFor="newRequestEndAt">End</label>
+              <input
+                id="newRequestEndAt"
+                className="input"
+                type="datetime-local"
+                value={endAt}
+                onChange={(e) => setEndAt(e.target.value)}
+                disabled={isSubmitting}
+              />
+            </div>
+          </div>
+          <div className="form-row">
+            <div className="form-field">
+              <label htmlFor="newRequestPurpose">Purpose</label>
+              <input
+                id="newRequestPurpose"
+                className="input"
+                type="text"
+                value={purpose}
+                onChange={(e) => setPurpose(e.target.value)}
+                placeholder="Why do you need this room?"
+                disabled={isSubmitting}
+              />
+            </div>
+          </div>
+          <div>
+            <button type="submit" className="btn btn-primary" disabled={isSubmitting}>
+              {isSubmitting ? "Submitting…" : "Submit Request"}
+            </button>
+          </div>
+        </form>
+      )}
 
-        <label htmlFor="newRequestStartAt">startAt</label>
-        <input
-          id="newRequestStartAt"
-          type="datetime-local"
-          value={startAt}
-          onChange={(event) => setStartAt(event.target.value)}
-          disabled={isSubmitting}
-        />
+      {error && <div className="alert alert-error">{error}</div>}
+      {loading && <p className="loading-text">Loading requests…</p>}
+      {!loading && requests.length === 0 && <p className="empty-text">No booking requests found.</p>}
 
-        <label htmlFor="newRequestEndAt">endAt</label>
-        <input
-          id="newRequestEndAt"
-          type="datetime-local"
-          value={endAt}
-          onChange={(event) => setEndAt(event.target.value)}
-          disabled={isSubmitting}
-        />
-
-        <label htmlFor="newRequestPurpose">Purpose</label>
-        <input
-          id="newRequestPurpose"
-          type="text"
-          value={purpose}
-          onChange={(event) => setPurpose(event.target.value)}
-          placeholder="Why do you need this room?"
-          disabled={isSubmitting}
-        />
-
-        <button type="submit" disabled={isSubmitting}>
-          {isSubmitting ? "Submitting..." : "Submit Request"}
-        </button>
-      </form>
-
-      {error ? <p className="error">Error: {error}</p> : null}
-      {loading ? <p>Loading booking requests...</p> : null}
-
-      {!loading && requests.length === 0 ? <p>No booking requests found.</p> : null}
-
-      {!loading && requests.length > 0 ? (
-        <ul className="list panel">
-          {requests.map((request) => {
-            const isPendingFaculty = request.status === "PENDING_FACULTY";
-            const isPendingStaff = request.status === "PENDING_STAFF";
+      {!loading && requests.length > 0 && (
+        <div className="data-list">
+          {requests.map((req) => {
+            const isPendingFaculty = req.status === "PENDING_FACULTY";
+            const isPendingStaff = req.status === "PENDING_STAFF";
             const isPending = isPendingFaculty || isPendingStaff;
-            const isOwnRequest = authUser ? request.userId === authUser.id : false;
-            const isActing = actingId === request.id;
+            const isOwnRequest = user ? req.userId === user.id : false;
+            const isActing = actingId === req.id;
 
-            const canApprove = currentRole === "STAFF" && isPendingStaff;
             const canForward = currentRole === "FACULTY" && isPendingFaculty;
+            const canApprove = currentRole === "STAFF" && isPendingStaff;
             const canReject =
               (currentRole === "FACULTY" && isPendingFaculty) ||
               (currentRole === "STAFF" && isPendingStaff);
             const canCancel = (currentRole === "ADMIN" || isOwnRequest) && isPending;
 
+            const hasActions = canForward || canApprove || canReject || canCancel;
+
             return (
-              <li key={request.id}>
-                <span>
-                  #{request.id} | roomId: {request.roomId}
-                  {roomNameById.get(request.roomId) ? ` (${roomNameById.get(request.roomId)})` : ""}
-                  {" | "}startAt: {new Date(request.startAt).toLocaleString()}
-                  {" | "}endAt: {new Date(request.endAt).toLocaleString()}
-                  {" | "}status: {request.status}
-                </span>
+              <div className="request-card" key={req.id}>
+                <div className="request-card-header">
+                  <span className="data-item-title">Request #{req.id}</span>
+                  <span className={statusBadgeClass(req.status)}>
+                    {STATUS_LABELS[req.status]}
+                  </span>
+                </div>
 
-                <button
-                  type="button"
-                  disabled={!canForward || isActing}
-                  onClick={() => void handleForward(request.id)}
-                >
-                  {isActing ? "Working..." : "Forward"}
-                </button>
+                <div className="request-card-meta">
+                  <span><strong>Room:</strong> {roomNameById.get(req.roomId) ?? `#${req.roomId}`}</span>
+                  <span><strong>From:</strong> {formatDatetime(req.startAt)}</span>
+                  <span><strong>To:</strong> {formatDatetime(req.endAt)}</span>
+                </div>
 
-                <button
-                  type="button"
-                  disabled={!canApprove || isActing}
-                  onClick={() => void handleApprove(request.id)}
-                >
-                  {isActing ? "Working..." : "Approve"}
-                </button>
+                {req.purpose && (
+                  <div className="request-card-purpose">
+                    💬 {req.purpose}
+                  </div>
+                )}
 
-                <button
-                  type="button"
-                  disabled={!canReject || isActing}
-                  onClick={() => void handleReject(request.id)}
-                >
-                  {isActing ? "Working..." : "Reject"}
-                </button>
-
-                <button
-                  type="button"
-                  disabled={!canCancel || isActing}
-                  onClick={() => void handleCancel(request.id)}
-                >
-                  {isActing ? "Working..." : "Cancel"}
-                </button>
-              </li>
+                {hasActions && (
+                  <div className="request-card-actions">
+                    {canForward && (
+                      <button
+                        type="button"
+                        className="btn btn-warning btn-sm"
+                        disabled={isActing}
+                        onClick={() => void runAction(req.id, () => forwardBookingRequest(req.id))}
+                      >
+                        {isActing ? "Working…" : "Forward to Staff"}
+                      </button>
+                    )}
+                    {canApprove && (
+                      <button
+                        type="button"
+                        className="btn btn-success btn-sm"
+                        disabled={isActing}
+                        onClick={() => void runAction(req.id, () => approveBookingRequest(req.id))}
+                      >
+                        {isActing ? "Working…" : "Approve"}
+                      </button>
+                    )}
+                    {canReject && (
+                      <button
+                        type="button"
+                        className="btn btn-danger btn-sm"
+                        disabled={isActing}
+                        onClick={() => void runAction(req.id, () => rejectBookingRequest(req.id))}
+                      >
+                        {isActing ? "Working…" : "Reject"}
+                      </button>
+                    )}
+                    {canCancel && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        disabled={isActing}
+                        onClick={() => void runAction(req.id, () => cancelBookingRequest(req.id))}
+                      >
+                        {isActing ? "Working…" : "Cancel"}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
             );
           })}
-        </ul>
-      ) : null}
+        </div>
+      )}
     </section>
   );
 }
