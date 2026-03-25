@@ -35,24 +35,93 @@ router.get("/:id", async (req, res) => {
 // -------------------------------------
 router.get("/", async (req, res) => {
   try {
-    const roomId = req.query.roomId;
+    const { startAt, endAt, roomId, buildingId } = req.query;
 
-    if (roomId !== undefined) {
-      const parsedRoomId = Number(roomId);
+    const parsedStartAt = startAt ? new Date(startAt as string) : null;
+    const parsedEndAt = endAt ? new Date(endAt as string) : null;
 
-      if (isNaN(parsedRoomId)) {
-        return res.status(400).json({ error: "Invalid roomId" });
-      }
+    const parsedRoomId = roomId ? Number(roomId) : null;
+    const parsedBuildingId = buildingId ? Number(buildingId) : null;
 
-      const result = await db
-        .select()
-        .from(bookings)
-        .where(eq(bookings.roomId, parsedRoomId));
-
-      return res.json(result);
+    // ------------------------
+    // Validation
+    // ------------------------
+    if ((parsedStartAt && !parsedEndAt) || (!parsedStartAt && parsedEndAt)) {
+      return res.status(400).json({
+        error: "Both startAt and endAt must be provided together",
+      });
     }
 
-    const result = await db.select().from(bookings);
+    if (parsedStartAt && parsedEndAt) {
+      if (isNaN(parsedStartAt.getTime()) || isNaN(parsedEndAt.getTime())) {
+        return res.status(400).json({
+          error: "Invalid date format",
+        });
+      }
+
+      if (parsedStartAt >= parsedEndAt) {
+        return res.status(400).json({
+          error: "startAt must be less than endAt",
+        });
+      }
+    }
+
+    if (parsedRoomId !== null && isNaN(parsedRoomId)) {
+      return res.status(400).json({ error: "Invalid roomId" });
+    }
+
+    if (parsedBuildingId !== null && isNaN(parsedBuildingId)) {
+      return res.status(400).json({ error: "Invalid buildingId" });
+    }
+
+    // ------------------------
+    // Build conditions
+    // ------------------------
+    const conditions = [];
+
+    if (parsedRoomId !== null) {
+      conditions.push(eq(bookings.roomId, parsedRoomId));
+    }
+
+    if (parsedStartAt && parsedEndAt) {
+      conditions.push(
+        and(
+          lt(bookings.startAt, parsedEndAt),
+          gt(bookings.endAt, parsedStartAt)
+        )
+      );
+    }
+
+    if (parsedBuildingId !== null) {
+      conditions.push(eq(rooms.buildingId, parsedBuildingId));
+    }
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    // ------------------------
+    // Execute query (type-safe branches)
+    // ------------------------
+    let result;
+
+    if (parsedBuildingId !== null) {
+      const query = db
+        .select()
+        .from(bookings)
+        .innerJoin(rooms, eq(bookings.roomId, rooms.id));
+
+      result = whereClause ? await query.where(whereClause) : await query;
+    } else {
+      const query = db.select().from(bookings);
+
+      result = whereClause ? await query.where(whereClause) : await query;
+    }
+
+    if (parsedBuildingId !== null) {
+      // result is joined → extract bookings
+      const normalized = result.map((row: any) => row.bookings);
+      return res.json(normalized);
+    }
+
     return res.json(result);
 
   } catch (err) {

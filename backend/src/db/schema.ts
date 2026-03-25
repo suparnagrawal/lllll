@@ -70,3 +70,32 @@ export const bookingRequests = pgTable("booking_requests", {
 
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+// ------------------------
+// User Role Enum
+// ------------------------
+export const userRoleEnum = pgEnum("user_role", [
+  "ADMIN",
+  "STAFF",
+  "FACULTY",
+  "STUDENT",
+]);
+
+// ------------------------
+// Users Table
+// ------------------------
+export const users = pgTable("users", {
+  id: serial("id").primaryKey(),
+
+  name: text("name").notNull(),
+
+  email: text("email").notNull().unique(),
+
+  passwordHash: text("password_hash").notNull(),
+
+  role: userRoleEnum("role").notNull(),
+
+  createdAt: timestamp("created_at", { withTimezone: false })
+    .defaultNow()
+    .notNull(),
+});
