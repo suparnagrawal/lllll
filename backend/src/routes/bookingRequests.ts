@@ -2,6 +2,7 @@ import { Router } from "express";
 import { db } from "../db";
 import { eq,lt,gt,and } from "drizzle-orm";
 import { bookings, bookingRequests } from "../db/schema";
+import { authMiddleware } from "../middleware/auth";
 
 const router = Router();
 
@@ -65,7 +66,7 @@ router.get("/", async (req, res) => {
   }
 });
 
-router.post("/:id/reject", async (req, res) => {
+router.post("/:id/reject", authMiddleware, async (req, res) => {
   const id = Number(req.params.id);
 
   if (isNaN(id)) {
@@ -78,75 +79,83 @@ router.post("/:id/reject", async (req, res) => {
       .from(bookingRequests)
       .where(eq(bookingRequests.id, id));
 
-    const [bookingRequest] = rows;
+    const request = rows[0];
 
-    if (!bookingRequest) {
+    if (!request) {
       return res.status(404).json({ error: "Request not found" });
     }
 
-    if (bookingRequest.status !== "PENDING") {
-      return res.status(400).json({ error: "Request is not pending" });
+    const role = req.user!.role;
+
+    // Role-based validation
+    if (
+      (role === "FACULTY" && request.status !== "PENDING_FACULTY") ||
+      (role === "STAFF" && request.status !== "PENDING_STAFF")
+    ) {
+      return res.status(400).json({
+        error: "Invalid status for rejection",
+      });
     }
 
-    // 🔒 Future RBAC hook
-    // if (!canReject(user, bookingRequest)) return res.status(403)
+    if (role !== "FACULTY" && role !== "STAFF") {
+      return res.status(403).json({
+        error: "Only faculty or staff can reject requests",
+      });
+    }
 
-    await db
+    const updated = await db
       .update(bookingRequests)
       .set({ status: "REJECTED" })
-      .where(eq(bookingRequests.id, id));
+      .where(eq(bookingRequests.id, id))
+      .returning();
 
-    return res.json({ message: "Request rejected" });
+    return res.json(updated[0]);
+
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: "Reject failed" });
   }
 });
 
-router.post("/:id/approve", async (req, res) => {
+router.post("/:id/approve", authMiddleware, async (req, res) => {
   const id = Number(req.params.id);
 
-  // Validate ID
   if (isNaN(id)) {
     return res.status(400).json({ error: "Invalid id" });
   }
 
   try {
+    // Only staff can approve
+    if (req.user!.role !== "STAFF") {
+      return res.status(403).json({ error: "Only staff can approve requests" });
+    }
+
     const booking = await db.transaction(async (tx) => {
-      // 1. Fetch request
       const rows = await tx
         .select()
         .from(bookingRequests)
         .where(eq(bookingRequests.id, id));
 
-      const [bookingRequest] = rows;
+      const request = rows[0];
 
-      if (!bookingRequest) {
+      if (!request) {
         throw { type: "NOT_FOUND" };
       }
 
-      // 2. Validate status
-      if (bookingRequest.status !== "PENDING") {
+      if (request.status !== "PENDING_STAFF") {
         throw { type: "INVALID_STATUS" };
       }
 
-      // 🔒 Future RBAC hook
-      // if (!canApprove(user, bookingRequest)) {
-      //   throw { type: "FORBIDDEN" };
-      // }
-
-      // 3. Create booking (DB enforces overlap via constraint)
       const inserted = await tx
         .insert(bookings)
         .values({
-          roomId: bookingRequest.roomId,
-          startAt: bookingRequest.startAt,
-          endAt: bookingRequest.endAt,
-          requestId: bookingRequest.id,
+          roomId: request.roomId,
+          startAt: request.startAt,
+          endAt: request.endAt,
+          requestId: request.id,
         })
         .returning();
 
-      // 4. Update request status
       await tx
         .update(bookingRequests)
         .set({ status: "APPROVED" })
@@ -155,17 +164,17 @@ router.post("/:id/approve", async (req, res) => {
       return inserted[0];
     });
 
-    return res.status(200).json(booking);
+    return res.json(booking);
+
   } catch (error: any) {
     if (error?.type === "NOT_FOUND") {
       return res.status(404).json({ error: "Request not found" });
     }
 
     if (error?.type === "INVALID_STATUS") {
-      return res.status(400).json({ error: "Request is not pending" });
+      return res.status(400).json({ error: "Request is not pending staff approval" });
     }
 
-    // Overlap constraint violation (PostgreSQL EXCLUDE)
     if (error?.cause?.code === "23P01") {
       return res.status(409).json({
         error: "Room already booked for this time range",
@@ -177,7 +186,53 @@ router.post("/:id/approve", async (req, res) => {
   }
 });
 
-router.post("/:id/cancel", async (req, res) => {
+router.post("/:id/forward", authMiddleware, async (req, res) => {
+  const id = Number(req.params.id);
+
+  if (isNaN(id)) {
+    return res.status(400).json({ error: "Invalid id" });
+  }
+
+  try {
+    // Only faculty can forward
+    if (req.user!.role !== "FACULTY") {
+      return res.status(403).json({ error: "Only faculty can forward requests" });
+    }
+
+    // Fetch request
+    const rows = await db
+      .select()
+      .from(bookingRequests)
+      .where(eq(bookingRequests.id, id));
+
+    const request = rows[0];
+
+    if (!request) {
+      return res.status(404).json({ error: "Request not found" });
+    }
+
+    if (request.status !== "PENDING_FACULTY") {
+      return res.status(400).json({
+        error: "Only PENDING_FACULTY requests can be forwarded",
+      });
+    }
+
+    // Update status
+    const updated = await db
+      .update(bookingRequests)
+      .set({ status: "PENDING_STAFF" })
+      .where(eq(bookingRequests.id, id))
+      .returning();
+
+    return res.json(updated[0]);
+
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: "Forward failed" });
+  }
+});
+
+router.post("/:id/cancel",authMiddleware, async (req, res) => {
   const id = Number(req.params.id);
 
   // Validate id
@@ -202,9 +257,12 @@ router.post("/:id/cancel", async (req, res) => {
       return res.status(404).json({ error: "Request not found" });
     }
 
-    if (existing.status !== "PENDING") {
+    if (
+      existing.status !== "PENDING_FACULTY" &&
+      existing.status !== "PENDING_STAFF"
+    ) {
       return res.status(400).json({
-        error: "Only PENDING requests can be cancelled",
+        error: "Only pending requests can be cancelled",
       });
     }
 
@@ -222,7 +280,7 @@ router.post("/:id/cancel", async (req, res) => {
   }
 });
 
-router.post("/", async (req, res) => {
+router.post("/",authMiddleware, async (req, res) => {
   try {
     const roomId = Number(req.body?.roomId);
     const startAt = req.body?.startAt;
@@ -292,7 +350,7 @@ router.post("/", async (req, res) => {
       .where(
         and(
           eq(bookingRequests.roomId, roomId),
-          eq(bookingRequests.status, "PENDING"),
+          eq(bookingRequests.status, "PENDING_FACULTY"),
           lt(bookingRequests.startAt, end),
           gt(bookingRequests.endAt, start)
         )

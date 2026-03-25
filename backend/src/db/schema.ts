@@ -48,7 +48,8 @@ export const bookings = pgTable("bookings", {
 });
 
 export const bookingStatusEnum = pgEnum("booking_status", [
-  "PENDING",
+  "PENDING_FACULTY",
+  "PENDING_STAFF",
   "APPROVED",
   "REJECTED",
   "CANCELLED",
@@ -66,7 +67,7 @@ export const bookingRequests = pgTable("booking_requests", {
 
   purpose: text("purpose").notNull(),
 
-  status: bookingStatusEnum("status").notNull().default("PENDING"),
+  status: bookingStatusEnum("status").notNull().default("PENDING_FACULTY"),
 
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
