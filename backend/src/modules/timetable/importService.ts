@@ -268,6 +268,22 @@ export type DeleteImportBatchInput = {
   batchId: number;
 };
 
+export type TransferImportRowInput = {
+  sourceBatchId: number;
+  rowId: number;
+  targetSlotSystemId: number;
+  createdBy?: number;
+};
+
+export type TransferImportRowReport = {
+  sourceBatchId: number;
+  sourceRowId: number;
+  targetSlotSystemId: number;
+  targetBatchId: number;
+  targetProcessedRows: number;
+  targetBatchStatus: ImportBatchStatus;
+};
+
 type ServiceError = Error & { status: number };
 
 const TIMETABLE_IMPORT_PARSER_VERSION = "2026-04-02-classroom-space-v3";
@@ -326,6 +342,56 @@ function toDecisionSnapshot(row: {
 
 function hashValue(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function toDateOnlyString(value: Date): string {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function escapeCsvValue(value: string): string {
+  const sanitized = value.replace(/"/g, '""');
+
+  if (/[",\n]/.test(value)) {
+    return `"${sanitized}"`;
+  }
+
+  return sanitized;
+}
+
+type TransferCsvRow = {
+  courseCode: string;
+  slot: string;
+  classroom: string;
+};
+
+function toTransferCsvRow(input: {
+  rawCourseCode: string | null;
+  rawSlot: string | null;
+  rawClassroom: string | null;
+}): TransferCsvRow {
+  return {
+    courseCode: normalizeSpace(input.rawCourseCode ?? ""),
+    slot: normalizeSpace(input.rawSlot ?? ""),
+    classroom: normalizeSpace(input.rawClassroom ?? ""),
+  };
+}
+
+function toTransferCsvRowKey(row: TransferCsvRow): string {
+  return `${normalizeKey(row.courseCode)}|${normalizeKey(row.slot)}|${normalizeKey(row.classroom)}`;
+}
+
+function buildTransferCsvBuffer(rows: TransferCsvRow[]): Buffer {
+  const header = "Course Code,Slot,Classroom";
+  const lines = rows.map((row) =>
+    [row.courseCode, row.slot, row.classroom]
+      .map((value) => escapeCsvValue(value))
+      .join(","),
+  );
+
+  return Buffer.from(`${header}\n${lines.join("\n")}\n`, "utf8");
 }
 
 function parseDateOnlyInput(value: string, fieldName: string): Date {
@@ -2312,6 +2378,178 @@ export async function deleteTimetableImportBatch(
     batchId,
     status: "DELETED",
     deletedBookings: bookingIds.length,
+  };
+}
+
+export async function transferTimetableImportRow(
+  input: TransferImportRowInput,
+): Promise<TransferImportRowReport> {
+  const sourceBatchId = Number(input.sourceBatchId);
+  const sourceRowId = Number(input.rowId);
+  const targetSlotSystemId = Number(input.targetSlotSystemId);
+
+  if (!Number.isInteger(sourceBatchId) || sourceBatchId <= 0) {
+    throw createServiceError(400, "Invalid sourceBatchId");
+  }
+
+  if (!Number.isInteger(sourceRowId) || sourceRowId <= 0) {
+    throw createServiceError(400, "Invalid rowId");
+  }
+
+  if (!Number.isInteger(targetSlotSystemId) || targetSlotSystemId <= 0) {
+    throw createServiceError(400, "Invalid targetSlotSystemId");
+  }
+
+  const [sourceBatch] = await db
+    .select({
+      id: timetableImportBatches.id,
+      slotSystemId: timetableImportBatches.slotSystemId,
+      termStartDate: timetableImportBatches.termStartDate,
+      termEndDate: timetableImportBatches.termEndDate,
+      aliasMap: timetableImportBatches.aliasMap,
+    })
+    .from(timetableImportBatches)
+    .where(eq(timetableImportBatches.id, sourceBatchId))
+    .limit(1);
+
+  if (!sourceBatch) {
+    throw createServiceError(404, "Source import batch not found");
+  }
+
+  if (sourceBatch.slotSystemId === targetSlotSystemId) {
+    throw createServiceError(400, "Target slot system must differ from source slot system");
+  }
+
+  const [sourceRow] = await db
+    .select({
+      id: timetableImportRows.id,
+      rawCourseCode: timetableImportRows.rawCourseCode,
+      rawSlot: timetableImportRows.rawSlot,
+      rawClassroom: timetableImportRows.rawClassroom,
+    })
+    .from(timetableImportRows)
+    .where(
+      and(
+        eq(timetableImportRows.batchId, sourceBatchId),
+        eq(timetableImportRows.id, sourceRowId),
+      ),
+    )
+    .limit(1);
+
+  if (!sourceRow) {
+    throw createServiceError(404, "Row not found in source import batch");
+  }
+
+  const transferSourceRow = toTransferCsvRow(sourceRow);
+
+  if (!transferSourceRow.courseCode || !transferSourceRow.slot || !transferSourceRow.classroom) {
+    throw createServiceError(
+      400,
+      "Transferred row must include Course Code, Slot, and Classroom",
+    );
+  }
+
+  const [targetLinkedBatch] = await db
+    .select({
+      id: timetableImportBatches.id,
+      termStartDate: timetableImportBatches.termStartDate,
+      termEndDate: timetableImportBatches.termEndDate,
+      aliasMap: timetableImportBatches.aliasMap,
+    })
+    .from(timetableImportBatches)
+    .where(eq(timetableImportBatches.slotSystemId, targetSlotSystemId))
+    .orderBy(desc(timetableImportBatches.createdAt), desc(timetableImportBatches.id))
+    .limit(1);
+
+  const targetLinkedRows =
+    targetLinkedBatch === undefined
+      ? []
+      : await db
+          .select({
+            rawCourseCode: timetableImportRows.rawCourseCode,
+            rawSlot: timetableImportRows.rawSlot,
+            rawClassroom: timetableImportRows.rawClassroom,
+          })
+          .from(timetableImportRows)
+          .where(eq(timetableImportRows.batchId, targetLinkedBatch.id))
+          .orderBy(asc(timetableImportRows.rowIndex));
+
+  const mergedRows: TransferCsvRow[] = [];
+  const seenKeys = new Set<string>();
+
+  for (const existingRow of targetLinkedRows) {
+    const nextRow = toTransferCsvRow(existingRow);
+
+    if (!nextRow.courseCode || !nextRow.slot || !nextRow.classroom) {
+      continue;
+    }
+
+    const key = toTransferCsvRowKey(nextRow);
+
+    if (seenKeys.has(key)) {
+      continue;
+    }
+
+    seenKeys.add(key);
+    mergedRows.push(nextRow);
+  }
+
+  const sourceKey = toTransferCsvRowKey(transferSourceRow);
+
+  if (!seenKeys.has(sourceKey)) {
+    seenKeys.add(sourceKey);
+    mergedRows.push(transferSourceRow);
+  }
+
+  if (mergedRows.length === 0) {
+    throw createServiceError(400, "No transferable rows available for target slot system");
+  }
+
+  const selectedAliasMapRaw =
+    targetLinkedBatch?.aliasMap ?? sourceBatch.aliasMap ?? {};
+  const parsedAliasMap = parseAliasMap(selectedAliasMapRaw);
+  const aliasMap: Record<string, string> = {};
+
+  for (const [key, value] of parsedAliasMap.entries()) {
+    aliasMap[key] = value;
+  }
+
+  const previewInput: PreviewImportInput = {
+    slotSystemId: targetSlotSystemId,
+    termStartDate: toDateOnlyString(
+      targetLinkedBatch?.termStartDate ?? sourceBatch.termStartDate,
+    ),
+    termEndDate: toDateOnlyString(
+      targetLinkedBatch?.termEndDate ?? sourceBatch.termEndDate,
+    ),
+    aliasMap,
+    fileName: `transfer-row-${sourceBatchId}-${sourceRowId}.csv`,
+    fileBuffer: buildTransferCsvBuffer(mergedRows),
+  };
+
+  if (input.createdBy !== undefined) {
+    previewInput.createdBy = input.createdBy;
+  }
+
+  const targetReport = await previewTimetableImport(previewInput);
+
+  await saveTimetableImportDecisions({
+    batchId: sourceBatchId,
+    decisions: [
+      {
+        rowId: sourceRowId,
+        action: "SKIP",
+      },
+    ],
+  });
+
+  return {
+    sourceBatchId,
+    sourceRowId,
+    targetSlotSystemId,
+    targetBatchId: targetReport.batchId,
+    targetProcessedRows: targetReport.processedRows,
+    targetBatchStatus: targetReport.status,
   };
 }
 

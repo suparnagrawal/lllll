@@ -27,6 +27,7 @@ import {
   getTimetableImportProcessedRows as apiGetTimetableImportProcessedRows,
   previewTimetableImport as apiPreviewTimetableImport,
   saveTimetableImportDecisions as apiSaveTimetableImportDecisions,
+  transferTimetableImportRow as apiTransferTimetableImportRow,
   updateBooking as apiUpdateBooking,
   updateTimeBand as apiUpdateTimeBand,
 } from "../api/api";
@@ -151,7 +152,10 @@ function applySavedDecisionToRow(
 ): RowDecisionState {
   const next = createDecisionForPreviewRow(row);
 
-  next.action = savedDecision.action;
+  next.action =
+    savedDecision.action === "AUTO" && row.classification !== "VALID_AND_AUTOMATABLE"
+      ? "SKIP"
+      : savedDecision.action;
 
   if (savedDecision.resolvedSlotLabel) {
     next.resolvedSlotLabel = savedDecision.resolvedSlotLabel;
@@ -254,23 +258,6 @@ function toApiDecisionAction(
 
 function toRowActionLabel(action: "AUTO" | "RESOLVE" | "SKIP"): string {
   return action;
-}
-
-function escapeCsvValue(value: string): string {
-  const sanitized = value.replace(/"/g, '""');
-  if (/[",\n]/.test(value)) {
-    return `"${sanitized}"`;
-  }
-  return sanitized;
-}
-
-function buildSingleRowCsv(row: TimetableImportPreviewRow): string {
-  const header = "Course Code,Slot,Classroom";
-  const line = [row.courseCode, row.slot, row.classroom]
-    .map((value) => escapeCsvValue(value ?? ""))
-    .join(",");
-
-  return `${header}\n${line}\n`;
 }
 
 function toDateInputValue(value: string): string {
@@ -546,6 +533,12 @@ export function TimetableBuilderPage() {
     }
     return slotSystems.find((system) => system.id === selectedSystemId) ?? null;
   }, [selectedSystemId, slotSystems]);
+
+  const previewRowById = useMemo(() => {
+    return new Map<number, TimetableImportPreviewRow>(
+      (previewReport?.rows ?? []).map((row) => [row.rowId, row]),
+    );
+  }, [previewReport]);
 
   const loadSlotSystems = async () => {
     setLoadingSystems(true);
@@ -1432,9 +1425,15 @@ export function TimetableBuilderPage() {
       return null;
     }
 
-    const mappedAction = toApiDecisionAction(decision.action);
+    const previewRow = previewRowById.get(rowId);
+    const normalizedAction: RowDecisionAction =
+      decision.action === "AUTO" && previewRow?.classification !== "VALID_AND_AUTOMATABLE"
+        ? "SKIP"
+        : decision.action;
 
-    if (decision.action !== "RESOLVE") {
+    const mappedAction = toApiDecisionAction(normalizedAction);
+
+    if (normalizedAction !== "RESOLVE") {
       return {
         rowId,
         action: mappedAction,
@@ -1554,21 +1553,12 @@ export function TimetableBuilderPage() {
     const targetSlotSystemId = rowMoveTargetById[row.rowId] ?? "";
 
     if (targetSlotSystemId === "" || !Number.isInteger(targetSlotSystemId)) {
-      setImportError("Select a target slot system before moving the row");
+      setImportError("Select a target slot system before transferring the row");
       return;
     }
 
     if (targetSlotSystemId === previewReport.slotSystemId) {
-      setImportError("Choose a different slot system for row move");
-      return;
-    }
-
-    const courseCode = row.courseCode.trim();
-    const slot = row.slot.trim();
-    const classroom = row.classroom.trim();
-
-    if (!courseCode || !slot || !classroom) {
-      setImportError("Row must include course code, slot, and classroom to move");
+      setImportError("Choose a different slot system for transfer");
       return;
     }
 
@@ -1587,31 +1577,11 @@ export function TimetableBuilderPage() {
     setImportInfo(null);
 
     try {
-      const sourceDecision = rowDecisions[row.rowId] ?? createDecisionForPreviewRow(row);
-      const ignoreDecision: RowDecisionState = {
-        ...sourceDecision,
-        action: "IGNORE",
-      };
-
-      const sourcePayload = buildRowDecisionPayload(row.rowId, ignoreDecision);
-
-      if (sourcePayload) {
-        await apiSaveTimetableImportDecisions(sourceBatchId, [sourcePayload]);
-      }
-
-      const csvFile = new File(
-        [buildSingleRowCsv({ ...row, courseCode, slot, classroom })],
-        `moved-row-${row.rowId}.csv`,
-        { type: "text/csv" },
+      const transferReport = await apiTransferTimetableImportRow(
+        sourceBatchId,
+        row.rowId,
+        targetSlotSystemId,
       );
-
-      const targetReport = await apiPreviewTimetableImport({
-        slotSystemId: targetSlotSystemId,
-        termStartDate: importTermStart || toDateOnlyInputValue(previewReport.termStartDate),
-        termEndDate: importTermEnd || toDateOnlyInputValue(previewReport.termEndDate),
-        file: csvFile,
-        aliasMap: parseAliasMap(aliasMapText),
-      });
 
       const refreshedSourceReport = await apiGetTimetableImportBatch(sourceBatchId);
       hydratePreviewFromBatch(refreshedSourceReport);
@@ -1620,10 +1590,10 @@ export function TimetableBuilderPage() {
       await loadImportBatches(sourceSlotSystemId);
 
       setImportInfo(
-        `Moved row ${row.rowIndex} to slot system ${targetSlotSystem.name} as batch #${targetReport.batchId}. Source row is now Ignore.`,
+        `Transferred row ${row.rowIndex} to ${targetSlotSystem.name}. Linked batch #${transferReport.targetBatchId} now has ${transferReport.targetProcessedRows} row(s). Source row is marked Skip (Ignore semantics).`,
       );
     } catch (e) {
-      setImportError(e instanceof Error ? e.message : "Failed to move row to another slot system");
+      setImportError(e instanceof Error ? e.message : "Failed to transfer row to another slot system");
     } finally {
       setMovingRowId(null);
       updateRowMoveTarget(row.rowId, "");
@@ -2126,6 +2096,7 @@ export function TimetableBuilderPage() {
             <div className="data-list">
               {previewReport.rows.map((row) => {
                 const decision = rowDecisions[row.rowId] ?? createDecisionForPreviewRow(row);
+                const isAutoAllowed = row.classification === "VALID_AND_AUTOMATABLE";
                 const moveTargetSlotSystems = slotSystems.filter(
                   (system) => system.id !== previewReport.slotSystemId,
                 );
@@ -2182,8 +2153,8 @@ export function TimetableBuilderPage() {
                             }
                             disabled={isDecisionEditingLocked}
                           >
-                            {(row.classification === "VALID_AND_AUTOMATABLE" || decision.action === "AUTO") && (
-                              <option value="AUTO">Auto</option>
+                            {isAutoAllowed && (
+                              <option value="AUTO">Auto (if valid)</option>
                             )}
                             <option value="IGNORE">Ignore</option>
                             <option value="SKIP">Skip</option>
@@ -2201,45 +2172,48 @@ export function TimetableBuilderPage() {
                           )}
                         </div>
 
-                        {moveTargetSlotSystems.length > 0 && (
-                          <>
-                            <div className="form-field">
-                              <label>Move To Slot System</label>
-                              <select
-                                className="input"
-                                value={selectedMoveTargetSlotSystemId}
-                                onChange={(e) =>
-                                  updateRowMoveTarget(
-                                    row.rowId,
-                                    e.target.value === "" ? "" : Number(e.target.value),
-                                  )
-                                }
-                                disabled={isDecisionEditingLocked}
-                              >
-                                <option value="">Select slot system</option>
-                                {moveTargetSlotSystems.map((system) => (
-                                  <option key={system.id} value={system.id}>
-                                    {system.name}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                            <div className="form-field">
-                              <label>Move Row</label>
-                              <button
-                                type="button"
-                                className="btn btn-ghost btn-sm"
-                                onClick={() => void handleMoveRowToAnotherSlotSystem(row)}
-                                disabled={
-                                  isDecisionEditingLocked ||
-                                  selectedMoveTargetSlotSystemId === ""
-                                }
-                              >
-                                {movingRowId === row.rowId ? "Moving..." : "Move Row"}
-                              </button>
-                            </div>
-                          </>
-                        )}
+                        <>
+                          <div className="form-field">
+                            <label>Transfer To Slot System</label>
+                            <select
+                              className="input"
+                              value={selectedMoveTargetSlotSystemId}
+                              onChange={(e) =>
+                                updateRowMoveTarget(
+                                  row.rowId,
+                                  e.target.value === "" ? "" : Number(e.target.value),
+                                )
+                              }
+                              disabled={isDecisionEditingLocked || moveTargetSlotSystems.length === 0}
+                            >
+                              <option value="">
+                                {moveTargetSlotSystems.length > 0
+                                  ? "Select slot system"
+                                  : "No other slot systems"}
+                              </option>
+                              {moveTargetSlotSystems.map((system) => (
+                                <option key={system.id} value={system.id}>
+                                  {system.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="form-field">
+                            <label>Transfer</label>
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => void handleMoveRowToAnotherSlotSystem(row)}
+                              disabled={
+                                isDecisionEditingLocked ||
+                                moveTargetSlotSystems.length === 0 ||
+                                selectedMoveTargetSlotSystemId === ""
+                              }
+                            >
+                              {movingRowId === row.rowId ? "Transferring..." : "Transfer Row"}
+                            </button>
+                          </div>
+                        </>
 
                         {decision.action === "RESOLVE" && (
                           <>

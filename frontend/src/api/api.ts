@@ -192,6 +192,15 @@ export type TimetableImportBatchDeleteReport = {
   deletedBookings: number;
 };
 
+export type TimetableImportTransferRowReport = {
+  sourceBatchId: number;
+  sourceRowId: number;
+  targetSlotSystemId: number;
+  targetBatchId: number;
+  targetProcessedRows: number;
+  targetBatchStatus: "PREVIEWED" | "COMMITTED";
+};
+
 export type TimetableImportCreateSlotDecision = {
   dayId: number;
   startBandId: number;
@@ -794,6 +803,20 @@ export async function saveTimetableImportDecisions(
     method: "PUT",
     body: JSON.stringify({ decisions }),
   });
+}
+
+export async function transferTimetableImportRow(
+  batchId: number,
+  rowId: number,
+  targetSlotSystemId: number,
+): Promise<TimetableImportTransferRowReport> {
+  return request<TimetableImportTransferRowReport>(
+    `/timetable/imports/${batchId}/rows/${rowId}/transfer`,
+    {
+      method: "POST",
+      body: JSON.stringify({ targetSlotSystemId }),
+    },
+  );
 }
 
 export async function previewTimetableImport(input: {
