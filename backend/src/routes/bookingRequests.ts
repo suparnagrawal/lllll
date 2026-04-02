@@ -1,9 +1,10 @@
 import { Router } from "express";
 import { db } from "../db";
 import { eq, lt, gt, and, or } from "drizzle-orm";
-import { bookings, bookingRequests } from "../db/schema";
+import { bookingRequests } from "../db/schema";
 import { authMiddleware } from "../middleware/auth";
 import { requireRole } from "../middleware/rbac";
+import { createBooking, hasBookingOverlap } from "../services/bookingService";
 
 const router = Router();
 
@@ -200,22 +201,37 @@ router.post("/:id/approve", authMiddleware, requireRole("STAFF"), async (req, re
         throw { type: "INVALID_STATUS" };
       }
 
-      const inserted = await tx
-        .insert(bookings)
-        .values({
+      const inserted = await createBooking(
+        {
           roomId: request.roomId,
           startAt: request.startAt,
           endAt: request.endAt,
           requestId: request.id,
-        })
-        .returning();
+        },
+        tx,
+      );
+
+      if (!inserted.ok) {
+        if (inserted.code === "ROOM_OVERLAP") {
+          throw { type: "ROOM_OVERLAP" };
+        }
+
+        if (inserted.code === "ROOM_NOT_FOUND") {
+          throw { type: "ROOM_NOT_FOUND" };
+        }
+
+        throw {
+          type: "BOOKING_CREATE_FAILED",
+          message: inserted.message,
+        };
+      }
 
       await tx
         .update(bookingRequests)
         .set({ status: "APPROVED" })
         .where(eq(bookingRequests.id, id));
 
-      return inserted[0];
+      return inserted.booking;
     });
 
     return res.json(booking);
@@ -227,6 +243,22 @@ router.post("/:id/approve", authMiddleware, requireRole("STAFF"), async (req, re
 
     if (error?.type === "INVALID_STATUS") {
       return res.status(400).json({ error: "Request is not pending staff approval" });
+    }
+
+    if (error?.type === "ROOM_NOT_FOUND") {
+      return res.status(404).json({ error: "Room not found" });
+    }
+
+    if (error?.type === "ROOM_OVERLAP") {
+      return res.status(409).json({
+        error: "Room already booked for this time range",
+      });
+    }
+
+    if (error?.type === "BOOKING_CREATE_FAILED") {
+      return res.status(500).json({
+        error: error.message ?? "Approval failed",
+      });
     }
 
     if (error?.cause?.code === "23P01") {
@@ -370,19 +402,9 @@ router.post("/", authMiddleware, requireRole(["STUDENT", "FACULTY"]), async (req
     /**
      * SOFT CHECK 1: Prevent conflict with existing bookings
      */
-    const overlap = await db
-      .select({ id: bookings.id })
-      .from(bookings)
-      .where(
-        and(
-          eq(bookings.roomId, roomId),
-          lt(bookings.startAt, end),
-          gt(bookings.endAt, start)
-        )
-      )
-      .limit(1);
+    const overlap = await hasBookingOverlap(roomId, start, end);
 
-    if (overlap.length > 0) {
+    if (overlap) {
       return res.status(409).json({
         error: "Room is not available in the selected time range",
       });

@@ -1,9 +1,16 @@
 import { Router } from "express";
 import { db } from "../db";
-import { bookings, rooms } from "../db/schema";
-import { eq, and, lt, gt } from "drizzle-orm";
+import {
+  bookings,
+  rooms,
+  slotSystems,
+  timetableImportBatches,
+  timetableImportOccurrences,
+} from "../db/schema";
+import { eq, and, inArray, lt, gt } from "drizzle-orm";
 import { authMiddleware } from "../middleware/auth";
 import { requireRole } from "../middleware/rbac";
+import { createBooking, createBookingsBulk } from "../services/bookingService";
 
 const router = Router();
 
@@ -132,6 +139,40 @@ router.get("/", authMiddleware, async (req, res) => {
   }
 });
 
+// -------------------------------------
+// POST /bookings/bulk
+// Body: { items: [{ roomId, startAt, endAt, clientRowId? }] }
+// -------------------------------------
+router.post(
+  "/bulk",
+  authMiddleware,
+  requireRole(["ADMIN", "STAFF"]),
+  async (req, res) => {
+    try {
+      const items = req.body?.items;
+
+      if (!Array.isArray(items)) {
+        return res.status(400).json({
+          error: "items must be an array",
+        });
+      }
+
+      if (items.length === 0) {
+        return res.status(400).json({
+          error: "items array must not be empty",
+        });
+      }
+
+      const result = await createBookingsBulk(items);
+
+      return res.json(result);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: "Bulk create failed" });
+    }
+  },
+);
+
 
 // -------------------------------------
 // POST /bookings
@@ -139,92 +180,110 @@ router.get("/", authMiddleware, async (req, res) => {
 // -------------------------------------
 router.post("/", authMiddleware, requireRole(["ADMIN", "STAFF"]), async (req, res) => {
   try {
-    const { roomId, startAt, endAt } = req.body ?? {};
+    const result = await createBooking(req.body ?? {});
 
-    // ------------------------
-    // Validation
-    // ------------------------
-    if (!roomId || !startAt || !endAt) {
-      return res.status(400).json({ error: "Missing required fields" });
+    if (!result.ok) {
+      return res.status(result.status).json({
+        error: result.message,
+        code: result.code,
+      });
     }
 
-    const parsedRoomId = Number(roomId);
-    const start = new Date(startAt);
-    const end = new Date(endAt);
-
-    if (isNaN(parsedRoomId)) {
-      return res.status(400).json({ error: "Invalid roomId" });
-    }
-
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-      return res.status(400).json({ error: "Invalid datetime format" });
-    }
-
-    if (start >= end) {
-      return res.status(400).json({ error: "startAt must be before endAt" });
-    }
-
-    // ------------------------
-    // Check room exists
-    // ------------------------
-    const roomExists = await db
-      .select()
-      .from(rooms)
-      .where(eq(rooms.id, parsedRoomId))
-      .limit(1);
-
-    if (roomExists.length === 0) {
-      return res.status(404).json({ error: "Room not found" });
-    }
-
-    // ------------------------
-    // Overlap check
-    // existing.start < new.end AND existing.end > new.start
-    // ------------------------
-    const overlapping = await db
-      .select()
-      .from(bookings)
-      .where(
-        and(
-          eq(bookings.roomId, parsedRoomId),
-          lt(bookings.startAt, end),
-          gt(bookings.endAt, start)
-        )
-      )
-      .limit(1);
-
-    if (overlapping.length > 0) {
-      return res.status(409).json({ error: "Room already booked for this time range" });
-    }
-
-    // ------------------------
-    // Insert booking
-    // ------------------------
-    const inserted = await db
-      .insert(bookings)
-      .values({
-        roomId: parsedRoomId,
-        startAt: start,
-        endAt: end,
-      })
-      .returning();
-
-    return res.status(201).json(inserted[0]);
-
-  } catch (error: any) {
-  if (error?.cause?.code === "23503") {
-    return res.status(404).json({ error: "Room not found" });
+    return res.status(201).json(result.booking);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: "Insert failed" });
   }
-
-  if (error?.cause?.code === "23P01") {
-    return res.status(409).json({
-      error: "Room already booked for this time range",
-    });
-  }
-
-  res.status(500).json({ error: "Insert failed" });
-}
 });
+
+// -------------------------------------
+// DELETE /bookings/prune
+// Query:
+//   ?scope=all
+//   ?scope=slot-system&slotSystemId=1
+// -------------------------------------
+router.delete(
+  "/prune",
+  authMiddleware,
+  requireRole("ADMIN"),
+  async (req, res) => {
+    try {
+      const rawScope = String(req.query.scope ?? "all").trim().toLowerCase();
+
+      if (rawScope !== "all" && rawScope !== "slot-system") {
+        return res.status(400).json({
+          error: "scope must be either 'all' or 'slot-system'",
+        });
+      }
+
+      if (rawScope === "all") {
+        const deleted = await db.delete(bookings).returning({ id: bookings.id });
+
+        return res.json({
+          scope: "all",
+          deletedBookings: deleted.length,
+        });
+      }
+
+      const slotSystemId = Number(req.query.slotSystemId);
+
+      if (!Number.isInteger(slotSystemId) || slotSystemId <= 0) {
+        return res.status(400).json({
+          error: "slotSystemId is required for scope=slot-system",
+        });
+      }
+
+      const [slotSystem] = await db
+        .select({ id: slotSystems.id })
+        .from(slotSystems)
+        .where(eq(slotSystems.id, slotSystemId))
+        .limit(1);
+
+      if (!slotSystem) {
+        return res.status(404).json({ error: "Slot system not found" });
+      }
+
+      const occurrenceRows = await db
+        .select({ bookingId: timetableImportOccurrences.bookingId })
+        .from(timetableImportOccurrences)
+        .innerJoin(
+          timetableImportBatches,
+          eq(timetableImportOccurrences.batchId, timetableImportBatches.id),
+        )
+        .where(eq(timetableImportBatches.slotSystemId, slotSystemId));
+
+      const bookingIds = Array.from(
+        new Set(
+          occurrenceRows
+            .map((row) => row.bookingId)
+            .filter((bookingId): bookingId is number => typeof bookingId === "number"),
+        ),
+      );
+
+      if (bookingIds.length === 0) {
+        return res.json({
+          scope: "slot-system",
+          slotSystemId,
+          deletedBookings: 0,
+        });
+      }
+
+      const deleted = await db
+        .delete(bookings)
+        .where(inArray(bookings.id, bookingIds))
+        .returning({ id: bookings.id });
+
+      return res.json({
+        scope: "slot-system",
+        slotSystemId,
+        deletedBookings: deleted.length,
+      });
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ error: "Prune failed" });
+    }
+  },
+);
 
 // -------------------------------------
 // DELETE /bookings/:id

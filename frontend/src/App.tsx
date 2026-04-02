@@ -1,13 +1,13 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { useAuth } from "./auth/AuthContext";
-import { BuildingsPage } from "./pages/Buildings";
 import { RoomsPage } from "./pages/Rooms";
 import { BookingRequestsPage } from "./pages/BookingRequests";
 import { BookingsPage } from "./pages/Bookings";
 import { AvailabilityPage } from "./pages/Availability";
+import { TimetableBuilderPage } from "./pages/TimetableBuilder";
 
-type PageKey = "buildings" | "rooms" | "bookingRequests" | "bookings" | "availability";
+type PageKey = "rooms" | "bookingRequests" | "bookings" | "availability" | "timetableBuilder";
 
 type NavEntry = {
   key: PageKey;
@@ -17,26 +17,26 @@ type NavEntry = {
 };
 
 const NAV_ITEMS: NavEntry[] = [
-  { key: "buildings", label: "Buildings", icon: "🏢" },
   { key: "rooms", label: "Rooms", icon: "🚪" },
   { key: "bookingRequests", label: "Requests", icon: "📋" },
   { key: "bookings", label: "Bookings", icon: "📅", roles: ["ADMIN", "STAFF"] },
   { key: "availability", label: "Availability", icon: "🔍" },
+  { key: "timetableBuilder", label: "Timetable Builder", icon: "🧩", roles: ["ADMIN"] },
 ];
 
 function PageRenderer({ page }: { page: PageKey }) {
   switch (page) {
-    case "buildings": return <BuildingsPage />;
     case "rooms": return <RoomsPage />;
     case "bookingRequests": return <BookingRequestsPage />;
     case "bookings": return <BookingsPage />;
     case "availability": return <AvailabilityPage />;
+    case "timetableBuilder": return <TimetableBuilderPage />;
   }
 }
 
 function App() {
   const { user, login, logout } = useAuth();
-  const [activePage, setActivePage] = useState<PageKey>("buildings");
+  const [activePage, setActivePage] = useState<PageKey>("rooms");
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Login state

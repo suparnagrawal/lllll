@@ -9,13 +9,8 @@ import {
 } from "../api/api";
 import type { Booking, Building, Room } from "../api/api";
 import { useAuth } from "../auth/AuthContext";
-
-function formatDatetime(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
-}
+import { DateInput } from "../components/DateInput";
+import { formatDateTimeDDMMYYYY } from "../utils/datetime";
 
 export function BookingsPage() {
   const { user } = useAuth();
@@ -155,22 +150,20 @@ export function BookingsPage() {
           </div>
           <div className="form-field">
             <label htmlFor="filterStartAt">From</label>
-            <input
+            <DateInput
               id="filterStartAt"
-              className="input"
-              type="datetime-local"
+              mode="datetime"
               value={filterStartAt}
-              onChange={(e) => setFilterStartAt(e.target.value)}
+              onChange={setFilterStartAt}
             />
           </div>
           <div className="form-field">
             <label htmlFor="filterEndAt">To</label>
-            <input
+            <DateInput
               id="filterEndAt"
-              className="input"
-              type="datetime-local"
+              mode="datetime"
               value={filterEndAt}
-              onChange={(e) => setFilterEndAt(e.target.value)}
+              onChange={setFilterEndAt}
             />
           </div>
         </div>
@@ -203,23 +196,21 @@ export function BookingsPage() {
             </div>
             <div className="form-field">
               <label htmlFor="newBookingStartAt">Start</label>
-              <input
+              <DateInput
                 id="newBookingStartAt"
-                className="input"
-                type="datetime-local"
+                mode="datetime"
                 value={newStartAt}
-                onChange={(e) => setNewStartAt(e.target.value)}
+                onChange={setNewStartAt}
                 disabled={isSubmitting}
               />
             </div>
             <div className="form-field">
               <label htmlFor="newBookingEndAt">End</label>
-              <input
+              <DateInput
                 id="newBookingEndAt"
-                className="input"
-                type="datetime-local"
+                mode="datetime"
                 value={newEndAt}
-                onChange={(e) => setNewEndAt(e.target.value)}
+                onChange={setNewEndAt}
                 disabled={isSubmitting}
               />
             </div>
@@ -248,7 +239,7 @@ export function BookingsPage() {
                     {b.requestId ? ` · Request #${b.requestId}` : ""}
                   </div>
                   <div className="data-item-subtitle">
-                    {roomNameById.get(b.roomId) ?? `Room #${b.roomId}`} · {formatDatetime(b.startAt)} – {formatDatetime(b.endAt)}
+                    {roomNameById.get(b.roomId) ?? `Room #${b.roomId}`} · {formatDateTimeDDMMYYYY(b.startAt)} – {formatDateTimeDDMMYYYY(b.endAt)}
                   </div>
                 </div>
                 {canMutate && (

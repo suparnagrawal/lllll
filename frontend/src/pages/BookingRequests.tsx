@@ -11,6 +11,8 @@ import {
 } from "../api/api";
 import type { BookingRequest, BookingStatus, Room } from "../api/api";
 import { useAuth } from "../auth/AuthContext";
+import { DateInput } from "../components/DateInput";
+import { formatDateTimeDDMMYYYY } from "../utils/datetime";
 
 type StatusFilter = "ALL" | BookingStatus;
 
@@ -40,13 +42,6 @@ function statusBadgeClass(status: BookingStatus): string {
     CANCELLED: "badge-cancelled",
   };
   return `badge ${map[status]}`;
-}
-
-function formatDatetime(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
 }
 
 export function BookingRequestsPage() {
@@ -180,23 +175,21 @@ export function BookingRequestsPage() {
             </div>
             <div className="form-field">
               <label htmlFor="newRequestStartAt">Start</label>
-              <input
+              <DateInput
                 id="newRequestStartAt"
-                className="input"
-                type="datetime-local"
+                mode="datetime"
                 value={startAt}
-                onChange={(e) => setStartAt(e.target.value)}
+                onChange={setStartAt}
                 disabled={isSubmitting}
               />
             </div>
             <div className="form-field">
               <label htmlFor="newRequestEndAt">End</label>
-              <input
+              <DateInput
                 id="newRequestEndAt"
-                className="input"
-                type="datetime-local"
+                mode="datetime"
                 value={endAt}
-                onChange={(e) => setEndAt(e.target.value)}
+                onChange={setEndAt}
                 disabled={isSubmitting}
               />
             </div>
@@ -256,8 +249,8 @@ export function BookingRequestsPage() {
 
                 <div className="request-card-meta">
                   <span><strong>Room:</strong> {roomNameById.get(req.roomId) ?? `#${req.roomId}`}</span>
-                  <span><strong>From:</strong> {formatDatetime(req.startAt)}</span>
-                  <span><strong>To:</strong> {formatDatetime(req.endAt)}</span>
+                  <span><strong>From:</strong> {formatDateTimeDDMMYYYY(req.startAt)}</span>
+                  <span><strong>To:</strong> {formatDateTimeDDMMYYYY(req.endAt)}</span>
                 </div>
 
                 {req.purpose && (

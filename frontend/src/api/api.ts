@@ -49,6 +49,14 @@ export type Booking = {
   requestId: number | null;
 };
 
+export type BookingPruneScope = "all" | "slot-system";
+
+export type BookingPruneResult = {
+  scope: BookingPruneScope;
+  deletedBookings: number;
+  slotSystemId?: number;
+};
+
 export type AvailabilityRoom = {
   id: number;
   name: string;
@@ -59,6 +67,119 @@ export type AvailabilityBuilding = {
   buildingId: number;
   buildingName: string;
   rooms: AvailabilityRoom[];
+};
+
+export type DayOfWeek = "MON" | "TUE" | "WED" | "THU" | "FRI" | "SAT" | "SUN";
+
+export type SlotSystem = {
+  id: number;
+  name: string;
+  createdAt: string;
+};
+
+export type SlotDay = {
+  id: number;
+  slotSystemId: number;
+  dayOfWeek: DayOfWeek;
+  orderIndex: number;
+  laneCount: number;
+};
+
+export type SlotTimeBand = {
+  id: number;
+  slotSystemId: number;
+  startTime: string;
+  endTime: string;
+  orderIndex: number;
+};
+
+export type SlotBlock = {
+  id: number;
+  slotSystemId: number;
+  dayId: number;
+  startBandId: number;
+  laneIndex: number;
+  rowSpan: number;
+  label: string;
+  createdAt: string;
+};
+
+export type SlotFullGrid = {
+  slotSystem: SlotSystem;
+  days: SlotDay[];
+  timeBands: SlotTimeBand[];
+  blocks: SlotBlock[];
+};
+
+export type TimetableImportRowStatus =
+  | "VALID_AND_AUTOMATABLE"
+  | "UNRESOLVED_SLOT"
+  | "UNRESOLVED_ROOM"
+  | "AMBIGUOUS_CLASSROOM"
+  | "DUPLICATE_ROW"
+  | "CONFLICTING_MAPPING"
+  | "MISSING_REQUIRED_FIELD"
+  | "OTHER_PROCESSING_ERROR";
+
+export type TimetableImportPreviewRow = {
+  rowId: number;
+  rowIndex: number;
+  courseCode: string;
+  slot: string;
+  classroom: string;
+  classification: TimetableImportRowStatus;
+  reasons: string[];
+  suggestions: string[];
+  parsedBuilding: string | null;
+  parsedRoom: string | null;
+  resolvedSlotLabel: string | null;
+  resolvedRoomId: number | null;
+};
+
+export type TimetableImportPreviewReport = {
+  batchId: number;
+  reused: boolean;
+  slotSystemId: number;
+  termStartDate: string;
+  termEndDate: string;
+  processedRows: number;
+  validRows: number;
+  unresolvedRows: number;
+  warnings: string[];
+  rows: TimetableImportPreviewRow[];
+};
+
+export type TimetableImportCommitDecision = {
+  rowId: number;
+  action: "AUTO" | "RESOLVE" | "SKIP";
+  resolvedSlotLabel?: string;
+  resolvedRoomId?: number;
+};
+
+export type TimetableImportCommitRowResult = {
+  rowId: number;
+  rowIndex: number;
+  classification: TimetableImportRowStatus;
+  action: "AUTO" | "RESOLVE" | "SKIP";
+  created: number;
+  failed: number;
+  skipped: number;
+  alreadyProcessed: number;
+  unresolved: number;
+  reasons: string[];
+};
+
+export type TimetableImportCommitReport = {
+  batchId: number;
+  status: "COMMITTED" | "ALREADY_COMMITTED";
+  processedRows: number;
+  autoCreatedBookings: number;
+  alreadyProcessedBookings: number;
+  failedOccurrences: number;
+  unresolvedRows: number;
+  skippedRows: number;
+  rowResults: TimetableImportCommitRowResult[];
+  warnings: string[];
 };
 
 type LoginResponse = {
@@ -139,6 +260,51 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       apiPayload?.error ??
       apiPayload?.message ??
       httpErrorMessage(response.status);
+    throw new Error(message);
+  }
+
+  return payload as T;
+}
+
+async function requestFormData<T>(
+  path: string,
+  formData: FormData,
+  init?: Omit<RequestInit, "body" | "headers"> & { headers?: HeadersInit }
+): Promise<T> {
+  const token = getAuthToken();
+
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    method: init?.method ?? "POST",
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(init?.headers ?? {}),
+    },
+    body: formData,
+  });
+
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
+  const contentType = response.headers.get("content-type") ?? "";
+  const isJson = contentType.includes("application/json");
+  const payload = isJson ? ((await response.json()) as unknown) : null;
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      clearAuth();
+      if (onUnauthorizedCallback) {
+        onUnauthorizedCallback();
+      }
+    }
+
+    const apiPayload = payload as ApiErrorPayload | null;
+    const message =
+      apiPayload?.error ??
+      apiPayload?.message ??
+      httpErrorMessage(response.status);
+
     throw new Error(message);
   }
 
@@ -314,6 +480,27 @@ export async function deleteBooking(id: number): Promise<void> {
   });
 }
 
+export async function pruneAllBookings(): Promise<BookingPruneResult> {
+  return request<BookingPruneResult>("/bookings/prune?scope=all", {
+    method: "DELETE",
+  });
+}
+
+export async function pruneBookingsBySlotSystem(slotSystemId: number): Promise<BookingPruneResult> {
+  if (!Number.isInteger(slotSystemId) || slotSystemId <= 0) {
+    throw new Error("Invalid slotSystemId");
+  }
+
+  const params = new URLSearchParams({
+    scope: "slot-system",
+    slotSystemId: String(slotSystemId),
+  });
+
+  return request<BookingPruneResult>(`/bookings/prune?${params.toString()}`, {
+    method: "DELETE",
+  });
+}
+
 /* ===== Availability ===== */
 
 export async function getAvailability(
@@ -324,4 +511,148 @@ export async function getAvailability(
   const params = new URLSearchParams({ startAt, endAt });
   if (buildingId !== undefined) params.set("buildingId", String(buildingId));
   return request<AvailabilityBuilding[]>(`/availability?${params.toString()}`);
+}
+
+/* ===== Timetable ===== */
+
+export async function getSlotSystems(): Promise<SlotSystem[]> {
+  return request<SlotSystem[]>("/timetable/slot-systems");
+}
+
+export async function createSlotSystem(name: string): Promise<SlotSystem> {
+  return request<SlotSystem>("/timetable/slot-systems", {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function deleteSlotSystem(slotSystemId: number): Promise<void> {
+  await request<void>(`/timetable/slot-systems/${slotSystemId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function getDays(slotSystemId: number): Promise<SlotDay[]> {
+  const params = new URLSearchParams({ slotSystemId: String(slotSystemId) });
+  return request<SlotDay[]>(`/timetable/days?${params.toString()}`);
+}
+
+export async function createDay(input: {
+  slotSystemId: number;
+  dayOfWeek: DayOfWeek;
+  orderIndex?: number;
+}): Promise<SlotDay> {
+  return request<SlotDay>("/timetable/days", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteDay(dayId: number): Promise<void> {
+  await request<void>(`/timetable/days/${dayId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function addDayLane(dayId: number): Promise<SlotDay> {
+  return request<SlotDay>(`/timetable/days/${dayId}/lanes`, {
+    method: "POST",
+  });
+}
+
+export async function removeDayLane(dayId: number): Promise<SlotDay> {
+  return request<SlotDay>(`/timetable/days/${dayId}/lanes`, {
+    method: "DELETE",
+  });
+}
+
+export async function getTimeBands(slotSystemId: number): Promise<SlotTimeBand[]> {
+  const params = new URLSearchParams({ slotSystemId: String(slotSystemId) });
+  return request<SlotTimeBand[]>(`/timetable/time-bands?${params.toString()}`);
+}
+
+export async function createTimeBand(input: {
+  slotSystemId: number;
+  startTime: string;
+  endTime: string;
+  orderIndex?: number;
+}): Promise<SlotTimeBand> {
+  return request<SlotTimeBand>("/timetable/time-bands", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function updateTimeBand(
+  timeBandId: number,
+  input: {
+    startTime?: string;
+    endTime?: string;
+    orderIndex?: number;
+  }
+): Promise<SlotTimeBand> {
+  return request<SlotTimeBand>(`/timetable/time-bands/${timeBandId}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteTimeBand(timeBandId: number): Promise<void> {
+  await request<void>(`/timetable/time-bands/${timeBandId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function getFullGrid(slotSystemId: number): Promise<SlotFullGrid> {
+  return request<SlotFullGrid>(`/timetable/slot-systems/${slotSystemId}/full`);
+}
+
+export async function createBlock(input: {
+  slotSystemId: number;
+  dayId: number;
+  startBandId: number;
+  laneIndex: number;
+  rowSpan: number;
+  label: string;
+}): Promise<SlotBlock> {
+  return request<SlotBlock>("/timetable/blocks", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteBlock(blockId: number): Promise<void> {
+  await request<void>(`/timetable/blocks/${blockId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function previewTimetableImport(input: {
+  slotSystemId: number;
+  termStartDate: string;
+  termEndDate: string;
+  file: File;
+  aliasMap?: Record<string, string>;
+}): Promise<TimetableImportPreviewReport> {
+  const formData = new FormData();
+  formData.append("slotSystemId", String(input.slotSystemId));
+  formData.append("termStartDate", input.termStartDate);
+  formData.append("termEndDate", input.termEndDate);
+  formData.append("file", input.file);
+
+  if (input.aliasMap && Object.keys(input.aliasMap).length > 0) {
+    formData.append("aliasMap", JSON.stringify(input.aliasMap));
+  }
+
+  return requestFormData<TimetableImportPreviewReport>("/timetable/imports/preview", formData);
+}
+
+export async function commitTimetableImport(
+  batchId: number,
+  decisions: TimetableImportCommitDecision[]
+): Promise<TimetableImportCommitReport> {
+  return request<TimetableImportCommitReport>(`/timetable/imports/${batchId}/commit`, {
+    method: "POST",
+    body: JSON.stringify({ decisions }),
+  });
 }
