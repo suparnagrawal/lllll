@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, like, sql } from "drizzle-orm";
 import XLSX from "xlsx";
 import { db } from "../../db";
 import {
@@ -29,6 +29,8 @@ type PreviewClassification =
   | "OTHER_PROCESSING_ERROR";
 
 type ImportDecisionAction = "AUTO" | "RESOLVE" | "SKIP";
+
+type ImportBatchStatus = "PREVIEWED" | "COMMITTED";
 
 type ImportDecisionCreateSlot = {
   dayId: number;
@@ -105,6 +107,7 @@ type PreviewResponseRow = {
 type PreviewReport = {
   batchId: number;
   reused: boolean;
+  status: ImportBatchStatus;
   slotSystemId: number;
   termStartDate: string;
   termEndDate: string;
@@ -112,7 +115,42 @@ type PreviewReport = {
   validRows: number;
   unresolvedRows: number;
   warnings: string[];
+  savedDecisions: SavedDecisionSnapshot[];
   rows: PreviewResponseRow[];
+};
+
+type SavedDecisionSnapshot = {
+  rowId: number;
+  action: ImportDecisionAction;
+  resolvedSlotLabel: string | null;
+  resolvedRoomId: number | null;
+  createSlot: ImportDecisionCreateSlot | null;
+  createRoom: ImportDecisionCreateRoom | null;
+  updatedAt: string;
+};
+
+type ImportBatchSummary = {
+  batchId: number;
+  slotSystemId: number;
+  slotSystemName: string;
+  fileName: string;
+  status: ImportBatchStatus;
+  termStartDate: string;
+  termEndDate: string;
+  createdAt: string;
+  committedAt: string | null;
+};
+
+type SaveDecisionsReport = {
+  batchId: number;
+  status: ImportBatchStatus;
+  savedDecisions: SavedDecisionSnapshot[];
+};
+
+type DeleteImportBatchReport = {
+  batchId: number;
+  status: "DELETED";
+  deletedBookings: number;
 };
 
 type CommitRowSummary = {
@@ -126,6 +164,7 @@ type CommitRowSummary = {
   alreadyProcessed: number;
   unresolved: number;
   reasons: string[];
+  bookingConflictReasons: string[];
 };
 
 type CommitReport = {
@@ -137,6 +176,8 @@ type CommitReport = {
   failedOccurrences: number;
   unresolvedRows: number;
   skippedRows: number;
+  bookingConflictRows: number;
+  bookingConflictOccurrences: number;
   rowResults: CommitRowSummary[];
   warnings: string[];
 };
@@ -184,6 +225,7 @@ type ProcessedRowReport = {
   alreadyProcessed: number;
   unresolved: number;
   reasons: string[];
+  bookingConflictReasons: string[];
   occurrences: ProcessedOccurrenceReport[];
 };
 
@@ -207,6 +249,20 @@ export type PreviewImportInput = {
 export type CommitImportInput = {
   batchId: number;
   decisions?: unknown;
+};
+
+export type ListImportBatchesInput = {
+  slotSystemId?: number;
+  limit?: number;
+};
+
+export type SaveImportDecisionsInput = {
+  batchId: number;
+  decisions?: unknown;
+};
+
+export type DeleteImportBatchInput = {
+  batchId: number;
 };
 
 type ServiceError = Error & { status: number };
@@ -233,6 +289,36 @@ function toErrorMessage(error: unknown, fallback: string): string {
   }
 
   return fallback;
+}
+
+const BOOKING_CONFLICT_CODE = "ROOM_OVERLAP";
+
+function isBookingConflictMessage(message: string | null | undefined): boolean {
+  if (!message) {
+    return false;
+  }
+
+  return normalizeKey(message).includes("already booked");
+}
+
+function toDecisionSnapshot(row: {
+  rowId: number;
+  action: ImportDecisionAction;
+  resolvedSlotLabel: string | null;
+  resolvedRoomId: number | null;
+  createSlot: ImportDecisionCreateSlot | null;
+  createRoom: ImportDecisionCreateRoom | null;
+  updatedAt: Date;
+}): SavedDecisionSnapshot {
+  return {
+    rowId: row.rowId,
+    action: row.action,
+    resolvedSlotLabel: row.resolvedSlotLabel,
+    resolvedRoomId: row.resolvedRoomId,
+    createSlot: row.createSlot,
+    createRoom: row.createRoom,
+    updatedAt: row.updatedAt.toISOString(),
+  };
 }
 
 function hashValue(value: string): string {
@@ -1180,10 +1266,12 @@ function toPreviewRowResponse(row: {
 function buildPreviewReportFromRows(input: {
   batchId: number;
   reused: boolean;
+  status: ImportBatchStatus;
   slotSystemId: number;
   termStartDate: Date;
   termEndDate: Date;
   warnings: string[];
+  savedDecisions: SavedDecisionSnapshot[];
   rows: Array<{
     id: number;
     rowIndex: number;
@@ -1208,6 +1296,7 @@ function buildPreviewReportFromRows(input: {
   return {
     batchId: input.batchId,
     reused: input.reused,
+    status: input.status,
     slotSystemId: input.slotSystemId,
     termStartDate: input.termStartDate.toISOString(),
     termEndDate: input.termEndDate.toISOString(),
@@ -1215,22 +1304,57 @@ function buildPreviewReportFromRows(input: {
     validRows,
     unresolvedRows: responseRows.length - validRows,
     warnings: input.warnings,
+    savedDecisions: input.savedDecisions,
     rows: responseRows,
   };
 }
 
-async function fetchBatchPreviewReport(batchId: number, reused: boolean): Promise<PreviewReport> {
-  const [batch] = await db
+async function getSavedDecisions(batchId: number): Promise<SavedDecisionSnapshot[]> {
+  const rows = await db
     .select({
-      id: timetableImportBatches.id,
-      slotSystemId: timetableImportBatches.slotSystemId,
-      termStartDate: timetableImportBatches.termStartDate,
-      termEndDate: timetableImportBatches.termEndDate,
-      warnings: timetableImportBatches.warnings,
+      rowId: timetableImportRowResolutions.rowId,
+      action: timetableImportRowResolutions.action,
+      resolvedSlotLabel: timetableImportRowResolutions.resolvedSlotLabel,
+      resolvedRoomId: timetableImportRowResolutions.resolvedRoomId,
+      createSlot: timetableImportRowResolutions.createSlot,
+      createRoom: timetableImportRowResolutions.createRoom,
+      updatedAt: timetableImportRowResolutions.updatedAt,
     })
-    .from(timetableImportBatches)
-    .where(eq(timetableImportBatches.id, batchId))
-    .limit(1);
+    .from(timetableImportRowResolutions)
+    .where(eq(timetableImportRowResolutions.batchId, batchId))
+    .orderBy(asc(timetableImportRowResolutions.rowId));
+
+  return rows.map((row) =>
+    toDecisionSnapshot({
+      rowId: row.rowId,
+      action: row.action,
+      resolvedSlotLabel: row.resolvedSlotLabel,
+      resolvedRoomId: row.resolvedRoomId,
+      createSlot: (row.createSlot as ImportDecisionCreateSlot | null | undefined) ?? null,
+      createRoom: (row.createRoom as ImportDecisionCreateRoom | null | undefined) ?? null,
+      updatedAt: row.updatedAt,
+    }),
+  );
+}
+
+async function fetchBatchPreviewReport(batchId: number, reused: boolean): Promise<PreviewReport> {
+  const [batchRows, savedDecisions] = await Promise.all([
+    db
+      .select({
+        id: timetableImportBatches.id,
+        slotSystemId: timetableImportBatches.slotSystemId,
+        termStartDate: timetableImportBatches.termStartDate,
+        termEndDate: timetableImportBatches.termEndDate,
+        status: timetableImportBatches.status,
+        warnings: timetableImportBatches.warnings,
+      })
+      .from(timetableImportBatches)
+      .where(eq(timetableImportBatches.id, batchId))
+      .limit(1),
+    getSavedDecisions(batchId),
+  ]);
+
+  const batch = batchRows[0];
 
   if (!batch) {
     throw createServiceError(404, "Import batch not found");
@@ -1258,10 +1382,12 @@ async function fetchBatchPreviewReport(batchId: number, reused: boolean): Promis
   return buildPreviewReportFromRows({
     batchId: batch.id,
     reused,
+    status: batch.status,
     slotSystemId: batch.slotSystemId,
     termStartDate: batch.termStartDate,
     termEndDate: batch.termEndDate,
     warnings: Array.isArray(batch.warnings) ? (batch.warnings as string[]) : [],
+    savedDecisions,
     rows,
   });
 }
@@ -1300,16 +1426,33 @@ export async function previewTimetableImport(input: PreviewImportInput): Promise
     )}`,
   );
 
-  const [existingBatch] = await db
+  const existingBatchesForSystem = await db
     .select({
       id: timetableImportBatches.id,
+      fingerprint: timetableImportBatches.fingerprint,
     })
     .from(timetableImportBatches)
-    .where(eq(timetableImportBatches.fingerprint, fingerprint))
-    .limit(1);
+    .where(eq(timetableImportBatches.slotSystemId, slotSystemId))
+    .orderBy(desc(timetableImportBatches.createdAt), desc(timetableImportBatches.id));
 
-  if (existingBatch) {
-    return fetchBatchPreviewReport(existingBatch.id, true);
+  const matchingFingerprintBatch = existingBatchesForSystem.find(
+    (batch) => batch.fingerprint === fingerprint,
+  );
+
+  if (matchingFingerprintBatch) {
+    const redundantBatchIds = existingBatchesForSystem
+      .filter((batch) => batch.id !== matchingFingerprintBatch.id)
+      .map((batch) => batch.id);
+
+    for (const redundantBatchId of redundantBatchIds) {
+      await deleteTimetableImportBatch({ batchId: redundantBatchId });
+    }
+
+    return fetchBatchPreviewReport(matchingFingerprintBatch.id, true);
+  }
+
+  for (const existingBatch of existingBatchesForSystem) {
+    await deleteTimetableImportBatch({ batchId: existingBatch.id });
   }
 
   const warnings: string[] = [];
@@ -1547,12 +1690,334 @@ export async function previewTimetableImport(input: PreviewImportInput): Promise
   return buildPreviewReportFromRows({
     batchId: insertedBatch.id,
     reused: false,
+    status: insertedBatch.status,
     slotSystemId,
     termStartDate,
     termEndDate,
     warnings,
+    savedDecisions: [],
     rows: insertedRows,
   });
+}
+
+export async function listTimetableImportBatches(
+  input: ListImportBatchesInput = {},
+): Promise<ImportBatchSummary[]> {
+  const parsedLimit = Number(input.limit ?? 25);
+  const limit =
+    Number.isInteger(parsedLimit) && parsedLimit > 0
+      ? Math.min(parsedLimit, 100)
+      : 25;
+
+  const parsedSlotSystemId =
+    input.slotSystemId === undefined ? undefined : Number(input.slotSystemId);
+
+  if (
+    parsedSlotSystemId !== undefined &&
+    (!Number.isInteger(parsedSlotSystemId) || parsedSlotSystemId <= 0)
+  ) {
+    throw createServiceError(400, "Invalid slotSystemId");
+  }
+
+  const baseQuery = db
+    .select({
+      batchId: timetableImportBatches.id,
+      slotSystemId: timetableImportBatches.slotSystemId,
+      slotSystemName: slotSystems.name,
+      fileName: timetableImportBatches.fileName,
+      status: timetableImportBatches.status,
+      termStartDate: timetableImportBatches.termStartDate,
+      termEndDate: timetableImportBatches.termEndDate,
+      createdAt: timetableImportBatches.createdAt,
+      committedAt: timetableImportBatches.committedAt,
+    })
+    .from(timetableImportBatches)
+    .innerJoin(slotSystems, eq(timetableImportBatches.slotSystemId, slotSystems.id));
+
+  const rows =
+    parsedSlotSystemId === undefined
+      ? await baseQuery
+          .orderBy(desc(timetableImportBatches.createdAt), desc(timetableImportBatches.id))
+          .limit(limit)
+      : await baseQuery
+          .where(eq(timetableImportBatches.slotSystemId, parsedSlotSystemId))
+          .orderBy(desc(timetableImportBatches.createdAt), desc(timetableImportBatches.id))
+          .limit(limit);
+
+  return rows.map((row) => ({
+    batchId: row.batchId,
+    slotSystemId: row.slotSystemId,
+    slotSystemName: row.slotSystemName,
+    fileName: row.fileName,
+    status: row.status,
+    termStartDate: row.termStartDate.toISOString(),
+    termEndDate: row.termEndDate.toISOString(),
+    createdAt: row.createdAt.toISOString(),
+    committedAt: row.committedAt ? row.committedAt.toISOString() : null,
+  }));
+}
+
+export async function getTimetableImportBatch(batchIdInput: number): Promise<PreviewReport> {
+  const batchId = Number(batchIdInput);
+
+  if (!Number.isInteger(batchId) || batchId <= 0) {
+    throw createServiceError(400, "Invalid batchId");
+  }
+
+  return fetchBatchPreviewReport(batchId, true);
+}
+
+export async function saveTimetableImportDecisions(
+  input: SaveImportDecisionsInput,
+): Promise<SaveDecisionsReport> {
+  const batchId = Number(input.batchId);
+
+  if (!Number.isInteger(batchId) || batchId <= 0) {
+    throw createServiceError(400, "Invalid batchId");
+  }
+
+  const [batch] = await db
+    .select({
+      id: timetableImportBatches.id,
+      status: timetableImportBatches.status,
+    })
+    .from(timetableImportBatches)
+    .where(eq(timetableImportBatches.id, batchId))
+    .limit(1);
+
+  if (!batch) {
+    throw createServiceError(404, "Import batch not found");
+  }
+
+  const decisions = parseDecisionInput(input.decisions);
+
+  if (decisions.size === 0) {
+    throw createServiceError(400, "At least one valid decision is required");
+  }
+
+  const rows = await getBatchRows(batchId);
+  const rowById = new Map(rows.map((row) => [row.id, row]));
+
+  const unknownRowIds = Array.from(decisions.keys()).filter((rowId) => !rowById.has(rowId));
+
+  if (unknownRowIds.length > 0) {
+    throw createServiceError(400, `Unknown rowId values: ${unknownRowIds.join(", ")}`);
+  }
+
+  const now = new Date();
+
+  await db.transaction(async (tx) => {
+    for (const [rowId, decision] of decisions.entries()) {
+      const row = rowById.get(rowId);
+
+      if (!row) {
+        continue;
+      }
+
+      const normalizedResolvedSlotLabel = decision.resolvedSlotLabel
+        ? normalizeSpace(decision.resolvedSlotLabel)
+        : null;
+
+      const normalizedResolvedRoomId =
+        decision.resolvedRoomId !== undefined &&
+        Number.isInteger(decision.resolvedRoomId) &&
+        decision.resolvedRoomId > 0
+          ? decision.resolvedRoomId
+          : null;
+
+      await tx
+        .insert(timetableImportRowResolutions)
+        .values({
+          batchId,
+          rowId,
+          action: decision.action,
+          resolvedSlotLabel: normalizedResolvedSlotLabel,
+          resolvedRoomId: normalizedResolvedRoomId,
+          createSlot: decision.createSlot ?? null,
+          createRoom: decision.createRoom ?? null,
+          reasons: Array.isArray(row.reasons) ? (row.reasons as string[]) : [],
+          updatedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: [
+            timetableImportRowResolutions.batchId,
+            timetableImportRowResolutions.rowId,
+          ],
+          set: {
+            action: decision.action,
+            resolvedSlotLabel: normalizedResolvedSlotLabel,
+            resolvedRoomId: normalizedResolvedRoomId,
+            createSlot: decision.createSlot ?? null,
+            createRoom: decision.createRoom ?? null,
+            reasons: Array.isArray(row.reasons) ? (row.reasons as string[]) : [],
+            updatedAt: now,
+          },
+        });
+    }
+  });
+
+  const savedDecisions = await getSavedDecisions(batchId);
+
+  return {
+    batchId,
+    status: batch.status,
+    savedDecisions,
+  };
+}
+
+async function getBatchLinkedBookingIds(batchId: number): Promise<number[]> {
+  const [occurrenceBookingRows, sourceRefBookingRows] = await Promise.all([
+    db
+      .select({
+        bookingId: timetableImportOccurrences.bookingId,
+      })
+      .from(timetableImportOccurrences)
+      .where(eq(timetableImportOccurrences.batchId, batchId)),
+    db
+      .select({
+        id: bookings.id,
+      })
+      .from(bookings)
+      .where(
+        and(
+          eq(bookings.source, "TIMETABLE_IMPORT"),
+          like(bookings.sourceRef, `batch:${batchId}:%`),
+        ),
+      ),
+  ]);
+
+  const ids = new Set<number>();
+
+  for (const row of occurrenceBookingRows) {
+    if (typeof row.bookingId === "number") {
+      ids.add(row.bookingId);
+    }
+  }
+
+  for (const row of sourceRefBookingRows) {
+    ids.add(row.id);
+  }
+
+  return Array.from(ids);
+}
+
+async function resetBatchForReallocation(batchId: number): Promise<{ deletedBookings: number }> {
+  const bookingIds = await getBatchLinkedBookingIds(batchId);
+  const now = new Date();
+
+  await db.transaction(async (tx) => {
+    if (bookingIds.length > 0) {
+      await tx.delete(bookings).where(inArray(bookings.id, bookingIds));
+    }
+
+    await tx
+      .delete(timetableImportOccurrences)
+      .where(eq(timetableImportOccurrences.batchId, batchId));
+
+    await tx
+      .update(timetableImportRowResolutions)
+      .set({
+        createdCount: 0,
+        failedCount: 0,
+        skippedCount: 0,
+        alreadyProcessedCount: 0,
+        unresolvedCount: 0,
+        reasons: sql`'[]'::jsonb`,
+        updatedAt: now,
+      })
+      .where(eq(timetableImportRowResolutions.batchId, batchId));
+
+    await tx
+      .update(timetableImportBatches)
+      .set({
+        status: "PREVIEWED",
+        committedAt: null,
+      })
+      .where(eq(timetableImportBatches.id, batchId));
+  });
+
+  return {
+    deletedBookings: bookingIds.length,
+  };
+}
+
+export async function reallocateTimetableImport(input: CommitImportInput): Promise<CommitReport> {
+  const batchId = Number(input.batchId);
+
+  if (!Number.isInteger(batchId) || batchId <= 0) {
+    throw createServiceError(400, "Invalid batchId");
+  }
+
+  const [batch] = await db
+    .select({
+      id: timetableImportBatches.id,
+      status: timetableImportBatches.status,
+    })
+    .from(timetableImportBatches)
+    .where(eq(timetableImportBatches.id, batchId))
+    .limit(1);
+
+  if (!batch) {
+    throw createServiceError(404, "Import batch not found");
+  }
+
+  if (batch.status !== "COMMITTED") {
+    throw createServiceError(409, "Only committed batches can be reallocated");
+  }
+
+  if (input.decisions !== undefined) {
+    await saveTimetableImportDecisions({
+      batchId,
+      decisions: input.decisions,
+    });
+  }
+
+  await resetBatchForReallocation(batchId);
+
+  return commitTimetableImport({
+    batchId,
+    ...(input.decisions !== undefined ? { decisions: input.decisions } : {}),
+  });
+}
+
+export async function deleteTimetableImportBatch(
+  input: DeleteImportBatchInput,
+): Promise<DeleteImportBatchReport> {
+  const batchId = Number(input.batchId);
+
+  if (!Number.isInteger(batchId) || batchId <= 0) {
+    throw createServiceError(400, "Invalid batchId");
+  }
+
+  const [batch] = await db
+    .select({
+      id: timetableImportBatches.id,
+    })
+    .from(timetableImportBatches)
+    .where(eq(timetableImportBatches.id, batchId))
+    .limit(1);
+
+  if (!batch) {
+    throw createServiceError(404, "Import batch not found");
+  }
+
+  const bookingIds = await getBatchLinkedBookingIds(batchId);
+
+  await db.transaction(async (tx) => {
+    if (bookingIds.length > 0) {
+      await tx.delete(bookings).where(inArray(bookings.id, bookingIds));
+    }
+
+    await tx
+      .delete(timetableImportBatches)
+      .where(eq(timetableImportBatches.id, batchId));
+  });
+
+  return {
+    batchId,
+    status: "DELETED",
+    deletedBookings: bookingIds.length,
+  };
 }
 
 async function getBatchRows(batchId: number) {
@@ -1685,6 +2150,7 @@ async function buildCommittedReport(batchId: number): Promise<CommitReport> {
         : Array.isArray(row.reasons)
           ? (row.reasons as string[])
           : [],
+      bookingConflictReasons: [],
     });
   }
 
@@ -1692,6 +2158,13 @@ async function buildCommittedReport(batchId: number): Promise<CommitReport> {
     const rowSummary = summaryByRowId.get(occurrence.rowId);
     if (!rowSummary) {
       continue;
+    }
+
+    const isBookingConflict =
+      occurrence.status === "FAILED" && isBookingConflictMessage(occurrence.errorMessage);
+
+    if (isBookingConflict && occurrence.errorMessage) {
+      rowSummary.bookingConflictReasons.push(occurrence.errorMessage);
     }
 
     if (resolutionByRowId.has(occurrence.rowId)) {
@@ -1706,7 +2179,7 @@ async function buildCommittedReport(batchId: number): Promise<CommitReport> {
       rowSummary.skipped += 1;
     } else {
       rowSummary.failed += 1;
-      if (occurrence.errorMessage) {
+      if (occurrence.errorMessage && !isBookingConflict) {
         rowSummary.reasons.push(occurrence.errorMessage);
       }
     }
@@ -1714,11 +2187,23 @@ async function buildCommittedReport(batchId: number): Promise<CommitReport> {
 
   const rowResults = Array.from(summaryByRowId.values()).sort((a, b) => a.rowIndex - b.rowIndex);
 
+  for (const row of rowResults) {
+    row.reasons = Array.from(new Set(row.reasons));
+    row.bookingConflictReasons = Array.from(new Set(row.bookingConflictReasons));
+  }
+
   const autoCreatedBookings = rowResults.reduce((sum, row) => sum + row.created, 0);
   const alreadyProcessedBookings = rowResults.reduce((sum, row) => sum + row.alreadyProcessed, 0);
   const failedOccurrences = rowResults.reduce((sum, row) => sum + row.failed, 0);
   const unresolvedRows = rowResults.filter((row) => row.unresolved > 0).length;
   const skippedRows = rowResults.filter((row) => row.skipped > 0 || row.action === "SKIP").length;
+  const bookingConflictRows = rowResults.filter(
+    (row) => row.bookingConflictReasons.length > 0,
+  ).length;
+  const bookingConflictOccurrences = rowResults.reduce(
+    (sum, row) => sum + row.bookingConflictReasons.length,
+    0,
+  );
 
   return {
     batchId,
@@ -1729,6 +2214,8 @@ async function buildCommittedReport(batchId: number): Promise<CommitReport> {
     failedOccurrences,
     unresolvedRows,
     skippedRows,
+    bookingConflictRows,
+    bookingConflictOccurrences,
     rowResults,
     warnings: [],
   };
@@ -1739,6 +2226,8 @@ export async function commitTimetableImport(input: CommitImportInput): Promise<C
   if (!Number.isInteger(batchId) || batchId <= 0) {
     throw createServiceError(400, "Invalid batchId");
   }
+
+  const explicitDecisions = parseDecisionInput(input.decisions);
 
   const [batch] = await db
     .select({
@@ -1761,7 +2250,24 @@ export async function commitTimetableImport(input: CommitImportInput): Promise<C
     return buildCommittedReport(batchId);
   }
 
-  const decisions = parseDecisionInput(input.decisions);
+  const decisions = new Map<number, ImportDecision>();
+  const savedDecisions = await getSavedDecisions(batchId);
+
+  for (const saved of savedDecisions) {
+    decisions.set(saved.rowId, {
+      rowId: saved.rowId,
+      action: saved.action,
+      ...(saved.resolvedSlotLabel ? { resolvedSlotLabel: saved.resolvedSlotLabel } : {}),
+      ...(saved.resolvedRoomId ? { resolvedRoomId: saved.resolvedRoomId } : {}),
+      ...(saved.createSlot ? { createSlot: saved.createSlot } : {}),
+      ...(saved.createRoom ? { createRoom: saved.createRoom } : {}),
+    });
+  }
+
+  for (const [rowId, decision] of explicitDecisions.entries()) {
+    decisions.set(rowId, decision);
+  }
+
   const rows = await getBatchRows(batchId);
   let slotLookup = await getSlotDescriptorLookup(batch.slotSystemId);
   const buildingLookup = await getBuildingRoomLookup();
@@ -1794,6 +2300,7 @@ export async function commitTimetableImport(input: CommitImportInput): Promise<C
       alreadyProcessed: 0,
       unresolved: 0,
       reasons: Array.isArray(row.reasons) ? [...(row.reasons as string[])] : [],
+      bookingConflictReasons: [],
     };
 
     const decision = decisions.get(row.id);
@@ -2021,7 +2528,16 @@ export async function commitTimetableImport(input: CommitImportInput): Promise<C
           .where(eq(timetableImportOccurrences.id, queued.occurrenceId));
       } else {
         rowSummary.failed += 1;
-        rowSummary.reasons.push(outcome.result.message);
+
+        const isBookingConflict =
+          outcome.result.code === BOOKING_CONFLICT_CODE ||
+          isBookingConflictMessage(outcome.result.message);
+
+        if (isBookingConflict) {
+          rowSummary.bookingConflictReasons.push(outcome.result.message);
+        } else {
+          rowSummary.reasons.push(outcome.result.message);
+        }
 
         await db
           .update(timetableImportOccurrences)
@@ -2035,6 +2551,11 @@ export async function commitTimetableImport(input: CommitImportInput): Promise<C
   }
 
   const rowResults = Array.from(rowSummaries.values()).sort((a, b) => a.rowIndex - b.rowIndex);
+
+  for (const rowResult of rowResults) {
+    rowResult.reasons = Array.from(new Set(rowResult.reasons));
+    rowResult.bookingConflictReasons = Array.from(new Set(rowResult.bookingConflictReasons));
+  }
 
   for (const rowResult of rowResults) {
     const resolution =
@@ -2066,6 +2587,13 @@ export async function commitTimetableImport(input: CommitImportInput): Promise<C
   const failedOccurrences = rowResults.reduce((sum, row) => sum + row.failed, 0);
   const unresolvedRows = rowResults.filter((row) => row.unresolved > 0).length;
   const skippedRows = rowResults.filter((row) => row.action === "SKIP").length;
+  const bookingConflictRows = rowResults.filter(
+    (row) => row.bookingConflictReasons.length > 0,
+  ).length;
+  const bookingConflictOccurrences = rowResults.reduce(
+    (sum, row) => sum + row.bookingConflictReasons.length,
+    0,
+  );
 
   return {
     batchId: batch.id,
@@ -2076,6 +2604,8 @@ export async function commitTimetableImport(input: CommitImportInput): Promise<C
     failedOccurrences,
     unresolvedRows,
     skippedRows,
+    bookingConflictRows,
+    bookingConflictOccurrences,
     rowResults,
     warnings: [
       ...(Array.isArray(batch.warnings) ? (batch.warnings as string[]) : []),
@@ -2158,6 +2688,11 @@ export async function getTimetableImportProcessedRows(
 
   const reportRows: ProcessedRowReport[] = rows.map((row) => {
     const storedResolution = resolutionByRowId.get(row.id);
+    const resolvedAction =
+      storedResolution?.action ??
+      (row.classification === "VALID_AND_AUTOMATABLE" ? "AUTO" : "SKIP");
+    const useStoredCounts = batch.status === "COMMITTED" && Boolean(storedResolution);
+
     const baseReasons = storedResolution
       ? Array.isArray(storedResolution.reasons)
         ? [...(storedResolution.reasons as string[])]
@@ -2173,23 +2708,26 @@ export async function getTimetableImportProcessedRows(
       courseCode: row.rawCourseCode ?? "",
       slot: row.rawSlot ?? "",
       classroom: row.rawClassroom ?? "",
-      action:
-        storedResolution?.action ??
-        (row.classification === "VALID_AND_AUTOMATABLE" ? "AUTO" : "SKIP"),
+      action: resolvedAction,
       resolvedSlotLabel: storedResolution?.resolvedSlotLabel ?? row.resolvedSlotLabel,
       resolvedRoomId: storedResolution?.resolvedRoomId ?? row.resolvedRoomId,
       createSlot:
         (storedResolution?.createSlot as ImportDecisionCreateSlot | null | undefined) ?? null,
       createRoom:
         (storedResolution?.createRoom as ImportDecisionCreateRoom | null | undefined) ?? null,
-      created: storedResolution?.createdCount ?? 0,
-      failed: storedResolution?.failedCount ?? 0,
-      skipped: storedResolution?.skippedCount ?? 0,
-      alreadyProcessed: storedResolution?.alreadyProcessedCount ?? 0,
-      unresolved:
-        storedResolution?.unresolvedCount ??
-        (row.classification === "VALID_AND_AUTOMATABLE" ? 0 : 1),
+      created: useStoredCounts ? (storedResolution?.createdCount ?? 0) : 0,
+      failed: useStoredCounts ? (storedResolution?.failedCount ?? 0) : 0,
+      skipped: useStoredCounts ? (storedResolution?.skippedCount ?? 0) : 0,
+      alreadyProcessed: useStoredCounts ? (storedResolution?.alreadyProcessedCount ?? 0) : 0,
+      unresolved: useStoredCounts
+        ? (storedResolution?.unresolvedCount ?? 0)
+        : resolvedAction === "SKIP"
+          ? 1
+          : row.classification === "VALID_AND_AUTOMATABLE"
+            ? 0
+            : 1,
       reasons: baseReasons,
+      bookingConflictReasons: [],
       occurrences: [],
     };
   });
@@ -2241,7 +2779,14 @@ export async function getTimetableImportProcessedRows(
       booking,
     });
 
-    if (resolutionByRowId.has(occurrence.rowId)) {
+    const isBookingConflict =
+      occurrence.status === "FAILED" && isBookingConflictMessage(occurrence.errorMessage);
+
+    if (isBookingConflict && occurrence.errorMessage) {
+      row.bookingConflictReasons.push(occurrence.errorMessage);
+    }
+
+    if (batch.status === "COMMITTED" && resolutionByRowId.has(occurrence.rowId)) {
       continue;
     }
 
@@ -2253,14 +2798,14 @@ export async function getTimetableImportProcessedRows(
       row.skipped += 1;
     } else {
       row.failed += 1;
-      if (occurrence.errorMessage) {
+      if (occurrence.errorMessage && !isBookingConflict) {
         row.reasons.push(occurrence.errorMessage);
       }
     }
   }
 
   for (const row of reportRows) {
-    if (!resolutionByRowId.has(row.rowId) && row.action === "SKIP" && row.skipped === 0) {
+    if (batch.status !== "COMMITTED" && row.action === "SKIP" && row.skipped === 0) {
       row.skipped = 1;
       if (row.unresolved === 0) {
         row.unresolved = 1;
@@ -2268,6 +2813,7 @@ export async function getTimetableImportProcessedRows(
     }
 
     row.reasons = Array.from(new Set(row.reasons));
+    row.bookingConflictReasons = Array.from(new Set(row.bookingConflictReasons));
   }
 
   return {

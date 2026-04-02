@@ -4,6 +4,9 @@ import {
   addDayLane as apiAddDayLane,
   createBooking as apiCreateBooking,
   commitTimetableImport as apiCommitTimetableImport,
+  deleteTimetableImportBatch as apiDeleteTimetableImportBatch,
+  getTimetableImportBatch as apiGetTimetableImportBatch,
+  getTimetableImportBatches as apiGetTimetableImportBatches,
   deleteBooking as apiDeleteBooking,
   getBuildings,
   createBlock as apiCreateBlock,
@@ -17,11 +20,13 @@ import {
   getFullGrid,
   pruneAllBookings as apiPruneAllBookings,
   pruneBookingsBySlotSystem as apiPruneBookingsBySlotSystem,
+  reallocateTimetableImport as apiReallocateTimetableImport,
   removeDayLane as apiRemoveDayLane,
   getRooms,
   getSlotSystems,
   getTimetableImportProcessedRows as apiGetTimetableImportProcessedRows,
   previewTimetableImport as apiPreviewTimetableImport,
+  saveTimetableImportDecisions as apiSaveTimetableImportDecisions,
   updateBooking as apiUpdateBooking,
   updateTimeBand as apiUpdateTimeBand,
 } from "../api/api";
@@ -34,11 +39,13 @@ import type {
   SlotFullGrid,
   SlotSystem,
   SlotTimeBand,
+  TimetableImportBatchSummary,
   TimetableImportCommitDecision,
   TimetableImportCommitReport,
   TimetableImportProcessedRowsReport,
   TimetableImportPreviewRow,
   TimetableImportPreviewReport,
+  TimetableImportSavedDecision,
 } from "../api/api";
 import { formatDateDDMMYYYY } from "../utils/datetime";
 import { DateInput } from "../components/DateInput";
@@ -136,6 +143,64 @@ function createDecisionForPreviewRow(row: TimetableImportPreviewRow): RowDecisio
   };
 }
 
+function applySavedDecisionToRow(
+  row: TimetableImportPreviewRow,
+  savedDecision: TimetableImportSavedDecision,
+): RowDecisionState {
+  const next = createDecisionForPreviewRow(row);
+
+  next.action = savedDecision.action;
+
+  if (savedDecision.resolvedSlotLabel) {
+    next.resolvedSlotLabel = savedDecision.resolvedSlotLabel;
+  }
+
+  if (savedDecision.resolvedRoomId) {
+    next.resolvedRoomId = savedDecision.resolvedRoomId;
+  }
+
+  if (savedDecision.createSlot) {
+    next.slotResolutionMode = "CREATE_SLOT";
+    next.createSlotDayId = savedDecision.createSlot.dayId;
+    next.createSlotStartBandId = savedDecision.createSlot.startBandId;
+    next.createSlotEndBandId = savedDecision.createSlot.endBandId;
+    next.createSlotLaneIndex = savedDecision.createSlot.laneIndex ?? 0;
+    next.createSlotLabel = savedDecision.createSlot.label ?? next.createSlotLabel;
+  } else if (savedDecision.resolvedSlotLabel) {
+    next.slotResolutionMode = "SELECT_EXISTING";
+  }
+
+  if (savedDecision.createRoom) {
+    next.roomResolutionMode = "CREATE_ROOM";
+    next.createRoomBuildingName = savedDecision.createRoom.buildingName;
+    next.createRoomName = savedDecision.createRoom.roomName;
+  } else if (savedDecision.resolvedRoomId) {
+    next.roomResolutionMode = "SELECT_EXISTING";
+  }
+
+  return next;
+}
+
+function buildRowDecisionsFromReport(
+  report: TimetableImportPreviewReport,
+): Record<number, RowDecisionState> {
+  const savedByRowId = new Map<number, TimetableImportSavedDecision>(
+    report.savedDecisions.map((decision) => [decision.rowId, decision]),
+  );
+
+  const decisions: Record<number, RowDecisionState> = {};
+
+  for (const row of report.rows) {
+    const savedDecision = savedByRowId.get(row.rowId);
+
+    decisions[row.rowId] = savedDecision
+      ? applySavedDecisionToRow(row, savedDecision)
+      : createDecisionForPreviewRow(row);
+  }
+
+  return decisions;
+}
+
 function toCellKey(dayId: number, laneIndex: number, bandIndex: number): string {
   return `${dayId}:${laneIndex}:${bandIndex}`;
 }
@@ -187,6 +252,20 @@ function toDateInputValue(value: string): string {
   return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
 
+function toDateOnlyInputValue(value: string): string {
+  const parsed = new Date(value);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
 export function TimetableBuilderPage() {
   const [slotSystems, setSlotSystems] = useState<SlotSystem[]>([]);
   const [selectedSystemId, setSelectedSystemId] = useState<number | "">("");
@@ -218,7 +297,16 @@ export function TimetableBuilderPage() {
 
   const [importLoading, setImportLoading] = useState(false);
   const [commitLoading, setCommitLoading] = useState(false);
+  const [saveDecisionsLoading, setSaveDecisionsLoading] = useState(false);
+  const [reallocateLoading, setReallocateLoading] = useState(false);
+  const [deleteBatchLoading, setDeleteBatchLoading] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+  const [importInfo, setImportInfo] = useState<string | null>(null);
+
+  const [importBatches, setImportBatches] = useState<TimetableImportBatchSummary[]>([]);
+  const [importBatchesLoading, setImportBatchesLoading] = useState(false);
+  const [importBatchesError, setImportBatchesError] = useState<string | null>(null);
+  const [selectedBatchId, setSelectedBatchId] = useState<number | "">("");
 
   const [previewReport, setPreviewReport] = useState<TimetableImportPreviewReport | null>(null);
   const [commitReport, setCommitReport] = useState<TimetableImportCommitReport | null>(null);
@@ -240,6 +328,14 @@ export function TimetableBuilderPage() {
   const days: SlotDay[] = grid?.days ?? [];
   const timeBands: SlotTimeBand[] = grid?.timeBands ?? [];
   const blocks: SlotBlock[] = grid?.blocks ?? [];
+
+  const isImportBatchCommitted = previewReport?.status === "COMMITTED";
+  const isDecisionEditingLocked =
+    commitLoading ||
+    importLoading ||
+    saveDecisionsLoading ||
+    reallocateLoading ||
+    deleteBatchLoading;
 
   const slotLabelOptions = useMemo(() => {
     const labels = Array.from(
@@ -465,6 +561,52 @@ export function TimetableBuilderPage() {
     }
   };
 
+  const loadImportBatches = async (slotSystemId: number | "") => {
+    if (slotSystemId === "") {
+      setImportBatches([]);
+      setImportBatchesError(null);
+      setSelectedBatchId("");
+      return;
+    }
+
+    setImportBatchesLoading(true);
+    setImportBatchesError(null);
+
+    try {
+      const batches = await apiGetTimetableImportBatches({
+        slotSystemId,
+        limit: 50,
+      });
+
+      setImportBatches(batches);
+
+      setSelectedBatchId((current) => {
+        if (current !== "" && batches.some((batch) => batch.batchId === current)) {
+          return current;
+        }
+
+        if (previewReport && batches.some((batch) => batch.batchId === previewReport.batchId)) {
+          return previewReport.batchId;
+        }
+
+        return "";
+      });
+    } catch (e) {
+      setImportBatches([]);
+      setImportBatchesError(e instanceof Error ? e.message : "Failed to load import batches");
+    } finally {
+      setImportBatchesLoading(false);
+    }
+  };
+
+  const hydratePreviewFromBatch = (report: TimetableImportPreviewReport) => {
+    setPreviewReport(report);
+    setRowDecisions(buildRowDecisionsFromReport(report));
+    setImportTermStart(toDateOnlyInputValue(report.termStartDate));
+    setImportTermEnd(toDateOnlyInputValue(report.termEndDate));
+    setSelectedBatchId(report.batchId);
+  };
+
   const hydrateProcessedBookingState = (report: TimetableImportProcessedRowsReport) => {
     const nextEdits: Record<number, ProcessedBookingEditState> = {};
     const nextDrafts: Record<number, ProcessedBookingEditState> = {};
@@ -648,10 +790,14 @@ export function TimetableBuilderPage() {
   useEffect(() => {
     if (selectedSystemId === "") {
       setGrid(null);
+      setImportBatches([]);
+      setImportBatchesError(null);
+      setSelectedBatchId("");
       return;
     }
 
     void loadGrid(selectedSystemId);
+    void loadImportBatches(selectedSystemId);
   }, [selectedSystemId]);
 
   const handleCreateSlotSystem = async (event: FormEvent<HTMLFormElement>) => {
@@ -1078,7 +1224,9 @@ export function TimetableBuilderPage() {
   const handlePreviewImport = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (selectedSystemId === "") {
+    const activeSystemId = selectedSystemId;
+
+    if (activeSystemId === "") {
       setImportError("Select a slot system before uploading");
       return;
     }
@@ -1095,6 +1243,7 @@ export function TimetableBuilderPage() {
 
     setImportLoading(true);
     setImportError(null);
+    setImportInfo(null);
     setCommitReport(null);
     setProcessedRowsReport(null);
     setProcessedRowsError(null);
@@ -1103,28 +1252,53 @@ export function TimetableBuilderPage() {
       const aliasMap = parseAliasMap(aliasMapText);
 
       const report = await apiPreviewTimetableImport({
-        slotSystemId: selectedSystemId,
+        slotSystemId: activeSystemId,
         termStartDate: importTermStart,
         termEndDate: importTermEnd,
         file: allocationFile,
         aliasMap,
       });
 
-      setPreviewReport(report);
-
-      const initialDecisions: Record<number, RowDecisionState> = {};
-
-      for (const row of report.rows) {
-        initialDecisions[row.rowId] = createDecisionForPreviewRow(row);
-      }
-
-      setRowDecisions(initialDecisions);
+      hydratePreviewFromBatch(report);
       await loadProcessedRows(report.batchId);
+      await loadImportBatches(activeSystemId);
     } catch (e) {
       setImportError(e instanceof Error ? e.message : "Failed to preview import");
     } finally {
       setImportLoading(false);
     }
+  };
+
+  const loadImportBatchForEditing = async (batchId: number) => {
+    setImportLoading(true);
+    setImportError(null);
+    setImportInfo(null);
+    setCommitReport(null);
+
+    try {
+      const report = await apiGetTimetableImportBatch(batchId);
+
+      hydratePreviewFromBatch(report);
+
+      if (selectedSystemId !== report.slotSystemId) {
+        setSelectedSystemId(report.slotSystemId);
+      }
+
+      await loadProcessedRows(report.batchId);
+    } catch (e) {
+      setImportError(e instanceof Error ? e.message : "Failed to load import batch");
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
+  const handleLoadSelectedBatch = async () => {
+    if (selectedBatchId === "") {
+      setImportError("Choose a batch to load");
+      return;
+    }
+
+    await loadImportBatchForEditing(selectedBatchId);
   };
 
   const updateRowDecision = (rowId: number, patch: Partial<RowDecisionState>) => {
@@ -1141,85 +1315,209 @@ export function TimetableBuilderPage() {
     });
   };
 
+  const buildImportDecisionsPayload = (): TimetableImportCommitDecision[] => {
+    return Object.entries(rowDecisions).reduce<TimetableImportCommitDecision[]>(
+      (acc, [rawRowId, decision]) => {
+        const rowId = Number(rawRowId);
+
+        if (!Number.isInteger(rowId) || rowId <= 0) {
+          return acc;
+        }
+
+        if (decision.action === "RESOLVE") {
+          const resolveDecision: TimetableImportCommitDecision = {
+            rowId,
+            action: "RESOLVE",
+          };
+
+          const trimmedResolvedSlotLabel = decision.resolvedSlotLabel.trim();
+          const trimmedCreateSlotLabel = decision.createSlotLabel.trim();
+          const trimmedCreateRoomBuilding = decision.createRoomBuildingName.trim();
+          const trimmedCreateRoomName = decision.createRoomName.trim();
+
+          if (decision.slotResolutionMode === "CREATE_SLOT") {
+            if (
+              decision.createSlotDayId !== "" &&
+              decision.createSlotStartBandId !== "" &&
+              decision.createSlotEndBandId !== ""
+            ) {
+              const laneIndex = Number.isFinite(decision.createSlotLaneIndex)
+                ? Math.max(0, Math.trunc(decision.createSlotLaneIndex))
+                : 0;
+
+              resolveDecision.createSlot = {
+                dayId: decision.createSlotDayId,
+                startBandId: decision.createSlotStartBandId,
+                endBandId: decision.createSlotEndBandId,
+                laneIndex,
+                ...(trimmedCreateSlotLabel ? { label: trimmedCreateSlotLabel } : {}),
+              };
+            }
+          } else if (trimmedResolvedSlotLabel) {
+            resolveDecision.resolvedSlotLabel = trimmedResolvedSlotLabel;
+          }
+
+          if (decision.roomResolutionMode === "CREATE_ROOM") {
+            if (trimmedCreateRoomBuilding && trimmedCreateRoomName) {
+              resolveDecision.createRoom = {
+                buildingName: trimmedCreateRoomBuilding,
+                roomName: trimmedCreateRoomName,
+              };
+            }
+          } else if (decision.resolvedRoomId !== "") {
+            resolveDecision.resolvedRoomId = decision.resolvedRoomId;
+          }
+
+          acc.push(resolveDecision);
+
+          return acc;
+        }
+
+        acc.push({
+          rowId,
+          action: decision.action,
+        });
+
+        return acc;
+      },
+      [],
+    );
+  };
+
+  const handleSaveImportDecisions = async () => {
+    if (!previewReport) {
+      return;
+    }
+
+    setSaveDecisionsLoading(true);
+    setImportError(null);
+    setImportInfo(null);
+
+    try {
+      const decisions = buildImportDecisionsPayload();
+      await apiSaveTimetableImportDecisions(previewReport.batchId, decisions);
+
+      const refreshedReport = await apiGetTimetableImportBatch(previewReport.batchId);
+      hydratePreviewFromBatch(refreshedReport);
+      setImportInfo(`Saved allocation decisions for batch #${refreshedReport.batchId}.`);
+
+      await loadProcessedRows(refreshedReport.batchId);
+      await loadImportBatches(refreshedReport.slotSystemId);
+    } catch (e) {
+      setImportError(e instanceof Error ? e.message : "Failed to save decisions");
+    } finally {
+      setSaveDecisionsLoading(false);
+    }
+  };
+
+  const handleReallocateImport = async () => {
+    if (!previewReport) {
+      return;
+    }
+
+    if (previewReport.status !== "COMMITTED") {
+      setImportError("Load a committed batch to run reallocation");
+      return;
+    }
+
+    setReallocateLoading(true);
+    setImportError(null);
+    setImportInfo(null);
+
+    try {
+      const decisions = buildImportDecisionsPayload();
+
+      const report = await apiReallocateTimetableImport(previewReport.batchId, decisions);
+      setCommitReport(report);
+
+      const refreshedReport = await apiGetTimetableImportBatch(previewReport.batchId);
+      hydratePreviewFromBatch(refreshedReport);
+      setImportInfo(`Reallocated committed batch #${refreshedReport.batchId}.`);
+
+      await loadProcessedRows(previewReport.batchId);
+      await loadImportBatches(refreshedReport.slotSystemId);
+    } catch (e) {
+      setImportError(e instanceof Error ? e.message : "Failed to reallocate batch");
+    } finally {
+      setReallocateLoading(false);
+    }
+  };
+
+  const handleDeleteSelectedBatch = async () => {
+    const activeBatchId = selectedBatchId !== "" ? selectedBatchId : previewReport?.batchId;
+
+    if (!activeBatchId) {
+      setImportError("Choose or load a batch first");
+      return;
+    }
+
+    const approved =
+      typeof window === "undefined"
+        ? true
+        : window.confirm(
+            `Delete batch #${activeBatchId}? This will remove all linked imported bookings and cannot be undone.`,
+          );
+
+    if (!approved) {
+      return;
+    }
+
+    setDeleteBatchLoading(true);
+    setImportError(null);
+    setImportInfo(null);
+
+    try {
+      const result = await apiDeleteTimetableImportBatch(activeBatchId);
+
+      if (previewReport?.batchId === activeBatchId) {
+        setPreviewReport(null);
+        setRowDecisions({});
+        setCommitReport(null);
+        setProcessedRowsReport(null);
+        setProcessedRowsError(null);
+        setProcessedBookingEdits({});
+        setNewRowBookingDrafts({});
+      }
+
+      setSelectedBatchId("");
+      await loadImportBatches(selectedSystemId);
+
+      const bookingLabel = result.deletedBookings === 1 ? "booking" : "bookings";
+      setImportInfo(
+        `Deleted batch #${result.batchId} and removed ${result.deletedBookings} linked ${bookingLabel}.`,
+      );
+    } catch (e) {
+      setImportError(e instanceof Error ? e.message : "Failed to delete import batch");
+    } finally {
+      setDeleteBatchLoading(false);
+    }
+  };
+
   const handleCommitImport = async () => {
     if (!previewReport) {
       return;
     }
 
+    if (previewReport.status === "COMMITTED") {
+      setImportError("This batch is already committed");
+      return;
+    }
+
     setCommitLoading(true);
     setImportError(null);
+    setImportInfo(null);
 
     try {
-      const decisions = Object.entries(rowDecisions).reduce<TimetableImportCommitDecision[]>(
-        (acc, [rawRowId, decision]) => {
-          const rowId = Number(rawRowId);
-
-          if (!Number.isInteger(rowId) || rowId <= 0) {
-            return acc;
-          }
-
-          if (decision.action === "RESOLVE") {
-            const resolveDecision: TimetableImportCommitDecision = {
-              rowId,
-              action: "RESOLVE",
-            };
-
-            const trimmedResolvedSlotLabel = decision.resolvedSlotLabel.trim();
-            const trimmedCreateSlotLabel = decision.createSlotLabel.trim();
-            const trimmedCreateRoomBuilding = decision.createRoomBuildingName.trim();
-            const trimmedCreateRoomName = decision.createRoomName.trim();
-
-            if (decision.slotResolutionMode === "CREATE_SLOT") {
-              if (
-                decision.createSlotDayId !== "" &&
-                decision.createSlotStartBandId !== "" &&
-                decision.createSlotEndBandId !== ""
-              ) {
-                const laneIndex = Number.isFinite(decision.createSlotLaneIndex)
-                  ? Math.max(0, Math.trunc(decision.createSlotLaneIndex))
-                  : 0;
-
-                resolveDecision.createSlot = {
-                  dayId: decision.createSlotDayId,
-                  startBandId: decision.createSlotStartBandId,
-                  endBandId: decision.createSlotEndBandId,
-                  laneIndex,
-                  ...(trimmedCreateSlotLabel ? { label: trimmedCreateSlotLabel } : {}),
-                };
-              }
-            } else if (trimmedResolvedSlotLabel) {
-              resolveDecision.resolvedSlotLabel = trimmedResolvedSlotLabel;
-            }
-
-            if (decision.roomResolutionMode === "CREATE_ROOM") {
-              if (trimmedCreateRoomBuilding && trimmedCreateRoomName) {
-                resolveDecision.createRoom = {
-                  buildingName: trimmedCreateRoomBuilding,
-                  roomName: trimmedCreateRoomName,
-                };
-              }
-            } else if (decision.resolvedRoomId !== "") {
-              resolveDecision.resolvedRoomId = decision.resolvedRoomId;
-            }
-
-            acc.push(resolveDecision);
-
-            return acc;
-          }
-
-          acc.push({
-            rowId,
-            action: decision.action,
-          });
-
-          return acc;
-        },
-        [],
-      );
+      const decisions = buildImportDecisionsPayload();
 
       const report = await apiCommitTimetableImport(previewReport.batchId, decisions);
       setCommitReport(report);
+
+      const refreshedReport = await apiGetTimetableImportBatch(previewReport.batchId);
+      hydratePreviewFromBatch(refreshedReport);
+
       await loadProcessedRows(previewReport.batchId);
+      await loadImportBatches(refreshedReport.slotSystemId);
     } catch (e) {
       setImportError(e instanceof Error ? e.message : "Failed to commit import");
     } finally {
@@ -1327,9 +1625,94 @@ export function TimetableBuilderPage() {
         <div className="card-header">
           <h3>Classroom Allocation Import</h3>
           {previewReport && (
-            <span className="badge badge-role">Batch #{previewReport.batchId}</span>
+            <span className="badge badge-role">
+              Batch #{previewReport.batchId} · {previewReport.status}
+            </span>
           )}
         </div>
+
+        <div className="form-row">
+          <div className="form-field">
+            <label htmlFor="importBatchSelect">Open existing batch</label>
+            <select
+              id="importBatchSelect"
+              className="input"
+              value={selectedBatchId}
+              onChange={(e) =>
+                setSelectedBatchId(e.target.value === "" ? "" : Number(e.target.value))
+              }
+              disabled={
+                selectedSystemId === "" ||
+                importLoading ||
+                commitLoading ||
+                saveDecisionsLoading ||
+                importBatchesLoading
+              }
+            >
+              <option value="">Select a batch</option>
+              {importBatches.map((batch) => (
+                <option key={batch.batchId} value={batch.batchId}>
+                  #{batch.batchId} · {batch.status} · {formatDateDDMMYYYY(batch.termStartDate)} to {formatDateDDMMYYYY(batch.termEndDate)} · {batch.fileName}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-field">
+            <label>Batch actions</label>
+            <div className="btn-group">
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => void handleLoadSelectedBatch()}
+                disabled={
+                  selectedBatchId === "" ||
+                  importLoading ||
+                  commitLoading ||
+                  saveDecisionsLoading ||
+                  reallocateLoading ||
+                  deleteBatchLoading
+                }
+              >
+                {importLoading ? "Loading..." : "Load Selected Batch"}
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={() => void handleDeleteSelectedBatch()}
+                disabled={
+                  (selectedBatchId === "" && !previewReport) ||
+                  importLoading ||
+                  commitLoading ||
+                  saveDecisionsLoading ||
+                  reallocateLoading ||
+                  deleteBatchLoading
+                }
+              >
+                {deleteBatchLoading ? "Deleting..." : "Delete Batch"}
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => void loadImportBatches(selectedSystemId)}
+                disabled={
+                  selectedSystemId === "" ||
+                  importLoading ||
+                  commitLoading ||
+                  saveDecisionsLoading ||
+                  reallocateLoading ||
+                  deleteBatchLoading ||
+                  importBatchesLoading
+                }
+              >
+                {importBatchesLoading ? "Refreshing..." : "Refresh List"}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {importBatchesError && (
+          <div className="alert alert-error mt-4">{importBatchesError}</div>
+        )}
 
         <div className="form-row">
           <div className="form-field">
@@ -1339,7 +1722,13 @@ export function TimetableBuilderPage() {
               mode="date"
               value={importTermStart}
               onChange={setImportTermStart}
-              disabled={importLoading || commitLoading}
+              disabled={
+                importLoading ||
+                commitLoading ||
+                saveDecisionsLoading ||
+                reallocateLoading ||
+                deleteBatchLoading
+              }
             />
           </div>
           <div className="form-field">
@@ -1349,7 +1738,13 @@ export function TimetableBuilderPage() {
               mode="date"
               value={importTermEnd}
               onChange={setImportTermEnd}
-              disabled={importLoading || commitLoading}
+              disabled={
+                importLoading ||
+                commitLoading ||
+                saveDecisionsLoading ||
+                reallocateLoading ||
+                deleteBatchLoading
+              }
             />
           </div>
         </div>
@@ -1364,7 +1759,13 @@ export function TimetableBuilderPage() {
               value={aliasMapText}
               onChange={(e) => setAliasMapText(e.target.value)}
               placeholder={"Alias Name=Canonical Building Name\nECE=Electronics Block"}
-              disabled={importLoading || commitLoading}
+              disabled={
+                importLoading ||
+                commitLoading ||
+                saveDecisionsLoading ||
+                reallocateLoading ||
+                deleteBatchLoading
+              }
             />
           </div>
           <div className="form-field">
@@ -1375,25 +1776,81 @@ export function TimetableBuilderPage() {
               type="file"
               accept=".csv,.xlsx,.xls"
               onChange={(e) => setAllocationFile(e.target.files?.[0] ?? null)}
-              disabled={importLoading || commitLoading}
+              disabled={
+                importLoading ||
+                commitLoading ||
+                saveDecisionsLoading ||
+                reallocateLoading ||
+                deleteBatchLoading
+              }
             />
           </div>
         </div>
 
         <div className="btn-group">
-          <button type="submit" className="btn btn-primary" disabled={importLoading || commitLoading}>
+          <button
+            type="submit"
+            className="btn btn-primary"
+            disabled={
+              importLoading ||
+              commitLoading ||
+              saveDecisionsLoading ||
+              reallocateLoading ||
+              deleteBatchLoading
+            }
+          >
             {importLoading ? "Previewing..." : "Preview Upload"}
+          </button>
+          <button
+            type="button"
+            className="btn btn-warning"
+            onClick={() => void handleSaveImportDecisions()}
+            disabled={
+              !previewReport ||
+              saveDecisionsLoading ||
+              commitLoading ||
+              importLoading ||
+              reallocateLoading ||
+              deleteBatchLoading
+            }
+          >
+            {saveDecisionsLoading ? "Saving Decisions..." : "Save Decisions For Later"}
+          </button>
+          <button
+            type="button"
+            className="btn btn-warning"
+            onClick={() => void handleReallocateImport()}
+            disabled={
+              !previewReport ||
+              !isImportBatchCommitted ||
+              reallocateLoading ||
+              saveDecisionsLoading ||
+              commitLoading ||
+              importLoading ||
+              deleteBatchLoading
+            }
+          >
+            {reallocateLoading ? "Reallocating..." : "Reallocate Committed Batch"}
           </button>
           <button
             type="button"
             className="btn btn-success"
             onClick={() => void handleCommitImport()}
-            disabled={!previewReport || commitLoading || importLoading}
+            disabled={
+              !previewReport ||
+              isImportBatchCommitted ||
+              commitLoading ||
+              importLoading ||
+              saveDecisionsLoading ||
+              reallocateLoading ||
+              deleteBatchLoading
+            }
           >
             {commitLoading ? "Committing..." : "Commit Valid/Resolved Rows"}
           </button>
         </div>
 
+        {importInfo && <div className="alert alert-success mt-4">{importInfo}</div>}
         {importError && <div className="alert alert-error mt-4">{importError}</div>}
 
         {previewReport && (
@@ -1408,6 +1865,12 @@ export function TimetableBuilderPage() {
             {previewReport.warnings.length > 0 && (
               <div className="alert" style={{ marginBottom: "var(--space-3)" }}>
                 {previewReport.warnings.join(" | ")}
+              </div>
+            )}
+
+            {isImportBatchCommitted && (
+              <div className="alert" style={{ marginBottom: "var(--space-3)" }}>
+                This batch is committed. You can adjust decisions, save, and run reallocation to regenerate its imported bookings.
               </div>
             )}
 
@@ -1464,7 +1927,7 @@ export function TimetableBuilderPage() {
                                 action: e.target.value as RowDecisionState["action"],
                               })
                             }
-                            disabled={commitLoading || importLoading}
+                            disabled={isDecisionEditingLocked}
                           >
                             {row.classification === "VALID_AND_AUTOMATABLE" && (
                               <option value="AUTO">Auto</option>
@@ -1486,7 +1949,7 @@ export function TimetableBuilderPage() {
                                       slotResolutionMode: e.target.value as SlotResolutionMode,
                                     })
                                   }
-                                  disabled={commitLoading || importLoading}
+                                  disabled={isDecisionEditingLocked}
                                 >
                                   <option value="SELECT_EXISTING">Select existing slot</option>
                                   <option value="CREATE_SLOT">Create slot in grid</option>
@@ -1502,7 +1965,7 @@ export function TimetableBuilderPage() {
                                       roomResolutionMode: e.target.value as RoomResolutionMode,
                                     })
                                   }
-                                  disabled={commitLoading || importLoading}
+                                  disabled={isDecisionEditingLocked}
                                 >
                                   <option value="SELECT_EXISTING">Select existing room</option>
                                   <option value="CREATE_ROOM">Create room</option>
@@ -1523,7 +1986,7 @@ export function TimetableBuilderPage() {
                                       })
                                     }
                                     placeholder="Exact slot label"
-                                    disabled={commitLoading || importLoading}
+                                    disabled={isDecisionEditingLocked}
                                   />
                                   <datalist id={`slot-label-options-${row.rowId}`}>
                                     {slotLabelOptions.map((label) => (
@@ -1545,7 +2008,7 @@ export function TimetableBuilderPage() {
                                         })
                                       }
                                       placeholder="e.g. L12"
-                                      disabled={commitLoading || importLoading}
+                                      disabled={isDecisionEditingLocked}
                                     />
                                   </div>
                                   <div className="form-field">
@@ -1559,7 +2022,7 @@ export function TimetableBuilderPage() {
                                             e.target.value === "" ? "" : Number(e.target.value),
                                         })
                                       }
-                                      disabled={commitLoading || importLoading}
+                                      disabled={isDecisionEditingLocked}
                                     >
                                       <option value="">Select day</option>
                                       {days.map((day) => (
@@ -1584,7 +2047,7 @@ export function TimetableBuilderPage() {
                                             startBandId === "" ? "" : startBandId,
                                         });
                                       }}
-                                      disabled={commitLoading || importLoading}
+                                      disabled={isDecisionEditingLocked}
                                     >
                                       <option value="">Select start band</option>
                                       {timeBands.map((band) => (
@@ -1605,7 +2068,7 @@ export function TimetableBuilderPage() {
                                             e.target.value === "" ? "" : Number(e.target.value),
                                         })
                                       }
-                                      disabled={commitLoading || importLoading}
+                                      disabled={isDecisionEditingLocked}
                                     >
                                       <option value="">Select end band</option>
                                       {createSlotEndBandOptions.map((band) => (
@@ -1628,7 +2091,7 @@ export function TimetableBuilderPage() {
                                           createSlotLaneIndex: Number(e.target.value || "0"),
                                         })
                                       }
-                                      disabled={commitLoading || importLoading}
+                                      disabled={isDecisionEditingLocked}
                                     />
                                   </div>
                                 </>
@@ -1646,7 +2109,7 @@ export function TimetableBuilderPage() {
                                           e.target.value === "" ? "" : Number(e.target.value),
                                       })
                                     }
-                                    disabled={commitLoading || importLoading}
+                                    disabled={isDecisionEditingLocked}
                                   >
                                     <option value="">Select room</option>
                                     {rooms.map((room) => (
@@ -1670,7 +2133,7 @@ export function TimetableBuilderPage() {
                                         })
                                       }
                                       placeholder="e.g. Civil Block"
-                                      disabled={commitLoading || importLoading}
+                                      disabled={isDecisionEditingLocked}
                                     />
                                   </div>
                                   <div className="form-field">
@@ -1685,7 +2148,7 @@ export function TimetableBuilderPage() {
                                         })
                                       }
                                       placeholder="e.g. 204"
-                                      disabled={commitLoading || importLoading}
+                                      disabled={isDecisionEditingLocked}
                                     />
                                   </div>
                                 </>
@@ -1707,6 +2170,12 @@ export function TimetableBuilderPage() {
               Commit {commitReport.status} · Created {commitReport.autoCreatedBookings} · Already Processed {commitReport.alreadyProcessedBookings} · Failed {commitReport.failedOccurrences}
             </div>
 
+            {commitReport.bookingConflictOccurrences > 0 && (
+              <div className="alert" style={{ marginTop: "var(--space-2)" }}>
+                Current bookings blocked {commitReport.bookingConflictOccurrences} occurrence(s) across {commitReport.bookingConflictRows} row(s).
+              </div>
+            )}
+
             <div className="data-list" style={{ marginTop: "var(--space-3)" }}>
               {commitReport.rowResults.map((row) => (
                 <div className="data-item" key={row.rowId}>
@@ -1717,6 +2186,12 @@ export function TimetableBuilderPage() {
                     <div className="data-item-subtitle">
                       Created {row.created} · Already Processed {row.alreadyProcessed} · Failed {row.failed} · Unresolved {row.unresolved}
                     </div>
+
+                    {row.bookingConflictReasons.length > 0 && (
+                      <div className="alert" style={{ marginTop: "var(--space-2)" }}>
+                        Booking conflicts: {row.bookingConflictReasons.join(" | ")}
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -1783,6 +2258,12 @@ export function TimetableBuilderPage() {
                         {row.reasons.length > 0 && (
                           <div className="loading-text" style={{ marginTop: "var(--space-1)" }}>
                             Reasons: {row.reasons.join(" | ")}
+                          </div>
+                        )}
+
+                        {row.bookingConflictReasons.length > 0 && (
+                          <div className="alert" style={{ marginTop: "var(--space-2)" }}>
+                            Booking conflicts with current schedule: {row.bookingConflictReasons.join(" | ")}
                           </div>
                         )}
 
