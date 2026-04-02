@@ -1,17 +1,20 @@
 import { createHash } from "crypto";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import XLSX from "xlsx";
 import { db } from "../../db";
 import {
+  bookings,
   buildings,
   rooms,
   timetableImportBatches,
+  timetableImportRowResolutions,
   timetableImportRows,
   timetableImportOccurrences,
 } from "../../db/schema";
 import { createBookingsBulk } from "../../services/bookingService";
 import type { BookingCreateResult } from "../../services/bookingService";
 import { DAY_OF_WEEK_VALUES, slotBlocks, slotDays, slotSystems, slotTimeBands } from "./schema";
+import { createBlock } from "./service";
 
 type DayOfWeek = (typeof DAY_OF_WEEK_VALUES)[number];
 
@@ -27,11 +30,33 @@ type PreviewClassification =
 
 type ImportDecisionAction = "AUTO" | "RESOLVE" | "SKIP";
 
+type ImportDecisionCreateSlot = {
+  dayId: number;
+  startBandId: number;
+  endBandId: number;
+  laneIndex?: number;
+  label?: string;
+};
+
+type ImportDecisionCreateRoom = {
+  buildingName: string;
+  roomName: string;
+};
+
 type ImportDecision = {
   rowId: number;
   action: ImportDecisionAction;
   resolvedSlotLabel?: string;
   resolvedRoomId?: number;
+  createSlot?: ImportDecisionCreateSlot;
+  createRoom?: ImportDecisionCreateRoom;
+};
+
+type BuildingRoomLookup = Awaited<ReturnType<typeof getBuildingRoomLookup>>;
+
+type SlotSystemStructure = {
+  dayById: Map<number, { id: number; laneCount: number }>;
+  bandIndexById: Map<number, number>;
 };
 
 type SlotDescriptor = {
@@ -116,6 +141,59 @@ type CommitReport = {
   warnings: string[];
 };
 
+type ProcessedOccurrenceReport = {
+  occurrenceId: number;
+  status:
+    | "PENDING"
+    | "CREATED"
+    | "FAILED"
+    | "SKIPPED"
+    | "UNRESOLVED"
+    | "ALREADY_PROCESSED";
+  roomId: number;
+  startAt: string;
+  endAt: string;
+  sourceRef: string | null;
+  errorMessage: string | null;
+  booking: {
+    id: number;
+    roomId: number;
+    startAt: string;
+    endAt: string;
+    requestId: number | null;
+    source: "MANUAL" | "BOOKING_REQUEST" | "TIMETABLE_IMPORT";
+    sourceRef: string | null;
+  } | null;
+};
+
+type ProcessedRowReport = {
+  rowId: number;
+  rowIndex: number;
+  classification: PreviewClassification;
+  courseCode: string;
+  slot: string;
+  classroom: string;
+  action: ImportDecisionAction;
+  resolvedSlotLabel: string | null;
+  resolvedRoomId: number | null;
+  createSlot: ImportDecisionCreateSlot | null;
+  createRoom: ImportDecisionCreateRoom | null;
+  created: number;
+  failed: number;
+  skipped: number;
+  alreadyProcessed: number;
+  unresolved: number;
+  reasons: string[];
+  occurrences: ProcessedOccurrenceReport[];
+};
+
+type ProcessedRowsReport = {
+  batchId: number;
+  status: "PREVIEWED" | "COMMITTED";
+  warnings: string[];
+  rows: ProcessedRowReport[];
+};
+
 export type PreviewImportInput = {
   slotSystemId: number;
   termStartDate: string;
@@ -147,6 +225,14 @@ function normalizeSpace(value: string): string {
 
 function normalizeKey(value: string): string {
   return normalizeSpace(value).toLowerCase();
+}
+
+function toErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+
+  return fallback;
 }
 
 function hashValue(value: string): string {
@@ -562,6 +648,412 @@ async function getBuildingRoomLookup() {
   };
 }
 
+async function getSlotSystemStructure(slotSystemId: number): Promise<SlotSystemStructure> {
+  const [dayRows, timeBands] = await Promise.all([
+    db
+      .select({
+        id: slotDays.id,
+        laneCount: slotDays.laneCount,
+      })
+      .from(slotDays)
+      .where(eq(slotDays.slotSystemId, slotSystemId)),
+    db
+      .select({
+        id: slotTimeBands.id,
+      })
+      .from(slotTimeBands)
+      .where(eq(slotTimeBands.slotSystemId, slotSystemId))
+      .orderBy(asc(slotTimeBands.startTime), asc(slotTimeBands.endTime), asc(slotTimeBands.id)),
+  ]);
+
+  const dayById = new Map<number, { id: number; laneCount: number }>();
+
+  for (const day of dayRows) {
+    dayById.set(day.id, {
+      id: day.id,
+      laneCount: Math.max(1, day.laneCount),
+    });
+  }
+
+  const bandIndexById = new Map<number, number>();
+
+  timeBands.forEach((band, index) => {
+    bandIndexById.set(band.id, index);
+  });
+
+  return {
+    dayById,
+    bandIndexById,
+  };
+}
+
+async function ensureBuildingByName(input: {
+  buildingName: string;
+  buildingLookup: BuildingRoomLookup;
+}) {
+  const buildingName = normalizeSpace(input.buildingName);
+  const buildingKey = normalizeKey(buildingName);
+
+  const existingBuilding = input.buildingLookup.buildingByKey.get(buildingKey);
+  if (existingBuilding) {
+    return existingBuilding;
+  }
+
+  try {
+    const [created] = await db
+      .insert(buildings)
+      .values({
+        name: buildingName,
+      })
+      .returning({
+        id: buildings.id,
+        name: buildings.name,
+      });
+
+    if (!created) {
+      throw createServiceError(500, "Failed to create building during resolution");
+    }
+
+    const createdBuilding = {
+      id: created.id,
+      name: created.name,
+    };
+
+    input.buildingLookup.buildingByKey.set(normalizeKey(createdBuilding.name), createdBuilding);
+    input.buildingLookup.buildingNameById.set(createdBuilding.id, createdBuilding.name);
+
+    if (
+      !input.buildingLookup.allBuildingNames.some(
+        (name) => normalizeKey(name) === normalizeKey(createdBuilding.name),
+      )
+    ) {
+      input.buildingLookup.allBuildingNames.push(createdBuilding.name);
+    }
+
+    if (!input.buildingLookup.roomsByBuildingId.has(createdBuilding.id)) {
+      input.buildingLookup.roomsByBuildingId.set(createdBuilding.id, new Map());
+    }
+
+    return createdBuilding;
+  } catch (error: unknown) {
+    const pgError = (error as { cause?: { code?: string } }).cause;
+
+    if (pgError?.code !== "23505") {
+      throw error;
+    }
+
+    const [existing] = await db
+      .select({
+        id: buildings.id,
+        name: buildings.name,
+      })
+      .from(buildings)
+      .where(sql`lower(${buildings.name}) = ${buildingKey}`)
+      .limit(1);
+
+    if (!existing) {
+      throw error;
+    }
+
+    const existingBuilding = {
+      id: existing.id,
+      name: existing.name,
+    };
+
+    input.buildingLookup.buildingByKey.set(normalizeKey(existingBuilding.name), existingBuilding);
+    input.buildingLookup.buildingNameById.set(existingBuilding.id, existingBuilding.name);
+
+    if (
+      !input.buildingLookup.allBuildingNames.some(
+        (name) => normalizeKey(name) === normalizeKey(existingBuilding.name),
+      )
+    ) {
+      input.buildingLookup.allBuildingNames.push(existingBuilding.name);
+    }
+
+    if (!input.buildingLookup.roomsByBuildingId.has(existingBuilding.id)) {
+      input.buildingLookup.roomsByBuildingId.set(existingBuilding.id, new Map());
+    }
+
+    return existingBuilding;
+  }
+}
+
+async function ensureRoomForDecision(input: {
+  createRoom: ImportDecisionCreateRoom;
+  buildingLookup: BuildingRoomLookup;
+}): Promise<number> {
+  const buildingName = normalizeSpace(input.createRoom.buildingName);
+  const roomName = normalizeSpace(input.createRoom.roomName);
+
+  if (!buildingName || !roomName) {
+    throw createServiceError(400, "createRoom requires buildingName and roomName");
+  }
+
+  const building = await ensureBuildingByName({
+    buildingName,
+    buildingLookup: input.buildingLookup,
+  });
+
+  let roomsInBuilding = input.buildingLookup.roomsByBuildingId.get(building.id);
+  if (!roomsInBuilding) {
+    roomsInBuilding = new Map();
+    input.buildingLookup.roomsByBuildingId.set(building.id, roomsInBuilding);
+  }
+
+  const normalizedRoomName = normalizeKey(roomName);
+  const existingRoom = roomsInBuilding.get(normalizedRoomName);
+
+  if (existingRoom) {
+    return existingRoom.id;
+  }
+
+  try {
+    const [createdRoom] = await db
+      .insert(rooms)
+      .values({
+        name: roomName,
+        buildingId: building.id,
+      })
+      .returning({
+        id: rooms.id,
+        name: rooms.name,
+        buildingId: rooms.buildingId,
+      });
+
+    if (!createdRoom) {
+      throw createServiceError(500, "Failed to create room during resolution");
+    }
+
+    roomsInBuilding.set(normalizeKey(createdRoom.name), {
+      id: createdRoom.id,
+      name: createdRoom.name,
+    });
+
+    input.buildingLookup.roomById.set(createdRoom.id, {
+      id: createdRoom.id,
+      name: createdRoom.name,
+      buildingId: createdRoom.buildingId,
+    });
+
+    return createdRoom.id;
+  } catch (error: unknown) {
+    const pgError = (error as { cause?: { code?: string } }).cause;
+
+    if (pgError?.code !== "23505") {
+      throw error;
+    }
+
+    const [existingRoom] = await db
+      .select({
+        id: rooms.id,
+        name: rooms.name,
+        buildingId: rooms.buildingId,
+      })
+      .from(rooms)
+      .where(and(eq(rooms.buildingId, building.id), sql`lower(${rooms.name}) = ${normalizedRoomName}`))
+      .limit(1);
+
+    if (!existingRoom) {
+      throw error;
+    }
+
+    roomsInBuilding.set(normalizeKey(existingRoom.name), {
+      id: existingRoom.id,
+      name: existingRoom.name,
+    });
+
+    input.buildingLookup.roomById.set(existingRoom.id, {
+      id: existingRoom.id,
+      name: existingRoom.name,
+      buildingId: existingRoom.buildingId,
+    });
+
+    return existingRoom.id;
+  }
+}
+
+async function ensureSlotForDecision(input: {
+  slotSystemId: number;
+  createSlot: ImportDecisionCreateSlot;
+  defaultLabel: string;
+  slotSystemStructure: SlotSystemStructure;
+  createdSlotLabelByKey: Map<string, string>;
+}): Promise<string> {
+  const day = input.slotSystemStructure.dayById.get(input.createSlot.dayId);
+
+  if (!day) {
+    throw createServiceError(400, "createSlot.dayId does not belong to the selected slot system");
+  }
+
+  const startIndex = input.slotSystemStructure.bandIndexById.get(input.createSlot.startBandId);
+  const endIndex = input.slotSystemStructure.bandIndexById.get(input.createSlot.endBandId);
+
+  if (startIndex === undefined || endIndex === undefined) {
+    throw createServiceError(400, "createSlot start/end band does not belong to the selected slot system");
+  }
+
+  if (endIndex < startIndex) {
+    throw createServiceError(400, "createSlot end band must be after or equal to start band");
+  }
+
+  const laneIndex = input.createSlot.laneIndex ?? 0;
+
+  if (!Number.isInteger(laneIndex) || laneIndex < 0) {
+    throw createServiceError(400, "createSlot laneIndex must be a non-negative integer");
+  }
+
+  if (laneIndex >= day.laneCount) {
+    throw createServiceError(409, "createSlot laneIndex exceeds the configured lanes for this day");
+  }
+
+  const fallbackLabel = normalizeSpace(input.defaultLabel);
+  const label = normalizeSpace(input.createSlot.label ?? fallbackLabel);
+
+  if (!label) {
+    throw createServiceError(400, "createSlot label is required");
+  }
+
+  const rowSpan = endIndex - startIndex + 1;
+
+  const creationKey = [
+    input.slotSystemId,
+    day.id,
+    input.createSlot.startBandId,
+    rowSpan,
+    laneIndex,
+    normalizeKey(label),
+  ].join(":");
+
+  const cachedLabel = input.createdSlotLabelByKey.get(creationKey);
+  if (cachedLabel) {
+    return cachedLabel;
+  }
+
+  const existingBlocks = await db
+    .select({
+      id: slotBlocks.id,
+      label: slotBlocks.label,
+    })
+    .from(slotBlocks)
+    .where(
+      and(
+        eq(slotBlocks.slotSystemId, input.slotSystemId),
+        eq(slotBlocks.dayId, day.id),
+        eq(slotBlocks.startBandId, input.createSlot.startBandId),
+        eq(slotBlocks.laneIndex, laneIndex),
+        eq(slotBlocks.rowSpan, rowSpan),
+      ),
+    );
+
+  const existingMatchingBlock = existingBlocks.find(
+    (block) => normalizeKey(block.label) === normalizeKey(label),
+  );
+
+  if (existingMatchingBlock) {
+    const existingLabel = normalizeSpace(existingMatchingBlock.label) || label;
+    input.createdSlotLabelByKey.set(creationKey, existingLabel);
+    return existingLabel;
+  }
+
+  const createdBlock = await createBlock({
+    slotSystemId: input.slotSystemId,
+    dayId: day.id,
+    startBandId: input.createSlot.startBandId,
+    laneIndex,
+    rowSpan,
+    label,
+  });
+
+  if (!createdBlock) {
+    throw createServiceError(500, "Failed to create slot block during resolution");
+  }
+
+  const createdLabel = normalizeSpace(createdBlock.label) || label;
+  input.createdSlotLabelByKey.set(creationKey, createdLabel);
+
+  return createdLabel;
+}
+
+function parseCreateSlotDecision(raw: unknown): ImportDecisionCreateSlot | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+
+  const source = raw as Record<string, unknown>;
+
+  const dayId = Number(source.dayId);
+  const startBandId = Number(source.startBandId);
+  const endBandId = Number(source.endBandId);
+
+  if (
+    !Number.isInteger(dayId) ||
+    dayId <= 0 ||
+    !Number.isInteger(startBandId) ||
+    startBandId <= 0 ||
+    !Number.isInteger(endBandId) ||
+    endBandId <= 0
+  ) {
+    return undefined;
+  }
+
+  const laneIndexRaw = source.laneIndex;
+  let laneIndex: number | undefined;
+
+  if (laneIndexRaw !== undefined) {
+    const parsedLaneIndex = Number(laneIndexRaw);
+
+    if (!Number.isInteger(parsedLaneIndex) || parsedLaneIndex < 0) {
+      return undefined;
+    }
+
+    laneIndex = parsedLaneIndex;
+  }
+
+  const label =
+    typeof source.label === "string" ? normalizeSpace(source.label) : "";
+
+  const decision: ImportDecisionCreateSlot = {
+    dayId,
+    startBandId,
+    endBandId,
+  };
+
+  if (laneIndex !== undefined) {
+    decision.laneIndex = laneIndex;
+  }
+
+  if (label) {
+    decision.label = label;
+  }
+
+  return decision;
+}
+
+function parseCreateRoomDecision(raw: unknown): ImportDecisionCreateRoom | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+
+  const source = raw as Record<string, unknown>;
+
+  if (typeof source.buildingName !== "string" || typeof source.roomName !== "string") {
+    return undefined;
+  }
+
+  const buildingName = normalizeSpace(source.buildingName);
+  const roomName = normalizeSpace(source.roomName);
+
+  if (!buildingName || !roomName) {
+    return undefined;
+  }
+
+  return {
+    buildingName,
+    roomName,
+  };
+}
+
 function buildSuggestions(candidates: string[], input: string, limit = 5) {
   const target = normalizeKey(input);
   if (!target) {
@@ -637,6 +1129,16 @@ function parseDecisionInput(raw: unknown): Map<number, ImportDecision> {
       if (Number.isInteger(resolvedRoomId) && resolvedRoomId > 0) {
         decision.resolvedRoomId = resolvedRoomId;
       }
+    }
+
+    const createSlot = parseCreateSlotDecision(source.createSlot);
+    if (createSlot) {
+      decision.createSlot = createSlot;
+    }
+
+    const createRoom = parseCreateRoomDecision(source.createRoom);
+    if (createRoom) {
+      decision.createRoom = createRoom;
     }
 
     decisions.set(rowId, decision);
@@ -1071,38 +1573,128 @@ async function getBatchRows(batchId: number) {
     .orderBy(asc(timetableImportRows.rowIndex));
 }
 
-async function buildCommittedReport(batchId: number): Promise<CommitReport> {
-  const rows = await getBatchRows(batchId);
-  const occurrences = await db
-    .select({
-      rowId: timetableImportOccurrences.rowId,
-      status: timetableImportOccurrences.status,
-      bookingId: timetableImportOccurrences.bookingId,
-      errorMessage: timetableImportOccurrences.errorMessage,
+type RowResolutionPersistRecord = {
+  action: ImportDecisionAction;
+  resolvedSlotLabel: string | null;
+  resolvedRoomId: number | null;
+  createSlot: ImportDecisionCreateSlot | null;
+  createRoom: ImportDecisionCreateRoom | null;
+};
+
+async function persistRowResolution(input: {
+  batchId: number;
+  rowSummary: CommitRowSummary;
+  resolution: RowResolutionPersistRecord;
+}) {
+  const now = new Date();
+
+  await db
+    .insert(timetableImportRowResolutions)
+    .values({
+      batchId: input.batchId,
+      rowId: input.rowSummary.rowId,
+      action: input.resolution.action,
+      resolvedSlotLabel: input.resolution.resolvedSlotLabel,
+      resolvedRoomId: input.resolution.resolvedRoomId,
+      createSlot: input.resolution.createSlot,
+      createRoom: input.resolution.createRoom,
+      createdCount: input.rowSummary.created,
+      failedCount: input.rowSummary.failed,
+      skippedCount: input.rowSummary.skipped,
+      alreadyProcessedCount: input.rowSummary.alreadyProcessed,
+      unresolvedCount: input.rowSummary.unresolved,
+      reasons: Array.from(new Set(input.rowSummary.reasons)),
+      updatedAt: now,
     })
-    .from(timetableImportOccurrences)
-    .where(eq(timetableImportOccurrences.batchId, batchId));
+    .onConflictDoUpdate({
+      target: [
+        timetableImportRowResolutions.batchId,
+        timetableImportRowResolutions.rowId,
+      ],
+      set: {
+        action: input.resolution.action,
+        resolvedSlotLabel: input.resolution.resolvedSlotLabel,
+        resolvedRoomId: input.resolution.resolvedRoomId,
+        createSlot: input.resolution.createSlot,
+        createRoom: input.resolution.createRoom,
+        createdCount: input.rowSummary.created,
+        failedCount: input.rowSummary.failed,
+        skippedCount: input.rowSummary.skipped,
+        alreadyProcessedCount: input.rowSummary.alreadyProcessed,
+        unresolvedCount: input.rowSummary.unresolved,
+        reasons: Array.from(new Set(input.rowSummary.reasons)),
+        updatedAt: now,
+      },
+    });
+}
+
+async function buildCommittedReport(batchId: number): Promise<CommitReport> {
+  const [rows, occurrences, storedResolutions] = await Promise.all([
+    getBatchRows(batchId),
+    db
+      .select({
+        rowId: timetableImportOccurrences.rowId,
+        status: timetableImportOccurrences.status,
+        bookingId: timetableImportOccurrences.bookingId,
+        errorMessage: timetableImportOccurrences.errorMessage,
+      })
+      .from(timetableImportOccurrences)
+      .where(eq(timetableImportOccurrences.batchId, batchId)),
+    db
+      .select({
+        rowId: timetableImportRowResolutions.rowId,
+        action: timetableImportRowResolutions.action,
+        createdCount: timetableImportRowResolutions.createdCount,
+        failedCount: timetableImportRowResolutions.failedCount,
+        skippedCount: timetableImportRowResolutions.skippedCount,
+        alreadyProcessedCount: timetableImportRowResolutions.alreadyProcessedCount,
+        unresolvedCount: timetableImportRowResolutions.unresolvedCount,
+        reasons: timetableImportRowResolutions.reasons,
+      })
+      .from(timetableImportRowResolutions)
+      .where(eq(timetableImportRowResolutions.batchId, batchId)),
+  ]);
+
+  const resolutionByRowId = new Map(
+    storedResolutions.map((resolution) => [resolution.rowId, resolution]),
+  );
 
   const summaryByRowId = new Map<number, CommitRowSummary>();
 
   for (const row of rows) {
+    const storedResolution = resolutionByRowId.get(row.id);
+
     summaryByRowId.set(row.id, {
       rowId: row.id,
       rowIndex: row.rowIndex,
       classification: row.classification,
-      action: row.classification === "VALID_AND_AUTOMATABLE" ? "AUTO" : "SKIP",
-      created: 0,
-      failed: 0,
-      skipped: 0,
-      alreadyProcessed: 0,
-      unresolved: row.classification === "VALID_AND_AUTOMATABLE" ? 0 : 1,
-      reasons: Array.isArray(row.reasons) ? (row.reasons as string[]) : [],
+      action:
+        storedResolution?.action ??
+        (row.classification === "VALID_AND_AUTOMATABLE" ? "AUTO" : "SKIP"),
+      created: storedResolution?.createdCount ?? 0,
+      failed: storedResolution?.failedCount ?? 0,
+      skipped: storedResolution?.skippedCount ?? 0,
+      alreadyProcessed: storedResolution?.alreadyProcessedCount ?? 0,
+      unresolved:
+        storedResolution?.unresolvedCount ??
+        (row.classification === "VALID_AND_AUTOMATABLE" ? 0 : 1),
+      reasons: storedResolution
+        ? Array.isArray(storedResolution.reasons)
+          ? [...(storedResolution.reasons as string[])]
+          : []
+        : Array.isArray(row.reasons)
+          ? (row.reasons as string[])
+          : [],
     });
   }
 
   for (const occurrence of occurrences) {
     const rowSummary = summaryByRowId.get(occurrence.rowId);
     if (!rowSummary) {
+      continue;
+    }
+
+    if (resolutionByRowId.has(occurrence.rowId)) {
       continue;
     }
 
@@ -1171,10 +1763,13 @@ export async function commitTimetableImport(input: CommitImportInput): Promise<C
 
   const decisions = parseDecisionInput(input.decisions);
   const rows = await getBatchRows(batchId);
-  const slotLookup = await getSlotDescriptorLookup(batch.slotSystemId);
+  let slotLookup = await getSlotDescriptorLookup(batch.slotSystemId);
   const buildingLookup = await getBuildingRoomLookup();
+  const slotSystemStructure = await getSlotSystemStructure(batch.slotSystemId);
+  const createdSlotLabelByKey = new Map<string, string>();
 
   const rowSummaries = new Map<number, CommitRowSummary>();
+  const rowResolutionRecords = new Map<number, RowResolutionPersistRecord>();
   const queue: Array<{
     rowId: number;
     occurrenceId: number;
@@ -1206,6 +1801,18 @@ export async function commitTimetableImport(input: CommitImportInput): Promise<C
       summary.action = decision.action;
     }
 
+    const rowResolutionRecord: RowResolutionPersistRecord = {
+      action: summary.action,
+      resolvedSlotLabel: row.resolvedSlotLabel ? normalizeSpace(row.resolvedSlotLabel) : null,
+      resolvedRoomId: row.resolvedRoomId ?? null,
+      createSlot:
+        decision?.action === "RESOLVE" && decision.createSlot ? decision.createSlot : null,
+      createRoom:
+        decision?.action === "RESOLVE" && decision.createRoom ? decision.createRoom : null,
+    };
+
+    rowResolutionRecords.set(row.id, rowResolutionRecord);
+
     if (summary.action === "SKIP") {
       summary.skipped += 1;
       summary.unresolved += 1;
@@ -1213,17 +1820,42 @@ export async function commitTimetableImport(input: CommitImportInput): Promise<C
       continue;
     }
 
-    let resolvedSlotLabel = row.resolvedSlotLabel ? normalizeSpace(row.resolvedSlotLabel) : "";
-    let resolvedRoomId = row.resolvedRoomId ?? null;
+    let resolvedSlotLabel = rowResolutionRecord.resolvedSlotLabel ?? "";
+    let resolvedRoomId = rowResolutionRecord.resolvedRoomId;
 
     if (decision?.action === "RESOLVE") {
-      if (decision.resolvedSlotLabel) {
-        resolvedSlotLabel = normalizeSpace(decision.resolvedSlotLabel);
+      try {
+        if (decision.createSlot) {
+          resolvedSlotLabel = await ensureSlotForDecision({
+            slotSystemId: batch.slotSystemId,
+            createSlot: decision.createSlot,
+            defaultLabel: resolvedSlotLabel || row.rawSlot || "",
+            slotSystemStructure,
+            createdSlotLabelByKey,
+          });
+
+          slotLookup = await getSlotDescriptorLookup(batch.slotSystemId);
+        } else if (decision.resolvedSlotLabel) {
+          resolvedSlotLabel = normalizeSpace(decision.resolvedSlotLabel);
+        }
+
+        if (decision.createRoom) {
+          resolvedRoomId = await ensureRoomForDecision({
+            createRoom: decision.createRoom,
+            buildingLookup,
+          });
+        } else if (decision.resolvedRoomId !== undefined) {
+          resolvedRoomId = decision.resolvedRoomId;
+        }
+      } catch (error: unknown) {
+        summary.unresolved += 1;
+        summary.reasons.push(toErrorMessage(error, "Failed to apply resolution decision"));
+        rowSummaries.set(row.id, summary);
+        continue;
       }
 
-      if (decision.resolvedRoomId !== undefined) {
-        resolvedRoomId = decision.resolvedRoomId;
-      }
+      rowResolutionRecord.resolvedSlotLabel = resolvedSlotLabel || null;
+      rowResolutionRecord.resolvedRoomId = resolvedRoomId ?? null;
 
       await db
         .update(timetableImportRows)
@@ -1333,6 +1965,9 @@ export async function commitTimetableImport(input: CommitImportInput): Promise<C
       }
     }
 
+    rowResolutionRecord.resolvedSlotLabel = resolvedSlotLabel || null;
+    rowResolutionRecord.resolvedRoomId = resolvedRoomId ?? null;
+
     rowSummaries.set(row.id, summary);
   }
 
@@ -1399,6 +2034,25 @@ export async function commitTimetableImport(input: CommitImportInput): Promise<C
     }
   }
 
+  const rowResults = Array.from(rowSummaries.values()).sort((a, b) => a.rowIndex - b.rowIndex);
+
+  for (const rowResult of rowResults) {
+    const resolution =
+      rowResolutionRecords.get(rowResult.rowId) ?? {
+        action: rowResult.action,
+        resolvedSlotLabel: null,
+        resolvedRoomId: null,
+        createSlot: null,
+        createRoom: null,
+      };
+
+    await persistRowResolution({
+      batchId: batch.id,
+      rowSummary: rowResult,
+      resolution,
+    });
+  }
+
   await db
     .update(timetableImportBatches)
     .set({
@@ -1406,8 +2060,6 @@ export async function commitTimetableImport(input: CommitImportInput): Promise<C
       committedAt: new Date(),
     })
     .where(eq(timetableImportBatches.id, batch.id));
-
-  const rowResults = Array.from(rowSummaries.values()).sort((a, b) => a.rowIndex - b.rowIndex);
 
   const autoCreatedBookings = rowResults.reduce((sum, row) => sum + row.created, 0);
   const alreadyProcessedBookings = rowResults.reduce((sum, row) => sum + row.alreadyProcessed, 0);
@@ -1429,6 +2081,200 @@ export async function commitTimetableImport(input: CommitImportInput): Promise<C
       ...(Array.isArray(batch.warnings) ? (batch.warnings as string[]) : []),
       ...warnings,
     ],
+  };
+}
+
+export async function getTimetableImportProcessedRows(
+  batchIdInput: number,
+): Promise<ProcessedRowsReport> {
+  const batchId = Number(batchIdInput);
+
+  if (!Number.isInteger(batchId) || batchId <= 0) {
+    throw createServiceError(400, "Invalid batchId");
+  }
+
+  const [batch] = await db
+    .select({
+      id: timetableImportBatches.id,
+      status: timetableImportBatches.status,
+      warnings: timetableImportBatches.warnings,
+    })
+    .from(timetableImportBatches)
+    .where(eq(timetableImportBatches.id, batchId))
+    .limit(1);
+
+  if (!batch) {
+    throw createServiceError(404, "Import batch not found");
+  }
+
+  const [rows, resolutions, occurrences] = await Promise.all([
+    getBatchRows(batchId),
+    db
+      .select({
+        rowId: timetableImportRowResolutions.rowId,
+        action: timetableImportRowResolutions.action,
+        resolvedSlotLabel: timetableImportRowResolutions.resolvedSlotLabel,
+        resolvedRoomId: timetableImportRowResolutions.resolvedRoomId,
+        createSlot: timetableImportRowResolutions.createSlot,
+        createRoom: timetableImportRowResolutions.createRoom,
+        createdCount: timetableImportRowResolutions.createdCount,
+        failedCount: timetableImportRowResolutions.failedCount,
+        skippedCount: timetableImportRowResolutions.skippedCount,
+        alreadyProcessedCount: timetableImportRowResolutions.alreadyProcessedCount,
+        unresolvedCount: timetableImportRowResolutions.unresolvedCount,
+        reasons: timetableImportRowResolutions.reasons,
+      })
+      .from(timetableImportRowResolutions)
+      .where(eq(timetableImportRowResolutions.batchId, batchId)),
+    db
+      .select({
+        occurrenceId: timetableImportOccurrences.id,
+        rowId: timetableImportOccurrences.rowId,
+        status: timetableImportOccurrences.status,
+        roomId: timetableImportOccurrences.roomId,
+        startAt: timetableImportOccurrences.startAt,
+        endAt: timetableImportOccurrences.endAt,
+        sourceRef: timetableImportOccurrences.sourceRef,
+        errorMessage: timetableImportOccurrences.errorMessage,
+        bookingId: bookings.id,
+        bookingRoomId: bookings.roomId,
+        bookingStartAt: bookings.startAt,
+        bookingEndAt: bookings.endAt,
+        bookingRequestId: bookings.requestId,
+        bookingSource: bookings.source,
+        bookingSourceRef: bookings.sourceRef,
+      })
+      .from(timetableImportOccurrences)
+      .leftJoin(bookings, eq(timetableImportOccurrences.bookingId, bookings.id))
+      .where(eq(timetableImportOccurrences.batchId, batchId))
+      .orderBy(
+        asc(timetableImportOccurrences.rowId),
+        asc(timetableImportOccurrences.startAt),
+        asc(timetableImportOccurrences.id),
+      ),
+  ]);
+
+  const resolutionByRowId = new Map(resolutions.map((resolution) => [resolution.rowId, resolution]));
+
+  const reportRows: ProcessedRowReport[] = rows.map((row) => {
+    const storedResolution = resolutionByRowId.get(row.id);
+    const baseReasons = storedResolution
+      ? Array.isArray(storedResolution.reasons)
+        ? [...(storedResolution.reasons as string[])]
+        : []
+      : Array.isArray(row.reasons)
+        ? [...(row.reasons as string[])]
+        : [];
+
+    return {
+      rowId: row.id,
+      rowIndex: row.rowIndex,
+      classification: row.classification,
+      courseCode: row.rawCourseCode ?? "",
+      slot: row.rawSlot ?? "",
+      classroom: row.rawClassroom ?? "",
+      action:
+        storedResolution?.action ??
+        (row.classification === "VALID_AND_AUTOMATABLE" ? "AUTO" : "SKIP"),
+      resolvedSlotLabel: storedResolution?.resolvedSlotLabel ?? row.resolvedSlotLabel,
+      resolvedRoomId: storedResolution?.resolvedRoomId ?? row.resolvedRoomId,
+      createSlot:
+        (storedResolution?.createSlot as ImportDecisionCreateSlot | null | undefined) ?? null,
+      createRoom:
+        (storedResolution?.createRoom as ImportDecisionCreateRoom | null | undefined) ?? null,
+      created: storedResolution?.createdCount ?? 0,
+      failed: storedResolution?.failedCount ?? 0,
+      skipped: storedResolution?.skippedCount ?? 0,
+      alreadyProcessed: storedResolution?.alreadyProcessedCount ?? 0,
+      unresolved:
+        storedResolution?.unresolvedCount ??
+        (row.classification === "VALID_AND_AUTOMATABLE" ? 0 : 1),
+      reasons: baseReasons,
+      occurrences: [],
+    };
+  });
+
+  const rowById = new Map(reportRows.map((row) => [row.rowId, row]));
+
+  for (const occurrence of occurrences) {
+    const row = rowById.get(occurrence.rowId);
+    if (!row) {
+      continue;
+    }
+
+    const occurrenceStartAt =
+      occurrence.startAt instanceof Date
+        ? occurrence.startAt.toISOString()
+        : new Date(occurrence.startAt).toISOString();
+    const occurrenceEndAt =
+      occurrence.endAt instanceof Date
+        ? occurrence.endAt.toISOString()
+        : new Date(occurrence.endAt).toISOString();
+
+    const booking =
+      typeof occurrence.bookingId === "number" &&
+      typeof occurrence.bookingRoomId === "number" &&
+      occurrence.bookingStartAt instanceof Date &&
+      occurrence.bookingEndAt instanceof Date &&
+      (occurrence.bookingSource === "MANUAL" ||
+        occurrence.bookingSource === "BOOKING_REQUEST" ||
+        occurrence.bookingSource === "TIMETABLE_IMPORT")
+        ? {
+            id: occurrence.bookingId,
+            roomId: occurrence.bookingRoomId,
+            startAt: occurrence.bookingStartAt.toISOString(),
+            endAt: occurrence.bookingEndAt.toISOString(),
+            requestId: occurrence.bookingRequestId,
+            source: occurrence.bookingSource,
+            sourceRef: occurrence.bookingSourceRef,
+          }
+        : null;
+
+    row.occurrences.push({
+      occurrenceId: occurrence.occurrenceId,
+      status: occurrence.status,
+      roomId: occurrence.roomId,
+      startAt: occurrenceStartAt,
+      endAt: occurrenceEndAt,
+      sourceRef: occurrence.sourceRef,
+      errorMessage: occurrence.errorMessage,
+      booking,
+    });
+
+    if (resolutionByRowId.has(occurrence.rowId)) {
+      continue;
+    }
+
+    if (occurrence.status === "CREATED") {
+      row.created += 1;
+    } else if (occurrence.status === "ALREADY_PROCESSED") {
+      row.alreadyProcessed += 1;
+    } else if (occurrence.status === "SKIPPED") {
+      row.skipped += 1;
+    } else {
+      row.failed += 1;
+      if (occurrence.errorMessage) {
+        row.reasons.push(occurrence.errorMessage);
+      }
+    }
+  }
+
+  for (const row of reportRows) {
+    if (!resolutionByRowId.has(row.rowId) && row.action === "SKIP" && row.skipped === 0) {
+      row.skipped = 1;
+      if (row.unresolved === 0) {
+        row.unresolved = 1;
+      }
+    }
+
+    row.reasons = Array.from(new Set(row.reasons));
+  }
+
+  return {
+    batchId: batch.id,
+    status: batch.status,
+    warnings: Array.isArray(batch.warnings) ? (batch.warnings as string[]) : [],
+    rows: reportRows,
   };
 }
 

@@ -17,7 +17,11 @@ import {
   isTimetableServiceError,
   updateTimeBand,
 } from "./service";
-import { commitTimetableImport, previewTimetableImport } from "./importService";
+import {
+  commitTimetableImport,
+  getTimetableImportProcessedRows,
+  previewTimetableImport,
+} from "./importService";
 
 function parsePositiveInteger(value: unknown): number | null {
   const parsed = Number(value);
@@ -429,5 +433,21 @@ export async function handleCommitImport(req: Request, res: Response) {
     return res.json(report);
   } catch (error) {
     return sendError(res, error, "Failed to commit timetable import");
+  }
+}
+
+export async function handleGetProcessedImportRows(req: Request, res: Response) {
+  try {
+    const batchId = parsePositiveInteger(req.params.id);
+
+    if (!batchId) {
+      return res.status(400).json({ error: "Invalid batch id" });
+    }
+
+    const report = await getTimetableImportProcessedRows(batchId);
+
+    return res.json(report);
+  } catch (error) {
+    return sendError(res, error, "Failed to fetch processed rows");
   }
 }

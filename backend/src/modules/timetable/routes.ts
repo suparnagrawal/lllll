@@ -5,6 +5,7 @@ import {
 	handleCreateBlock,
 	handleCreateDay,
 	handlePreviewImport,
+	handleGetProcessedImportRows,
 	handleCommitImport,
 	handleCreateSlotSystem,
 	handleCreateTimeBand,
@@ -54,5 +55,6 @@ router.delete("/blocks/:id", handleDeleteBlock);
 
 router.post("/imports/preview", upload.single("file"), handlePreviewImport);
 router.post("/imports/:id/commit", handleCommitImport);
+router.get("/imports/:id/processed-rows", handleGetProcessedImportRows);
 
 export default router;

@@ -30,6 +30,8 @@ export type BookingStatus =
   | "REJECTED"
   | "CANCELLED";
 
+export type BookingSource = "MANUAL" | "BOOKING_REQUEST" | "TIMETABLE_IMPORT";
+
 export type BookingRequest = {
   id: number;
   userId: number | null;
@@ -47,6 +49,8 @@ export type Booking = {
   startAt: string;
   endAt: string;
   requestId: number | null;
+  source: BookingSource;
+  sourceRef: string | null;
 };
 
 export type BookingPruneScope = "all" | "slot-system";
@@ -149,11 +153,26 @@ export type TimetableImportPreviewReport = {
   rows: TimetableImportPreviewRow[];
 };
 
+export type TimetableImportCreateSlotDecision = {
+  dayId: number;
+  startBandId: number;
+  endBandId: number;
+  laneIndex?: number;
+  label?: string;
+};
+
+export type TimetableImportCreateRoomDecision = {
+  buildingName: string;
+  roomName: string;
+};
+
 export type TimetableImportCommitDecision = {
   rowId: number;
   action: "AUTO" | "RESOLVE" | "SKIP";
   resolvedSlotLabel?: string;
   resolvedRoomId?: number;
+  createSlot?: TimetableImportCreateSlotDecision;
+  createRoom?: TimetableImportCreateRoomDecision;
 };
 
 export type TimetableImportCommitRowResult = {
@@ -180,6 +199,53 @@ export type TimetableImportCommitReport = {
   skippedRows: number;
   rowResults: TimetableImportCommitRowResult[];
   warnings: string[];
+};
+
+export type TimetableImportProcessedOccurrenceStatus =
+  | "PENDING"
+  | "CREATED"
+  | "FAILED"
+  | "SKIPPED"
+  | "UNRESOLVED"
+  | "ALREADY_PROCESSED";
+
+export type TimetableImportProcessedOccurrence = {
+  occurrenceId: number;
+  status: TimetableImportProcessedOccurrenceStatus;
+  roomId: number;
+  startAt: string;
+  endAt: string;
+  sourceRef: string | null;
+  errorMessage: string | null;
+  booking: Booking | null;
+};
+
+export type TimetableImportProcessedRow = {
+  rowId: number;
+  rowIndex: number;
+  classification: TimetableImportRowStatus;
+  courseCode: string;
+  slot: string;
+  classroom: string;
+  action: "AUTO" | "RESOLVE" | "SKIP";
+  resolvedSlotLabel: string | null;
+  resolvedRoomId: number | null;
+  createSlot: TimetableImportCreateSlotDecision | null;
+  createRoom: TimetableImportCreateRoomDecision | null;
+  created: number;
+  failed: number;
+  skipped: number;
+  alreadyProcessed: number;
+  unresolved: number;
+  reasons: string[];
+  occurrences: TimetableImportProcessedOccurrence[];
+};
+
+export type TimetableImportProcessedRowsReport = {
+  batchId: number;
+  status: "PREVIEWED" | "COMMITTED";
+  warnings: string[];
+  rows: TimetableImportProcessedRow[];
 };
 
 type LoginResponse = {
@@ -467,9 +533,27 @@ export async function createBooking(input: {
   roomId: number;
   startAt: string;
   endAt: string;
+  metadata?: {
+    source?: BookingSource;
+    sourceRef?: string;
+  };
 }): Promise<Booking> {
   return request<Booking>("/bookings", {
     method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function updateBooking(
+  id: number,
+  input: {
+    roomId?: number;
+    startAt?: string;
+    endAt?: string;
+  }
+): Promise<Booking> {
+  return request<Booking>(`/bookings/${id}`, {
+    method: "PATCH",
     body: JSON.stringify(input),
   });
 }
@@ -655,4 +739,12 @@ export async function commitTimetableImport(
     method: "POST",
     body: JSON.stringify({ decisions }),
   });
+}
+
+export async function getTimetableImportProcessedRows(
+  batchId: number,
+): Promise<TimetableImportProcessedRowsReport> {
+  return request<TimetableImportProcessedRowsReport>(
+    `/timetable/imports/${batchId}/processed-rows`,
+  );
 }
