@@ -171,6 +171,9 @@ export type TimetableImportBatchSummary = {
   slotSystemName: string;
   fileName: string;
   status: "PREVIEWED" | "COMMITTED";
+  validRows: number;
+  resolvedRows: number;
+  unresolvedRows: number;
   termStartDate: string;
   termEndDate: string;
   createdAt: string;

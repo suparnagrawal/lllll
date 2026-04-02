@@ -86,8 +86,10 @@ type ProcessedBookingEditState = {
   endAt: string;
 };
 
+type RowDecisionAction = "AUTO" | "IGNORE" | "RESOLVE" | "SKIP";
+
 type RowDecisionState = {
-  action: "AUTO" | "RESOLVE" | "SKIP";
+  action: RowDecisionAction;
   slotResolutionMode: SlotResolutionMode;
   roomResolutionMode: RoomResolutionMode;
   resolvedSlotLabel: string;
@@ -236,6 +238,41 @@ function parseAliasMap(raw: string): Record<string, string> {
   return output;
 }
 
+function toApiDecisionAction(
+  action: RowDecisionAction,
+): TimetableImportCommitDecision["action"] {
+  if (action === "AUTO") {
+    return "AUTO";
+  }
+
+  if (action === "RESOLVE") {
+    return "RESOLVE";
+  }
+
+  return "SKIP";
+}
+
+function toRowActionLabel(action: "AUTO" | "RESOLVE" | "SKIP"): string {
+  return action;
+}
+
+function escapeCsvValue(value: string): string {
+  const sanitized = value.replace(/"/g, '""');
+  if (/[",\n]/.test(value)) {
+    return `"${sanitized}"`;
+  }
+  return sanitized;
+}
+
+function buildSingleRowCsv(row: TimetableImportPreviewRow): string {
+  const header = "Course Code,Slot,Classroom";
+  const line = [row.courseCode, row.slot, row.classroom]
+    .map((value) => escapeCsvValue(value ?? ""))
+    .join(",");
+
+  return `${header}\n${line}\n`;
+}
+
 function toDateInputValue(value: string): string {
   const parsed = new Date(value);
 
@@ -321,7 +358,10 @@ export function TimetableBuilderPage() {
   const [savingBookingId, setSavingBookingId] = useState<number | null>(null);
   const [deletingBookingId, setDeletingBookingId] = useState<number | null>(null);
   const [creatingRowId, setCreatingRowId] = useState<number | null>(null);
+  const [creatingResolveSlotRowId, setCreatingResolveSlotRowId] = useState<number | null>(null);
+  const [movingRowId, setMovingRowId] = useState<number | null>(null);
   const [rowDecisions, setRowDecisions] = useState<Record<number, RowDecisionState>>({});
+  const [rowMoveTargetById, setRowMoveTargetById] = useState<Record<number, number | "">>({});
 
   const [dragSelection, setDragSelection] = useState<DragSelection | null>(null);
 
@@ -335,7 +375,9 @@ export function TimetableBuilderPage() {
     importLoading ||
     saveDecisionsLoading ||
     reallocateLoading ||
-    deleteBatchLoading;
+    deleteBatchLoading ||
+    creatingResolveSlotRowId !== null ||
+    movingRowId !== null;
 
   const slotLabelOptions = useMemo(() => {
     const labels = Array.from(
@@ -602,6 +644,7 @@ export function TimetableBuilderPage() {
   const hydratePreviewFromBatch = (report: TimetableImportPreviewReport) => {
     setPreviewReport(report);
     setRowDecisions(buildRowDecisionsFromReport(report));
+    setRowMoveTargetById({});
     setImportTermStart(toDateOnlyInputValue(report.termStartDate));
     setImportTermEnd(toDateOnlyInputValue(report.termEndDate));
     setSelectedBatchId(report.batchId);
@@ -1301,6 +1344,72 @@ export function TimetableBuilderPage() {
     await loadImportBatchForEditing(selectedBatchId);
   };
 
+  const handleRefreshBatchContext = async () => {
+    if (selectedSystemId === "") {
+      return;
+    }
+
+    const loadedBatchId = previewReport?.batchId;
+    const activeBatchId =
+      loadedBatchId ?? (selectedBatchId !== "" ? selectedBatchId : undefined);
+
+    setImportBatchesLoading(true);
+    setImportBatchesError(null);
+    setImportError(null);
+
+    try {
+      const batches = await apiGetTimetableImportBatches({
+        slotSystemId: selectedSystemId,
+        limit: 50,
+      });
+
+      setImportBatches(batches);
+
+      const activeBatchExists =
+        typeof activeBatchId === "number" &&
+        batches.some((batch) => batch.batchId === activeBatchId);
+
+      setSelectedBatchId((current) => {
+        if (current !== "" && batches.some((batch) => batch.batchId === current)) {
+          return current;
+        }
+
+        if (
+          typeof loadedBatchId === "number" &&
+          batches.some((batch) => batch.batchId === loadedBatchId)
+        ) {
+          return loadedBatchId;
+        }
+
+        return "";
+      });
+
+      if (!activeBatchExists) {
+        if (previewReport && activeBatchId === previewReport.batchId) {
+          setPreviewReport(null);
+          setRowDecisions({});
+          setCommitReport(null);
+          setProcessedRowsReport(null);
+          setProcessedRowsError(null);
+        }
+
+        return;
+      }
+
+      const refreshedReport = await apiGetTimetableImportBatch(activeBatchId);
+      hydratePreviewFromBatch(refreshedReport);
+
+      await loadGrid(refreshedReport.slotSystemId);
+      await loadProcessedRows(refreshedReport.batchId);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Failed to refresh batch data";
+      setImportBatchesError(message);
+      setImportError(message);
+    } finally {
+      setImportBatchesLoading(false);
+    }
+  };
+
   const updateRowDecision = (rowId: number, patch: Partial<RowDecisionState>) => {
     setRowDecisions((current) => {
       const existing = current[rowId] ?? createEmptyDecisionState();
@@ -1315,73 +1424,210 @@ export function TimetableBuilderPage() {
     });
   };
 
+  const buildRowDecisionPayload = (
+    rowId: number,
+    decision: RowDecisionState,
+  ): TimetableImportCommitDecision | null => {
+    if (!Number.isInteger(rowId) || rowId <= 0) {
+      return null;
+    }
+
+    const mappedAction = toApiDecisionAction(decision.action);
+
+    if (decision.action !== "RESOLVE") {
+      return {
+        rowId,
+        action: mappedAction,
+      };
+    }
+
+    const resolveDecision: TimetableImportCommitDecision = {
+      rowId,
+      action: "RESOLVE",
+    };
+
+    const trimmedResolvedSlotLabel = decision.resolvedSlotLabel.trim();
+    const trimmedCreateSlotLabel = decision.createSlotLabel.trim();
+    const trimmedCreateRoomBuilding = decision.createRoomBuildingName.trim();
+    const trimmedCreateRoomName = decision.createRoomName.trim();
+
+    if (decision.slotResolutionMode === "CREATE_SLOT") {
+      if (
+        decision.createSlotDayId !== "" &&
+        decision.createSlotStartBandId !== "" &&
+        decision.createSlotEndBandId !== ""
+      ) {
+        resolveDecision.createSlot = {
+          dayId: decision.createSlotDayId,
+          startBandId: decision.createSlotStartBandId,
+          endBandId: decision.createSlotEndBandId,
+          ...(trimmedCreateSlotLabel ? { label: trimmedCreateSlotLabel } : {}),
+        };
+      }
+    } else if (trimmedResolvedSlotLabel) {
+      resolveDecision.resolvedSlotLabel = trimmedResolvedSlotLabel;
+    }
+
+    if (decision.roomResolutionMode === "CREATE_ROOM") {
+      if (trimmedCreateRoomBuilding && trimmedCreateRoomName) {
+        resolveDecision.createRoom = {
+          buildingName: trimmedCreateRoomBuilding,
+          roomName: trimmedCreateRoomName,
+        };
+      }
+    } else if (decision.resolvedRoomId !== "") {
+      resolveDecision.resolvedRoomId = decision.resolvedRoomId;
+    }
+
+    return resolveDecision;
+  };
+
   const buildImportDecisionsPayload = (): TimetableImportCommitDecision[] => {
     return Object.entries(rowDecisions).reduce<TimetableImportCommitDecision[]>(
       (acc, [rawRowId, decision]) => {
         const rowId = Number(rawRowId);
+        const payload = buildRowDecisionPayload(rowId, decision);
 
-        if (!Number.isInteger(rowId) || rowId <= 0) {
+        if (!payload) {
           return acc;
         }
 
-        if (decision.action === "RESOLVE") {
-          const resolveDecision: TimetableImportCommitDecision = {
-            rowId,
-            action: "RESOLVE",
-          };
-
-          const trimmedResolvedSlotLabel = decision.resolvedSlotLabel.trim();
-          const trimmedCreateSlotLabel = decision.createSlotLabel.trim();
-          const trimmedCreateRoomBuilding = decision.createRoomBuildingName.trim();
-          const trimmedCreateRoomName = decision.createRoomName.trim();
-
-          if (decision.slotResolutionMode === "CREATE_SLOT") {
-            if (
-              decision.createSlotDayId !== "" &&
-              decision.createSlotStartBandId !== "" &&
-              decision.createSlotEndBandId !== ""
-            ) {
-              const laneIndex = Number.isFinite(decision.createSlotLaneIndex)
-                ? Math.max(0, Math.trunc(decision.createSlotLaneIndex))
-                : 0;
-
-              resolveDecision.createSlot = {
-                dayId: decision.createSlotDayId,
-                startBandId: decision.createSlotStartBandId,
-                endBandId: decision.createSlotEndBandId,
-                laneIndex,
-                ...(trimmedCreateSlotLabel ? { label: trimmedCreateSlotLabel } : {}),
-              };
-            }
-          } else if (trimmedResolvedSlotLabel) {
-            resolveDecision.resolvedSlotLabel = trimmedResolvedSlotLabel;
-          }
-
-          if (decision.roomResolutionMode === "CREATE_ROOM") {
-            if (trimmedCreateRoomBuilding && trimmedCreateRoomName) {
-              resolveDecision.createRoom = {
-                buildingName: trimmedCreateRoomBuilding,
-                roomName: trimmedCreateRoomName,
-              };
-            }
-          } else if (decision.resolvedRoomId !== "") {
-            resolveDecision.resolvedRoomId = decision.resolvedRoomId;
-          }
-
-          acc.push(resolveDecision);
-
-          return acc;
-        }
-
-        acc.push({
-          rowId,
-          action: decision.action,
-        });
-
+        acc.push(payload);
         return acc;
       },
       [],
     );
+  };
+
+  const handleCreateResolveSlot = async (
+    rowId: number,
+    rowIndex: number,
+    decision: RowDecisionState,
+  ) => {
+    if (!previewReport) {
+      return;
+    }
+
+    const payload = buildRowDecisionPayload(rowId, decision);
+
+    if (!payload || payload.action !== "RESOLVE" || !payload.createSlot) {
+      setImportError(
+        "Select Resolve -> Create slot and provide day/start/end before creating slot",
+      );
+      return;
+    }
+
+    setCreatingResolveSlotRowId(rowId);
+    setImportError(null);
+    setImportInfo(null);
+
+    try {
+      await apiSaveTimetableImportDecisions(previewReport.batchId, [payload]);
+
+      const refreshedReport = await apiGetTimetableImportBatch(previewReport.batchId);
+      hydratePreviewFromBatch(refreshedReport);
+
+      await loadGrid(refreshedReport.slotSystemId);
+      await loadProcessedRows(refreshedReport.batchId);
+      await loadImportBatches(refreshedReport.slotSystemId);
+
+      setImportInfo(`Created slot for row ${rowIndex} and refreshed timetable grid.`);
+    } catch (e) {
+      setImportError(e instanceof Error ? e.message : "Failed to create slot from resolution");
+    } finally {
+      setCreatingResolveSlotRowId(null);
+    }
+  };
+
+  const updateRowMoveTarget = (rowId: number, targetSlotSystemId: number | "") => {
+    setRowMoveTargetById((current) => ({
+      ...current,
+      [rowId]: targetSlotSystemId,
+    }));
+  };
+
+  const handleMoveRowToAnotherSlotSystem = async (row: TimetableImportPreviewRow) => {
+    if (!previewReport) {
+      return;
+    }
+
+    const targetSlotSystemId = rowMoveTargetById[row.rowId] ?? "";
+
+    if (targetSlotSystemId === "" || !Number.isInteger(targetSlotSystemId)) {
+      setImportError("Select a target slot system before moving the row");
+      return;
+    }
+
+    if (targetSlotSystemId === previewReport.slotSystemId) {
+      setImportError("Choose a different slot system for row move");
+      return;
+    }
+
+    const courseCode = row.courseCode.trim();
+    const slot = row.slot.trim();
+    const classroom = row.classroom.trim();
+
+    if (!courseCode || !slot || !classroom) {
+      setImportError("Row must include course code, slot, and classroom to move");
+      return;
+    }
+
+    const targetSlotSystem = slotSystems.find((system) => system.id === targetSlotSystemId);
+
+    if (!targetSlotSystem) {
+      setImportError("Target slot system no longer exists");
+      return;
+    }
+
+    const sourceBatchId = previewReport.batchId;
+    const sourceSlotSystemId = previewReport.slotSystemId;
+
+    setMovingRowId(row.rowId);
+    setImportError(null);
+    setImportInfo(null);
+
+    try {
+      const sourceDecision = rowDecisions[row.rowId] ?? createDecisionForPreviewRow(row);
+      const ignoreDecision: RowDecisionState = {
+        ...sourceDecision,
+        action: "IGNORE",
+      };
+
+      const sourcePayload = buildRowDecisionPayload(row.rowId, ignoreDecision);
+
+      if (sourcePayload) {
+        await apiSaveTimetableImportDecisions(sourceBatchId, [sourcePayload]);
+      }
+
+      const csvFile = new File(
+        [buildSingleRowCsv({ ...row, courseCode, slot, classroom })],
+        `moved-row-${row.rowId}.csv`,
+        { type: "text/csv" },
+      );
+
+      const targetReport = await apiPreviewTimetableImport({
+        slotSystemId: targetSlotSystemId,
+        termStartDate: importTermStart || toDateOnlyInputValue(previewReport.termStartDate),
+        termEndDate: importTermEnd || toDateOnlyInputValue(previewReport.termEndDate),
+        file: csvFile,
+        aliasMap: parseAliasMap(aliasMapText),
+      });
+
+      const refreshedSourceReport = await apiGetTimetableImportBatch(sourceBatchId);
+      hydratePreviewFromBatch(refreshedSourceReport);
+
+      await loadProcessedRows(sourceBatchId);
+      await loadImportBatches(sourceSlotSystemId);
+
+      setImportInfo(
+        `Moved row ${row.rowIndex} to slot system ${targetSlotSystem.name} as batch #${targetReport.batchId}. Source row is now Ignore.`,
+      );
+    } catch (e) {
+      setImportError(e instanceof Error ? e.message : "Failed to move row to another slot system");
+    } finally {
+      setMovingRowId(null);
+      updateRowMoveTarget(row.rowId, "");
+    }
   };
 
   const handleSaveImportDecisions = async () => {
@@ -1401,6 +1647,7 @@ export function TimetableBuilderPage() {
       hydratePreviewFromBatch(refreshedReport);
       setImportInfo(`Saved allocation decisions for batch #${refreshedReport.batchId}.`);
 
+      await loadGrid(refreshedReport.slotSystemId);
       await loadProcessedRows(refreshedReport.batchId);
       await loadImportBatches(refreshedReport.slotSystemId);
     } catch (e) {
@@ -1434,6 +1681,7 @@ export function TimetableBuilderPage() {
       hydratePreviewFromBatch(refreshedReport);
       setImportInfo(`Reallocated committed batch #${refreshedReport.batchId}.`);
 
+      await loadGrid(refreshedReport.slotSystemId);
       await loadProcessedRows(previewReport.batchId);
       await loadImportBatches(refreshedReport.slotSystemId);
     } catch (e) {
@@ -1516,6 +1764,7 @@ export function TimetableBuilderPage() {
       const refreshedReport = await apiGetTimetableImportBatch(previewReport.batchId);
       hydratePreviewFromBatch(refreshedReport);
 
+      await loadGrid(refreshedReport.slotSystemId);
       await loadProcessedRows(previewReport.batchId);
       await loadImportBatches(refreshedReport.slotSystemId);
     } catch (e) {
@@ -1652,7 +1901,7 @@ export function TimetableBuilderPage() {
               <option value="">Select a batch</option>
               {importBatches.map((batch) => (
                 <option key={batch.batchId} value={batch.batchId}>
-                  #{batch.batchId} · {batch.status} · {formatDateDDMMYYYY(batch.termStartDate)} to {formatDateDDMMYYYY(batch.termEndDate)} · {batch.fileName}
+                  #{batch.batchId} · {batch.status} · Valid {batch.validRows} · Resolved {batch.resolvedRows} · Unresolved {batch.unresolvedRows} · {formatDateDDMMYYYY(batch.termStartDate)} to {formatDateDDMMYYYY(batch.termEndDate)} · {batch.fileName}
                 </option>
               ))}
             </select>
@@ -1693,7 +1942,7 @@ export function TimetableBuilderPage() {
               <button
                 type="button"
                 className="btn btn-ghost"
-                onClick={() => void loadImportBatches(selectedSystemId)}
+                onClick={() => void handleRefreshBatchContext()}
                 disabled={
                   selectedSystemId === "" ||
                   importLoading ||
@@ -1704,7 +1953,7 @@ export function TimetableBuilderPage() {
                   importBatchesLoading
                 }
               >
-                {importBatchesLoading ? "Refreshing..." : "Refresh List"}
+                {importBatchesLoading ? "Refreshing..." : "Refresh Batch + List"}
               </button>
             </div>
           </div>
@@ -1877,6 +2126,10 @@ export function TimetableBuilderPage() {
             <div className="data-list">
               {previewReport.rows.map((row) => {
                 const decision = rowDecisions[row.rowId] ?? createDecisionForPreviewRow(row);
+                const moveTargetSlotSystems = slotSystems.filter(
+                  (system) => system.id !== previewReport.slotSystemId,
+                );
+                const selectedMoveTargetSlotSystemId = rowMoveTargetById[row.rowId] ?? "";
 
                 const selectedStartBandIndex =
                   decision.createSlotStartBandId === ""
@@ -1929,13 +2182,64 @@ export function TimetableBuilderPage() {
                             }
                             disabled={isDecisionEditingLocked}
                           >
-                            {row.classification === "VALID_AND_AUTOMATABLE" && (
+                            {(row.classification === "VALID_AND_AUTOMATABLE" || decision.action === "AUTO") && (
                               <option value="AUTO">Auto</option>
                             )}
+                            <option value="IGNORE">Ignore</option>
                             <option value="SKIP">Skip</option>
                             <option value="RESOLVE">Resolve</option>
                           </select>
+                          {decision.action === "IGNORE" && (
+                            <div className="data-item-subtitle" style={{ marginTop: "var(--space-1)" }}>
+                              Ignore: this row is not relevant for room allocation.
+                            </div>
+                          )}
+                          {decision.action === "SKIP" && (
+                            <div className="data-item-subtitle" style={{ marginTop: "var(--space-1)" }}>
+                              Skip: keep this row for later resolution.
+                            </div>
+                          )}
                         </div>
+
+                        {moveTargetSlotSystems.length > 0 && (
+                          <>
+                            <div className="form-field">
+                              <label>Move To Slot System</label>
+                              <select
+                                className="input"
+                                value={selectedMoveTargetSlotSystemId}
+                                onChange={(e) =>
+                                  updateRowMoveTarget(
+                                    row.rowId,
+                                    e.target.value === "" ? "" : Number(e.target.value),
+                                  )
+                                }
+                                disabled={isDecisionEditingLocked}
+                              >
+                                <option value="">Select slot system</option>
+                                {moveTargetSlotSystems.map((system) => (
+                                  <option key={system.id} value={system.id}>
+                                    {system.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="form-field">
+                              <label>Move Row</label>
+                              <button
+                                type="button"
+                                className="btn btn-ghost btn-sm"
+                                onClick={() => void handleMoveRowToAnotherSlotSystem(row)}
+                                disabled={
+                                  isDecisionEditingLocked ||
+                                  selectedMoveTargetSlotSystemId === ""
+                                }
+                              >
+                                {movingRowId === row.rowId ? "Moving..." : "Move Row"}
+                              </button>
+                            </div>
+                          </>
+                        )}
 
                         {decision.action === "RESOLVE" && (
                           <>
@@ -2079,20 +2383,28 @@ export function TimetableBuilderPage() {
                                     </select>
                                   </div>
                                   <div className="form-field">
-                                    <label>Slot Lane Index</label>
-                                    <input
-                                      className="input"
-                                      type="number"
-                                      min={0}
-                                      step={1}
-                                      value={decision.createSlotLaneIndex}
-                                      onChange={(e) =>
-                                        updateRowDecision(row.rowId, {
-                                          createSlotLaneIndex: Number(e.target.value || "0"),
-                                        })
+                                    <label>Create Slot Now</label>
+                                    <button
+                                      type="button"
+                                      className="btn btn-primary btn-sm"
+                                      onClick={() =>
+                                        void handleCreateResolveSlot(
+                                          row.rowId,
+                                          row.rowIndex,
+                                          decision,
+                                        )
                                       }
-                                      disabled={isDecisionEditingLocked}
-                                    />
+                                      disabled={
+                                        isDecisionEditingLocked ||
+                                        decision.createSlotDayId === "" ||
+                                        decision.createSlotStartBandId === "" ||
+                                        decision.createSlotEndBandId === ""
+                                      }
+                                    >
+                                      {creatingResolveSlotRowId === row.rowId
+                                        ? "Creating Slot..."
+                                        : "Create Slot And Refresh"}
+                                    </button>
                                   </div>
                                 </>
                               )}
@@ -2181,7 +2493,7 @@ export function TimetableBuilderPage() {
                 <div className="data-item" key={row.rowId}>
                   <div className="data-item-content">
                     <div className="data-item-title">
-                      Row {row.rowIndex} · Action {row.action}
+                      Row {row.rowIndex} · Action {toRowActionLabel(row.action)}
                     </div>
                     <div className="data-item-subtitle">
                       Created {row.created} · Already Processed {row.alreadyProcessed} · Failed {row.failed} · Unresolved {row.unresolved}
@@ -2243,7 +2555,7 @@ export function TimetableBuilderPage() {
                     <div className="data-item" key={`processed-row-${row.rowId}`}>
                       <div className="data-item-content" style={{ width: "100%" }}>
                         <div className="data-item-title">
-                          Row {row.rowIndex} · Action {row.action}
+                          Row {row.rowIndex} · Action {toRowActionLabel(row.action)}
                           <span className="badge badge-role" style={{ marginLeft: "var(--space-2)" }}>
                             {row.classification}
                           </span>
