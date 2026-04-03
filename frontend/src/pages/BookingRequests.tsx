@@ -6,11 +6,13 @@ import {
   createBookingRequest,
   forwardBookingRequest,
   getFacultyUsers,
+  getManagedUsers,
   getBookingRequests,
   getRooms,
   rejectBookingRequest,
 } from "../api/api";
 import type {
+  BookingEventType,
   BookingRequest,
   BookingStatus,
   FacultyUser,
@@ -43,6 +45,17 @@ const STATUS_LABELS: Record<BookingStatus, string> = {
   CANCELLED: "Cancelled",
 };
 
+const EVENT_TYPE_OPTIONS: BookingEventType[] = [
+  "QUIZ",
+  "SEMINAR",
+  "SPEAKER_SESSION",
+  "MEETING",
+  "CULTURAL_EVENT",
+  "WORKSHOP",
+  "CLASS",
+  "OTHER",
+];
+
 function statusBadgeClass(status: BookingStatus): string {
   const map: Record<BookingStatus, string> = {
     PENDING_FACULTY: "badge-pending-faculty",
@@ -67,12 +80,14 @@ export function BookingRequestsPage({
 }: BookingRequestsPageProps) {
   const { user } = useAuth();
   const currentRole = user?.role ?? null;
+  const isAdmin = currentRole === "ADMIN";
   const isStudent = currentRole === "STUDENT";
   const canCreate = currentRole === "STUDENT" || currentRole === "FACULTY";
 
   const [requests, setRequests] = useState<BookingRequest[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [facultyUsers, setFacultyUsers] = useState<FacultyUser[]>([]);
+  const [adminUserNameById, setAdminUserNameById] = useState<Record<number, string>>({});
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
 
   const [loading, setLoading] = useState(false);
@@ -82,12 +97,34 @@ export function BookingRequestsPage({
   const [facultyId, setFacultyId] = useState<number | "">("");
   const [startAt, setStartAt] = useState("");
   const [endAt, setEndAt] = useState("");
+  const [eventType, setEventType] = useState<BookingEventType>("OTHER");
   const [purpose, setPurpose] = useState("");
+  const [participantCount, setParticipantCount] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [actingId, setActingId] = useState<number | null>(null);
   const [prefillMessage, setPrefillMessage] = useState<string | null>(null);
 
   const roomNameById = new Map(rooms.map((r) => [r.id, r.name]));
+
+  const loadAdminUsers = async () => {
+    if (!isAdmin) {
+      setAdminUserNameById({});
+      return;
+    }
+
+    try {
+      const response = await getManagedUsers({ page: 1, limit: 100 });
+      const nextNameMap: Record<number, string> = {};
+
+      for (const managedUser of response.data) {
+        nextNameMap[managedUser.id] = managedUser.displayName ?? managedUser.name;
+      }
+
+      setAdminUserNameById(nextNameMap);
+    } catch {
+      setAdminUserNameById({});
+    }
+  };
 
   const loadRequests = async (filter: StatusFilter) => {
     setLoading(true);
@@ -129,6 +166,11 @@ export function BookingRequestsPage({
   }, [isStudent]);
 
   useEffect(() => {
+    void loadAdminUsers();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin]);
+
+  useEffect(() => {
     if (!prefill) {
       return;
     }
@@ -155,6 +197,18 @@ export function BookingRequestsPage({
     const trimmedPurpose = purpose.trim();
     if (!trimmedPurpose) { setError("Purpose is required"); return; }
 
+    const trimmedParticipantCount = participantCount.trim();
+    const parsedParticipantCount =
+      trimmedParticipantCount.length > 0 ? Number(trimmedParticipantCount) : undefined;
+
+    if (
+      parsedParticipantCount !== undefined &&
+      (!Number.isInteger(parsedParticipantCount) || parsedParticipantCount <= 0)
+    ) {
+      setError("Participant count must be a positive integer");
+      return;
+    }
+
     setIsSubmitting(true);
     setError(null);
     try {
@@ -162,14 +216,21 @@ export function BookingRequestsPage({
         roomId: number;
         startAt: string;
         endAt: string;
+        eventType: BookingEventType;
         purpose: string;
+        participantCount?: number;
         facultyId?: number;
       } = {
         roomId,
         startAt,
         endAt,
+        eventType,
         purpose: trimmedPurpose,
       };
+
+      if (parsedParticipantCount !== undefined) {
+        payload.participantCount = parsedParticipantCount;
+      }
 
       if (isStudent) {
         payload.facultyId = Number(facultyId);
@@ -180,7 +241,9 @@ export function BookingRequestsPage({
       setFacultyId("");
       setStartAt("");
       setEndAt("");
+      setEventType("OTHER");
       setPurpose("");
+      setParticipantCount("");
       setPrefillMessage(null);
       await loadRequests(statusFilter);
     } catch (e) {
@@ -316,8 +379,27 @@ export function BookingRequestsPage({
                     </option>
                   ))}
                 </select>
+                {facultyUsers.length === 0 && (
+                  <div className="users-muted">No faculty accounts available. Contact admin to provision faculty access.</div>
+                )}
               </div>
             )}
+            <div className="form-field">
+              <label htmlFor="newRequestEventType">Event Type</label>
+              <select
+                id="newRequestEventType"
+                className="input"
+                value={eventType}
+                onChange={(e) => setEventType(e.target.value as BookingEventType)}
+                disabled={isSubmitting}
+              >
+                {EVENT_TYPE_OPTIONS.map((type) => (
+                  <option key={type} value={type}>
+                    {type.replace(/_/g, " ")}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div className="form-field">
               <label htmlFor="newRequestPurpose">Purpose</label>
               <input
@@ -327,6 +409,20 @@ export function BookingRequestsPage({
                 value={purpose}
                 onChange={(e) => setPurpose(e.target.value)}
                 placeholder="Why do you need this room?"
+                disabled={isSubmitting}
+              />
+            </div>
+            <div className="form-field">
+              <label htmlFor="newRequestParticipantCount">Participant Count (optional)</label>
+              <input
+                id="newRequestParticipantCount"
+                className="input"
+                type="number"
+                min={1}
+                step={1}
+                value={participantCount}
+                onChange={(e) => setParticipantCount(e.target.value)}
+                placeholder="e.g. 40"
                 disabled={isSubmitting}
               />
             </div>
@@ -373,6 +469,14 @@ export function BookingRequestsPage({
             const canCancel = (currentRole === "ADMIN" || isOwnRequest) && isPending;
 
             const hasActions = canForward || canApprove || canReject || canCancel;
+            const requestedByLabel =
+              req.userId === null
+                ? "-"
+                : (adminUserNameById[req.userId] ?? `User ${req.userId}`);
+            const facultyApproverLabel =
+              req.facultyId === null
+                ? "Unassigned"
+                : (adminUserNameById[req.facultyId] ?? `User ${req.facultyId}`);
 
             return (
               <div className="request-card" key={req.id}>
@@ -387,6 +491,19 @@ export function BookingRequestsPage({
                   <span><strong>Room:</strong> {roomNameById.get(req.roomId) ?? `#${req.roomId}`}</span>
                   <span><strong>From:</strong> {formatDateTimeDDMMYYYY(req.startAt)}</span>
                   <span><strong>To:</strong> {formatDateTimeDDMMYYYY(req.endAt)}</span>
+                  <span><strong>Type:</strong> {req.eventType.replace(/_/g, " ")}</span>
+                  {req.participantCount !== null && (
+                    <span><strong>Participants:</strong> {req.participantCount}</span>
+                  )}
+                  {isAdmin && (
+                    <span><strong>Requested By:</strong> {requestedByLabel}</span>
+                  )}
+                  {isAdmin && (
+                    <span><strong>Faculty Approver:</strong> {facultyApproverLabel}</span>
+                  )}
+                  {isAdmin && (
+                    <span><strong>Created:</strong> {formatDateTimeDDMMYYYY(req.createdAt)}</span>
+                  )}
                 </div>
 
                 {req.purpose && (

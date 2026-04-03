@@ -40,6 +40,7 @@ export type ManagedUser = {
   registeredVia: string;
   firstLogin: boolean;
   createdAt: string;
+  assignedBuildings: Building[];
 };
 
 export type ManagedUsersPagination = {
@@ -52,6 +53,12 @@ export type ManagedUsersPagination = {
 export type ManagedUsersListResponse = {
   data: ManagedUser[];
   pagination: ManagedUsersPagination;
+};
+
+export type StaffBuildingAssignmentsResponse = {
+  userId: number;
+  buildingIds: number[];
+  buildings: Building[];
 };
 
 export type Building = {
@@ -72,7 +79,21 @@ export type BookingStatus =
   | "REJECTED"
   | "CANCELLED";
 
-export type BookingSource = "MANUAL" | "BOOKING_REQUEST" | "TIMETABLE_IMPORT";
+export type BookingEventType =
+  | "QUIZ"
+  | "SEMINAR"
+  | "SPEAKER_SESSION"
+  | "MEETING"
+  | "CULTURAL_EVENT"
+  | "WORKSHOP"
+  | "CLASS"
+  | "OTHER";
+
+export type BookingSource =
+  | "MANUAL_REQUEST"
+  | "TIMETABLE_ALLOCATION"
+  | "SLOT_CHANGE"
+  | "VENUE_CHANGE";
 
 export type BookingRequest = {
   id: number;
@@ -81,7 +102,9 @@ export type BookingRequest = {
   roomId: number;
   startAt: string;
   endAt: string;
+  eventType: BookingEventType;
   purpose: string;
+  participantCount: number | null;
   status: BookingStatus;
   createdAt: string;
 };
@@ -92,6 +115,8 @@ export type Booking = {
   startAt: string;
   endAt: string;
   requestId: number | null;
+  approvedBy: number | null;
+  approvedAt: string | null;
   source: BookingSource;
   sourceRef: string | null;
 };
@@ -280,6 +305,16 @@ export type TimetableImportCommitRowResult = {
   bookingConflictReasons: string[];
 };
 
+export type TimetableImportConflictingBooking = {
+  rowId: number;
+  rowIndex: number;
+  occurrenceId: number;
+  roomId: number;
+  startAt: string;
+  endAt: string;
+  message: string;
+};
+
 export type TimetableImportCommitReport = {
   batchId: number;
   status: "COMMITTED" | "ALREADY_COMMITTED";
@@ -291,6 +326,7 @@ export type TimetableImportCommitReport = {
   skippedRows: number;
   bookingConflictRows: number;
   bookingConflictOccurrences: number;
+  conflictingBookings: TimetableImportConflictingBooking[];
   rowResults: TimetableImportCommitRowResult[];
   warnings: string[];
 };
@@ -687,18 +723,20 @@ export async function getManagedUsers(filters?: {
 }
 
 export async function createManagedUser(input: {
-  name: string;
+  name?: string;
   email: string;
-  password: string;
-  role: "ADMIN" | "STAFF";
+  password?: string;
+  role: "ADMIN" | "STAFF" | "FACULTY";
   department?: string;
+  authProvider?: "email" | "google";
 }): Promise<{
   id: number;
   name: string;
   email: string;
-  role: "ADMIN" | "STAFF";
+  role: UserRole;
   department: string | null;
   isActive: boolean;
+  registeredVia: string;
 }> {
   return request("/users", {
     method: "POST",
@@ -744,6 +782,22 @@ export async function deleteManagedUser(userId: number): Promise<void> {
   });
 }
 
+export async function getUserBuildingAssignments(
+  userId: number,
+): Promise<StaffBuildingAssignmentsResponse> {
+  return request<StaffBuildingAssignmentsResponse>(`/users/${userId}/building-assignments`);
+}
+
+export async function updateUserBuildingAssignments(
+  userId: number,
+  buildingIds: number[],
+): Promise<StaffBuildingAssignmentsResponse> {
+  return request<StaffBuildingAssignmentsResponse>(`/users/${userId}/building-assignments`, {
+    method: "PUT",
+    body: JSON.stringify({ buildingIds }),
+  });
+}
+
 /* ===== Booking Requests ===== */
 
 export async function getBookingRequests(status?: BookingStatus): Promise<BookingRequest[]> {
@@ -755,7 +809,9 @@ export async function createBookingRequest(input: {
   roomId: number;
   startAt: string;
   endAt: string;
+  eventType: BookingEventType;
   purpose: string;
+  participantCount?: number;
   facultyId?: number;
 }): Promise<BookingRequest> {
   return request<BookingRequest>("/booking-requests", {
@@ -812,6 +868,8 @@ export async function createBooking(input: {
   metadata?: {
     source?: BookingSource;
     sourceRef?: string;
+    approvedBy?: number;
+    approvedAt?: string;
   };
 }): Promise<Booking> {
   return request<Booking>("/bookings", {
