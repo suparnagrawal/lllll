@@ -32,6 +32,10 @@ router.get("/:id", authMiddleware, async (req, res) => {
 
     const room = result[0];
 
+    if (!room) {
+      return res.status(404).json({ error: "Room not found" });
+    }
+
     if (
       req.user?.role === "STAFF" &&
       !(await isBuildingAssignedToStaff(req.user.id, room.buildingId))
@@ -236,6 +240,10 @@ router.delete("/:id", authMiddleware, requireRole(["ADMIN", "STAFF"]), async (re
 
     const room = existing[0];
 
+    if (!room) {
+      return res.status(404).json({ error: "Room not found" });
+    }
+
     if (
       req.user?.role === "STAFF" &&
       !(await isBuildingAssignedToStaff(req.user.id, room.buildingId))
@@ -275,6 +283,10 @@ router.patch("/:id", authMiddleware, requireRole(["ADMIN", "STAFF"]), async (req
     }
 
     const room = existing[0];
+
+    if (!room) {
+      return res.status(404).json({ error: "Room not found" });
+    }
 
     if (
       req.user?.role === "STAFF" &&
