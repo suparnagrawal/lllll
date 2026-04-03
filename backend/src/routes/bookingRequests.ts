@@ -54,7 +54,7 @@ function isBookingEventType(value: unknown): value is BookingEventType {
 }
 
 function canViewRequest(
-  role: "ADMIN" | "STAFF" | "FACULTY" | "STUDENT",
+  role: "ADMIN" | "STAFF" | "FACULTY" | "STUDENT" | "PENDING_ROLE",
   userId: number,
   request: {
     userId: number | null;
