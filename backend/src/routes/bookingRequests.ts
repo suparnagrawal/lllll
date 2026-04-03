@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "../db";
-import { eq, lt, gt, and, or } from "drizzle-orm";
-import { bookingRequests } from "../db/schema";
+import { eq, lt, gt, and, or, isNull } from "drizzle-orm";
+import { bookingRequests, users } from "../db/schema";
 import { authMiddleware } from "../middleware/auth";
 import { requireRole } from "../middleware/rbac";
 import { createBooking, hasBookingOverlap } from "../services/bookingService";
@@ -25,7 +25,11 @@ function isBookingRequestStatus(value: unknown): value is BookingRequestStatus {
 function canViewRequest(
   role: "ADMIN" | "STAFF" | "FACULTY" | "STUDENT",
   userId: number,
-  request: { userId: number | null; status: BookingRequestStatus }
+  request: {
+    userId: number | null;
+    facultyId: number | null;
+    status: BookingRequestStatus;
+  }
 ) {
   if (role === "ADMIN") {
     return true;
@@ -36,7 +40,11 @@ function canViewRequest(
   }
 
   if (role === "FACULTY") {
-    return request.userId === userId || request.status === "PENDING_FACULTY";
+    return (
+      request.userId === userId ||
+      request.facultyId === userId ||
+      (request.facultyId === null && request.status === "PENDING_FACULTY")
+    );
   }
 
   if (role === "STAFF") {
@@ -106,7 +114,11 @@ router.get("/", authMiddleware, async (req, res) => {
     } else if (role === "FACULTY") {
       visibilityCondition = or(
         eq(bookingRequests.userId, userId),
-        eq(bookingRequests.status, "PENDING_FACULTY")
+        eq(bookingRequests.facultyId, userId),
+        and(
+          eq(bookingRequests.status, "PENDING_FACULTY"),
+          isNull(bookingRequests.facultyId)
+        )
       );
     } else {
       visibilityCondition = eq(bookingRequests.status, "PENDING_STAFF");
@@ -161,6 +173,14 @@ router.post("/:id/reject", authMiddleware, requireRole(["FACULTY", "STAFF"]), as
       return res.status(400).json({
         error: "Invalid status for rejection",
       });
+    }
+
+    if (
+      role === "FACULTY" &&
+      request.facultyId !== null &&
+      request.facultyId !== req.user!.id
+    ) {
+      return res.status(403).json({ error: "Forbidden" });
     }
 
     const updated = await db
@@ -302,6 +322,13 @@ router.post("/:id/forward", authMiddleware, requireRole("FACULTY"), async (req, 
       });
     }
 
+    if (
+      request.facultyId !== null &&
+      request.facultyId !== req.user!.id
+    ) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
     // Update status
     const updated = await db
       .update(bookingRequests)
@@ -378,6 +405,7 @@ router.post("/", authMiddleware, requireRole(["STUDENT", "FACULTY"]), async (req
     const startAt = req.body?.startAt;
     const endAt = req.body?.endAt;
     const purpose = req.body?.purpose?.trim();
+    const selectedFacultyId = Number(req.body?.facultyId);
 
     // Validation
     if (isNaN(roomId)) {
@@ -401,6 +429,34 @@ router.post("/", authMiddleware, requireRole(["STUDENT", "FACULTY"]), async (req
 
     if (start >= end) {
       return res.status(400).json({ error: "startAt must be before endAt" });
+    }
+
+    let facultyId: number | null = null;
+
+    if (req.user!.role === "STUDENT") {
+      if (!Number.isInteger(selectedFacultyId) || selectedFacultyId <= 0) {
+        return res.status(400).json({ error: "facultyId is required for student requests" });
+      }
+
+      const facultyRows = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(
+          and(
+            eq(users.id, selectedFacultyId),
+            eq(users.role, "FACULTY"),
+            eq(users.isActive, true)
+          )
+        )
+        .limit(1);
+
+      if (!facultyRows[0]) {
+        return res.status(400).json({ error: "Selected faculty is invalid" });
+      }
+
+      facultyId = selectedFacultyId;
+    } else {
+      facultyId = req.user!.id;
     }
 
     /**
@@ -453,6 +509,7 @@ router.post("/", authMiddleware, requireRole(["STUDENT", "FACULTY"]), async (req
       .insert(bookingRequests)
       .values({
         userId: req.user!.id,
+        facultyId,
         roomId,
         startAt: start,
         endAt: end,

@@ -7,12 +7,19 @@ import { BookingRequestsPage } from "./pages/BookingRequests";
 import { BookingsPage } from "./pages/Bookings";
 import { AvailabilityPage } from "./pages/Availability";
 import { TimetableBuilderPage } from "./pages/TimetableBuilder";
+import { UsersPage } from "./pages/Users";
 import type {
   AvailabilityPrefill,
   BookingRequestPrefill,
 } from "./pages/bookingAvailabilityBridge";
 
-type PageKey = "rooms" | "bookingRequests" | "bookings" | "availability" | "timetableBuilder";
+type PageKey =
+  | "rooms"
+  | "bookingRequests"
+  | "bookings"
+  | "availability"
+  | "timetableBuilder"
+  | "users";
 
 type NavEntry = {
   key: PageKey;
@@ -23,6 +30,7 @@ type NavEntry = {
 
 const NAV_ITEMS: NavEntry[] = [
   { key: "rooms", label: "Rooms", icon: "🚪" },
+  { key: "users", label: "Users", icon: "👥", roles: ["ADMIN"] },
   { key: "bookingRequests", label: "Requests", icon: "📋" },
   { key: "bookings", label: "Bookings", icon: "📅", roles: ["ADMIN", "STAFF"] },
   { key: "availability", label: "Availability", icon: "🔍" },
@@ -52,6 +60,7 @@ function PageRenderer({
 }: PageRendererProps) {
   switch (page) {
     case "rooms": return <RoomsPage />;
+    case "users": return <UsersPage />;
     case "bookingRequests":
       return (
         <BookingRequestsPage

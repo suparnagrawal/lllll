@@ -5,11 +5,17 @@ import {
   cancelBookingRequest,
   createBookingRequest,
   forwardBookingRequest,
+  getFacultyUsers,
   getBookingRequests,
   getRooms,
   rejectBookingRequest,
 } from "../api/api";
-import type { BookingRequest, BookingStatus, Room } from "../api/api";
+import type {
+  BookingRequest,
+  BookingStatus,
+  FacultyUser,
+  Room,
+} from "../api/api";
 import { useAuth } from "../auth/AuthContext";
 import { DateInput } from "../components/DateInput";
 import { formatDateTimeDDMMYYYY } from "../utils/datetime";
@@ -61,16 +67,19 @@ export function BookingRequestsPage({
 }: BookingRequestsPageProps) {
   const { user } = useAuth();
   const currentRole = user?.role ?? null;
+  const isStudent = currentRole === "STUDENT";
   const canCreate = currentRole === "STUDENT" || currentRole === "FACULTY";
 
   const [requests, setRequests] = useState<BookingRequest[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
+  const [facultyUsers, setFacultyUsers] = useState<FacultyUser[]>([]);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [roomId, setRoomId] = useState<number | "">(""); 
+  const [facultyId, setFacultyId] = useState<number | "">("");
   const [startAt, setStartAt] = useState("");
   const [endAt, setEndAt] = useState("");
   const [purpose, setPurpose] = useState("");
@@ -97,12 +106,27 @@ export function BookingRequestsPage({
     catch (e) { setError(e instanceof Error ? e.message : "Failed to load rooms"); }
   };
 
+  const loadFacultyUsers = async () => {
+    try {
+      setFacultyUsers(await getFacultyUsers());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load faculty users");
+    }
+  };
+
   useEffect(() => {
     void (async () => {
       await loadRooms();
       await loadRequests("ALL");
+
+      if (isStudent) {
+        await loadFacultyUsers();
+      } else {
+        setFacultyUsers([]);
+        setFacultyId("");
+      }
     })();
-  }, []);
+  }, [isStudent]);
 
   useEffect(() => {
     if (!prefill) {
@@ -126,6 +150,7 @@ export function BookingRequestsPage({
   const handleCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (roomId === "") { setError("Room is required"); return; }
+    if (isStudent && facultyId === "") { setError("Faculty selection is required"); return; }
     if (!startAt || !endAt) { setError("Start and end times are required"); return; }
     const trimmedPurpose = purpose.trim();
     if (!trimmedPurpose) { setError("Purpose is required"); return; }
@@ -133,8 +158,26 @@ export function BookingRequestsPage({
     setIsSubmitting(true);
     setError(null);
     try {
-      await createBookingRequest({ roomId, startAt, endAt, purpose: trimmedPurpose });
+      const payload: {
+        roomId: number;
+        startAt: string;
+        endAt: string;
+        purpose: string;
+        facultyId?: number;
+      } = {
+        roomId,
+        startAt,
+        endAt,
+        purpose: trimmedPurpose,
+      };
+
+      if (isStudent) {
+        payload.facultyId = Number(facultyId);
+      }
+
+      await createBookingRequest(payload);
       setRoomId("");
+      setFacultyId("");
       setStartAt("");
       setEndAt("");
       setPurpose("");
@@ -230,7 +273,7 @@ export function BookingRequestsPage({
               >
                 <option value="">Select a room</option>
                 {rooms.map((r) => (
-                  <option key={r.id} value={r.id}>{r.name} (#{r.id})</option>
+                  <option key={r.id} value={r.id}>{r.name}</option>
                 ))}
               </select>
             </div>
@@ -256,6 +299,25 @@ export function BookingRequestsPage({
             </div>
           </div>
           <div className="form-row">
+            {isStudent && (
+              <div className="form-field">
+                <label htmlFor="newRequestFacultyId">Faculty Approver</label>
+                <select
+                  id="newRequestFacultyId"
+                  className="input"
+                  value={facultyId}
+                  onChange={(e) => setFacultyId(e.target.value === "" ? "" : Number(e.target.value))}
+                  disabled={isSubmitting}
+                >
+                  <option value="">Select a faculty member</option>
+                  {facultyUsers.map((faculty) => (
+                    <option key={faculty.id} value={faculty.id}>
+                      {faculty.name}{faculty.department ? ` (${faculty.department})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div className="form-field">
               <label htmlFor="newRequestPurpose">Purpose</label>
               <input
@@ -270,7 +332,11 @@ export function BookingRequestsPage({
             </div>
           </div>
           <div className="btn-group">
-            <button type="submit" className="btn btn-primary" disabled={isSubmitting}>
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={isSubmitting || (isStudent && facultyUsers.length === 0)}
+            >
               {isSubmitting ? "Submitting…" : "Submit Request"}
             </button>
             <button
