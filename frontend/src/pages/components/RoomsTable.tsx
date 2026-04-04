@@ -80,7 +80,7 @@ export function RoomsTable({ onAddClick, onEditClick }: RoomsTableProps) {
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Building</TableHead>
-              <TableHead className="w-[100px]">Actions</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>

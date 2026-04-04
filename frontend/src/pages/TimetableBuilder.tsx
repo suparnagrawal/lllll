@@ -1848,13 +1848,13 @@ export function TimetableBuilderPage() {
   };
 
   return (
-    <section className="timetable-builder-page">
-      <div className="page-header">
-        <h2>Timetable Builder</h2>
-        <p>Build slot systems with day columns, time-band rows, and merged slot blocks</p>
+    <section className="min-h-screen bg-gray-50">
+      <div className="mb-8 px-6 py-8">
+        <h2 className="text-3xl font-bold mb-2">Timetable Builder</h2>
+        <p className="text-gray-600">Build slot systems with day columns, time-band rows, and merged slot blocks</p>
       </div>
 
-      <form className="card section-gap timetable-slot-system-card" onSubmit={handleCreateSlotSystem}>
+      <form className="border rounded-lg p-6 mb-8 mx-4 bg-white" onSubmit={handleCreateSlotSystem}>
         <div className="card-header">
           <h3>Slot System Selector</h3>
         </div>
@@ -1943,7 +1943,7 @@ export function TimetableBuilderPage() {
         {successMessage && <div className="alert alert-success mt-4">{successMessage}</div>}
       </form>
 
-      <form className="card section-gap timetable-import-card" onSubmit={handlePreviewImport}>
+      <form className="border rounded-lg p-6 mb-8 mx-4 bg-white" onSubmit={handlePreviewImport}>
         <div className="card-header">
           <h3>Classroom Allocation Import</h3>
           {previewReport && (
@@ -2867,7 +2867,7 @@ export function TimetableBuilderPage() {
         )}
       </form>
 
-      <div className="card section-gap timetable-grid-card">
+      <div className="border rounded-lg p-6 mb-8 mx-4 bg-white">
         <div className="card-header">
           <h3>Grid Editor</h3>
           <span className="badge badge-role">
@@ -2877,7 +2877,7 @@ export function TimetableBuilderPage() {
 
         {selectedSystemId !== "" && (
           <>
-            <form className="form-row timetable-inline-form" onSubmit={handleCreateDay}>
+            <form className="flex gap-4 mb-6 items-end" onSubmit={handleCreateDay}>
               <div className="form-field">
                 <label htmlFor="newDayOfWeek">Add day</label>
                 <select
@@ -2894,7 +2894,7 @@ export function TimetableBuilderPage() {
                   ))}
                 </select>
               </div>
-              <div className="form-field timetable-inline-action">
+              <div className="flex-shrink-0">
                 <label className="sr-only" htmlFor="addDayButton">Add day</label>
                 <button id="addDayButton" type="submit" className="btn btn-primary" disabled={actionLoading}>
                   Add Day
@@ -2902,7 +2902,7 @@ export function TimetableBuilderPage() {
               </div>
             </form>
 
-            <form className="form-row timetable-inline-form" onSubmit={handleCreateTimeBand}>
+            <form className="flex gap-4 mb-6 items-end" onSubmit={handleCreateTimeBand}>
               <div className="form-field">
                 <label htmlFor="newBandStart">Band start</label>
                 <DateInput
@@ -2923,7 +2923,7 @@ export function TimetableBuilderPage() {
                   disabled={actionLoading}
                 />
               </div>
-              <div className="form-field timetable-inline-action">
+              <div className="flex-shrink-0">
                 <label className="sr-only" htmlFor="addBandButton">Add time band</label>
                 <button id="addBandButton" type="submit" className="btn btn-primary" disabled={actionLoading}>
                   Add Time Band
@@ -2931,7 +2931,7 @@ export function TimetableBuilderPage() {
               </div>
             </form>
 
-            <div className="form-row timetable-inline-form">
+            <div className="flex gap-4 mb-6 items-center">
               <div className="form-field">
                 <label htmlFor="blockLabelInput">Block label</label>
                 <input
@@ -2944,7 +2944,7 @@ export function TimetableBuilderPage() {
                   disabled={actionLoading}
                 />
               </div>
-              <div className="form-field timetable-inline-hint">
+              <div className="text-sm text-gray-500">
                 <span>
                   Click an empty cell to create a 1-slot block. Drag vertically in a day column to create a merged block.
                 </span>
@@ -2973,13 +2973,13 @@ export function TimetableBuilderPage() {
         )}
 
         {selectedSystemId !== "" && !loadingGrid && grid && days.length > 0 && timeBands.length > 0 && (
-          <div className="timetable-grid-wrapper" onMouseUp={() => void commitSelection()}>
-            <table className="timetable-grid" aria-label="Timetable slot grid">
+          <div className="overflow-x-auto border rounded-lg" onMouseUp={() => void commitSelection()}>
+            <table className="w-full border-collapse bg-white" aria-label="Timetable slot grid">
               <thead>
                 <tr>
                   <th
                     scope="col"
-                    className="timetable-time-header"
+                    className="px-4 py-3 border text-left text-sm font-semibold bg-gray-100"
                     rowSpan={hasMultipleLanes ? 2 : 1}
                   >
                     Time
@@ -2988,15 +2988,15 @@ export function TimetableBuilderPage() {
                     <th
                       key={day.id}
                       scope="col"
-                      className="timetable-day-header"
+                      className="px-4 py-3 border text-left text-sm font-semibold bg-gray-100"
                       colSpan={hasMultipleLanes ? dayLaneInfo.laneCountByDay.get(day.id) ?? 1 : undefined}
                     >
-                      <div className="timetable-day-header-content">
+                      <div className="flex items-center justify-between gap-2">
                         <span>{DAY_LABELS[day.dayOfWeek]}</span>
-                        <div className="timetable-day-header-actions">
+                        <div className="flex gap-1">
                           <button
                             type="button"
-                            className="timetable-add-lane"
+                            className="inline-flex items-center justify-center w-6 h-6 text-sm font-bold bg-blue-500 text-white hover:bg-blue-600 rounded border-0 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                             onClick={() => void handleAddLane(day.id)}
                             disabled={actionLoading}
                             title="Add lane"
@@ -3006,7 +3006,7 @@ export function TimetableBuilderPage() {
                           </button>
                           <button
                             type="button"
-                            className="timetable-remove-lane"
+                            className="inline-flex items-center justify-center w-6 h-6 text-sm font-bold bg-orange-500 text-white hover:bg-orange-600 rounded border-0 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                             onClick={() => void handleRemoveLane(day)}
                             disabled={actionLoading || day.laneCount <= 1}
                             title="Remove lane"
@@ -3016,7 +3016,7 @@ export function TimetableBuilderPage() {
                           </button>
                           <button
                             type="button"
-                            className="timetable-delete-day"
+                            className="inline-flex items-center justify-center w-6 h-6 text-lg font-bold bg-red-500 text-white hover:bg-red-600 rounded border-0 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                             onClick={() => void handleDeleteDay(day)}
                             disabled={actionLoading}
                             title="Delete day"
@@ -3037,7 +3037,7 @@ export function TimetableBuilderPage() {
                         <th
                           key={`${day.id}-${laneIndex}`}
                           scope="col"
-                          className="timetable-day-subheader"
+                          className="px-4 py-3 border text-left text-xs font-medium bg-gray-50"
                         >
                           {laneCount > 1 ? `Lane ${laneIndex + 1}` : "Slot"}
                         </th>
@@ -3049,27 +3049,27 @@ export function TimetableBuilderPage() {
               <tbody>
                 {timeBands.map((band, bandIndex) => (
                   <tr key={band.id}>
-                    <th scope="row" className="timetable-time-cell">
+                    <th scope="row" className="px-4 py-3 border text-left text-sm font-semibold bg-gray-100 align-top">
                       {editingBandId === band.id ? (
-                        <div className="timetable-time-band-editor">
-                          <div className="timetable-time-band-inputs">
+                        <div className="flex flex-col gap-2">
+                          <div className="flex gap-2 items-center">
                             <DateInput
-                              className="timetable-time-band-input"
+                              className="px-2 py-1 border rounded"
                               mode="time"
                               value={editingBandStart}
                               onChange={setEditingBandStart}
                               disabled={actionLoading}
                             />
-                            <span className="timetable-time-band-separator">to</span>
+                            <span className="text-xs font-medium">to</span>
                             <DateInput
-                              className="timetable-time-band-input"
+                              className="px-2 py-1 border rounded"
                               mode="time"
                               value={editingBandEnd}
                               onChange={setEditingBandEnd}
                               disabled={actionLoading}
                             />
                           </div>
-                          <div className="timetable-time-band-actions">
+                          <div className="flex gap-2">
                             <button
                               type="button"
                               className="btn btn-primary btn-sm"
@@ -3089,14 +3089,14 @@ export function TimetableBuilderPage() {
                           </div>
                         </div>
                       ) : (
-                        <div className="timetable-time-band-row">
-                          <span className="timetable-time-band-range">
+                        <div className="flex flex-col gap-2">
+                          <span className="text-sm font-medium">
                             {toTimeLabel(String(band.startTime))} - {toTimeLabel(String(band.endTime))}
                           </span>
-                          <div className="timetable-time-band-actions">
+                          <div className="flex gap-1">
                             <button
                               type="button"
-                              className="timetable-icon-btn timetable-icon-btn-edit"
+                              className="inline-flex items-center justify-center w-6 h-6 text-xs text-blue-600 hover:bg-blue-50 rounded border border-blue-200 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                               onClick={() => startEditingTimeBand(band)}
                               disabled={actionLoading}
                               title="Edit time band"
@@ -3111,14 +3111,14 @@ export function TimetableBuilderPage() {
                             </button>
                             <button
                               type="button"
-                              className="timetable-icon-btn timetable-icon-btn-delete"
+                              className="inline-flex items-center justify-center w-6 h-6 text-xs text-red-600 hover:bg-red-50 rounded border border-red-200 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                               onClick={() => void handleDeleteTimeBand(band.id)}
                               disabled={actionLoading}
                               title="Delete time band"
                               aria-label={`Delete time band ${toTimeLabel(String(band.startTime))} to ${toTimeLabel(String(band.endTime))}`}
                             >
                               {deletingBandId === band.id ? (
-                                <span className="timetable-icon-loading" aria-hidden="true">...</span>
+                                <span aria-hidden="true" className="text-xs">...</span>
                               ) : (
                                 <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
                                   <path
@@ -3150,17 +3150,17 @@ export function TimetableBuilderPage() {
                             <td
                               key={`${day.id}-${laneIndex}-${band.id}`}
                               rowSpan={safeRowSpan}
-                              className="timetable-cell timetable-cell-block"
+                              className="border p-2 bg-blue-50"
                             >
                               <button
                                 type="button"
-                                className="timetable-block"
+                                className="w-full px-3 py-2 bg-blue-600 text-white text-xs font-semibold rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                                 onClick={() => void handleDeleteBlock(block.id)}
                                 disabled={actionLoading}
                                 title="Delete block"
                               >
-                                <span className="timetable-block-label">{block.label}</span>
-                                <span className="timetable-block-delete">Delete</span>
+                                <span className="block truncate">{block.label}</span>
+                                <span className="block text-xs">Delete</span>
                               </button>
                             </td>
                           );
@@ -3171,11 +3171,11 @@ export function TimetableBuilderPage() {
                         return (
                           <td
                             key={`${day.id}-${laneIndex}-${band.id}`}
-                            className={`timetable-cell timetable-cell-empty ${isSelecting ? "is-selecting" : ""}`}
+                            className={`border p-4 text-center cursor-pointer text-xs font-semibold text-gray-500 hover:bg-gray-100 transition-colors ${isSelecting ? "bg-blue-100 text-blue-700" : "bg-white"}`}
                             onMouseDown={() => handleEmptyCellMouseDown(day.id, laneIndex, bandIndex)}
                             onMouseEnter={() => handleEmptyCellMouseEnter(day.id, laneIndex, bandIndex)}
                           >
-                            <span className="timetable-cell-hint">{isSelecting ? "Merge" : "Add"}</span>
+                            <span>{isSelecting ? "Merge" : "Add"}</span>
                           </td>
                         );
                       });

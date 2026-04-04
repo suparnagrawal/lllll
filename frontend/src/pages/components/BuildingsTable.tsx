@@ -68,7 +68,7 @@ export function BuildingsTable({
               <TableHead>Name</TableHead>
               <TableHead>Code</TableHead>
               <TableHead>Rooms</TableHead>
-              <TableHead className="w-[100px]">Actions</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>

@@ -65,11 +65,11 @@ app.use("/api/auth", authLimiter);
 app.use("/api/timetable/imports", uploadLimiter);
 
 // routes
-app.use("/buildings", buildingsRouter);
-app.use("/rooms", roomsRouter);
-app.use("/bookings", bookingsRouter);
-app.use("/booking-requests", bookingRequestsRouter);
-app.use('/availability', availabilityRoutes);
+app.use("/api/buildings", buildingsRouter);
+app.use("/api/rooms", roomsRouter);
+app.use("/api/bookings", bookingsRouter);
+app.use("/api/booking-requests", bookingRequestsRouter);
+app.use('/api/availability', availabilityRoutes);
 app.use("/auth", authRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/users", usersRoutes);
