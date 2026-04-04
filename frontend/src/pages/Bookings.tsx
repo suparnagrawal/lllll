@@ -1,14 +1,10 @@
-import { useEffect, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { FormEvent } from "react";
-import {
-  createBooking,
-  deleteBooking,
-  getBookings,
-  getBuildings,
-  getManagedUsers,
-  getRooms,
-} from "../lib/api";
-import type { Booking, Building, Room } from "../lib/api";
+import { useBookings, useCreateBooking, useDeleteBooking } from "../hooks/useBookings";
+import { useBuildings } from "../hooks/useBuildings";
+import { useRooms } from "../hooks/useRooms";
+import { useManagedUsers } from "../hooks/useUsers";
+import type { Booking } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { DateInput } from "../components/DateInput";
 import { formatDateTimeDDMMYYYY } from "../utils/datetime";
@@ -17,14 +13,6 @@ export function BookingsPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === "ADMIN";
   const canMutate = user?.role === "ADMIN" || user?.role === "STAFF";
-
-  const [bookings, setBookings] = useState<Booking[]>([]);
-  const [rooms, setRooms] = useState<Room[]>([]);
-  const [buildings, setBuildings] = useState<Building[]>([]);
-  const [adminUserNameById, setAdminUserNameById] = useState<Record<number, string>>({});
-
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   // Filters
   const [filterRoomId, setFilterRoomId] = useState<number | "">("");
@@ -36,106 +24,91 @@ export function BookingsPage() {
   const [newRoomId, setNewRoomId] = useState<number | "">(""); 
   const [newStartAt, setNewStartAt] = useState("");
   const [newEndAt, setNewEndAt] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
 
-  const roomNameById = new Map(rooms?.map((r) => [r.id, r.name]) ?? []);
+  // Build filters object for query
+  const filters = useMemo<Record<string, number | string> | undefined>(() => {
+    const f: Record<string, number | string> = {};
+    if (filterRoomId !== "") f.roomId = filterRoomId;
+    if (filterBuildingId !== "") f.buildingId = filterBuildingId;
+    if (filterStartAt) f.startAt = filterStartAt;
+    if (filterEndAt) f.endAt = filterEndAt;
+    return Object.keys(f).length > 0 ? f : undefined;
+  }, [filterRoomId, filterBuildingId, filterStartAt, filterEndAt]);
 
-  const bookingSourceLabel = (source: Booking["source"]) => source.replace(/_/g, " ");
+  // Queries
+  const { data: bookings = [], isLoading, error: bookingsError } = useBookings(filters);
+  const { data: rooms = [] } = useRooms();
+  const { data: buildings = [] } = useBuildings();
+  const { data: managedUsersResponse } = useManagedUsers(
+    isAdmin ? { page: 1, limit: 100 } : undefined
+  );
 
-  const loadAdminUsers = async () => {
-    if (!isAdmin) {
-      setAdminUserNameById({});
-      return;
+  // Build admin user name map
+  const adminUserNameById = useMemo(() => {
+    if (!isAdmin || !managedUsersResponse) return {};
+    const map: Record<number, string> = {};
+    for (const user of managedUsersResponse.data) {
+      map[user.id] = user.displayName ?? user.name;
     }
+    return map;
+  }, [isAdmin, managedUsersResponse]);
 
-    try {
-      const response = await getManagedUsers({ page: 1, limit: 100 });
-      const nextNameMap: Record<number, string> = {};
+  const roomNameById = useMemo(
+    () => new Map(rooms.map((r) => [r.id, r.name])),
+    [rooms]
+  );
 
-      for (const managedUser of response.data) {
-        nextNameMap[managedUser.id] = managedUser.displayName ?? managedUser.name;
-      }
+  const bookingSourceLabel = useCallback(
+    (source: Booking["source"]) => source.replace(/_/g, " "),
+    []
+  );
 
-      setAdminUserNameById(nextNameMap);
-    } catch {
-      setAdminUserNameById({});
-    }
-  };
-
-  const loadBookings = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const filters: {
-        roomId?: number;
-        buildingId?: number;
-        startAt?: string;
-        endAt?: string;
-      } = {};
-      if (filterRoomId !== "") filters.roomId = filterRoomId;
-      if (filterBuildingId !== "") filters.buildingId = filterBuildingId;
-      if (filterStartAt) filters.startAt = filterStartAt;
-      if (filterEndAt) filters.endAt = filterEndAt;
-      setBookings(await getBookings(Object.keys(filters).length > 0 ? filters : undefined));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load bookings");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void (async () => {
-      try { setBuildings(await getBuildings()); } catch { /* ignored */ }
-      try { setRooms(await getRooms()); } catch { /* ignored */ }
-      await loadBookings();
-    })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    void loadAdminUsers();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAdmin]);
-
-  const handleFilter = (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    void loadBookings();
-  };
+  // Mutations
+  const createBookingMutation = useCreateBooking();
+  const deleteBookingMutation = useDeleteBooking();
 
   const handleCreate = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (newRoomId === "") { setError("Room is required"); return; }
-    if (!newStartAt || !newEndAt) { setError("Start and end times are required"); return; }
+    if (newRoomId === "") { 
+      setCreateError("Room is required"); 
+      return; 
+    }
+    if (!newStartAt || !newEndAt) { 
+      setCreateError("Start and end times are required"); 
+      return; 
+    }
 
-    setIsSubmitting(true);
-    setError(null);
+    setCreateError(null);
     try {
-      await createBooking({ roomId: newRoomId, startAt: newStartAt, endAt: newEndAt });
+      await createBookingMutation.mutateAsync({ 
+        roomId: newRoomId, 
+        startAt: newStartAt, 
+        endAt: newEndAt 
+      });
       setNewRoomId("");
       setNewStartAt("");
       setNewEndAt("");
-      await loadBookings();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to create booking");
-    } finally {
-      setIsSubmitting(false);
+      setCreateError(e instanceof Error ? e.message : "Failed to create booking");
     }
   };
 
   const handleDelete = async (id: number) => {
     setDeletingId(id);
-    setError(null);
+    setCreateError(null);
     try {
-      await deleteBooking(id);
-      await loadBookings();
+      await deleteBookingMutation.mutateAsync(id);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to delete booking");
+      setCreateError(e instanceof Error ? e.message : "Failed to delete booking");
     } finally {
       setDeletingId(null);
     }
   };
+
+  const error = bookingsError || createBookingMutation.error || deleteBookingMutation.error;
+  const isSubmitting = createBookingMutation.isPending;
 
   return (
     <section>
@@ -145,7 +118,7 @@ export function BookingsPage() {
       </div>
 
       {/* Filter */}
-      <form className="card section-gap" onSubmit={handleFilter}>
+      <form className="card section-gap" onSubmit={(e) => { e.preventDefault(); }}>
         <div className="card-header">
           <h3>Filters</h3>
         </div>
@@ -196,9 +169,6 @@ export function BookingsPage() {
               onChange={setFilterEndAt}
             />
           </div>
-        </div>
-        <div>
-          <button type="submit" className="btn btn-primary btn-sm">Apply Filters</button>
         </div>
       </form>
 
@@ -253,11 +223,11 @@ export function BookingsPage() {
         </form>
       )}
 
-      {error && <div className="alert alert-error">{error}</div>}
-      {loading && <p className="loading-text">Loading bookings…</p>}
-      {!loading && bookings.length === 0 && <p className="empty-text">No bookings found.</p>}
+      {(error || createError) && <div className="alert alert-error">{error?.message || createError}</div>}
+      {isLoading && <p className="loading-text">Loading bookings…</p>}
+      {!isLoading && bookings.length === 0 && <p className="empty-text">No bookings found.</p>}
 
-      {!loading && bookings.length > 0 && (
+      {!isLoading && bookings.length > 0 && (
         <div className="data-list">
           {bookings.map((b) => {
             const isDeleting = deletingId === b.id;
