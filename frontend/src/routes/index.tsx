@@ -22,6 +22,8 @@ const AuthCallbackPage = lazy(() => import('../pages/AuthCallbackPage'));
 // eslint-disable-next-line react-refresh/only-export-components
 const AuthSetupPage = lazy(() => import('../pages/AuthSetupPage'));
 // eslint-disable-next-line react-refresh/only-export-components
+const LoginPage = lazy(() => import('../pages/LoginPage'));
+// eslint-disable-next-line react-refresh/only-export-components
 const PageLoader = () => (
   <div className="flex items-center justify-center w-full h-screen">
     <div className="text-lg text-gray-500">Loading...</div>
@@ -68,6 +70,10 @@ export const router = createBrowserRouter([
   {
     path: '/auth/setup',
     element: <Suspense fallback={<PageLoader />}><AuthSetupPage /></Suspense>,
+  },
+  {
+    path: '/login',
+    element: <Suspense fallback={<PageLoader />}><LoginPage /></Suspense>,
   },
   {
     path: '*',
