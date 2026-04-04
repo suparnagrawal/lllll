@@ -66,7 +66,6 @@ export function BuildingsTable({
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
-              <TableHead>Code</TableHead>
               <TableHead>Rooms</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -74,13 +73,13 @@ export function BuildingsTable({
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={4} className="text-center py-8">
+                <TableCell colSpan={3} className="text-center py-8">
                   Loading buildings...
                 </TableCell>
               </TableRow>
             ) : filteredBuildings.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={4} className="text-center py-8">
+                <TableCell colSpan={3} className="text-center py-8">
                   {buildings.length === 0
                     ? "No buildings yet"
                     : "No buildings match your search"}
@@ -90,7 +89,6 @@ export function BuildingsTable({
               filteredBuildings.map((building) => (
                 <TableRow key={building.id}>
                   <TableCell className="font-medium">{building.name}</TableCell>
-                  <TableCell>B{building.id.toString().padStart(3, "0")}</TableCell>
                   <TableCell>{getRoomCount(building.id)}</TableCell>
                   <TableCell>
                     <BuildingActions

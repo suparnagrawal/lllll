@@ -2,9 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import {
-  getDashboardStats,
-  getUpcomingBookings,
-  getActivityFeed,
+  getDashboardData,
   type DashboardStats,
   type UpcomingBooking,
   type ActivityItem,
@@ -52,15 +50,11 @@ export default function DashboardPage() {
         setLoading(true);
         setError(null);
 
-        const [statsData, bookingsData, activitiesData] = await Promise.all([
-          getDashboardStats(),
-          getUpcomingBookings(),
-          getActivityFeed(),
-        ]);
+        const data = await getDashboardData();
 
-        setStats(statsData);
-        setUpcomingBookings(bookingsData);
-        setActivities(activitiesData);
+        setStats(data.stats);
+        setUpcomingBookings(data.upcomingBookings);
+        setActivities(data.activities);
       } catch (err) {
         console.error("Error loading dashboard:", err);
         setError("Failed to load dashboard data");

@@ -20,6 +20,7 @@ import notificationsRoutes from "./routes/notifications";
 import timetableRoutes from "./modules/timetable/routes";
 import dashboardRoutes from "./routes/dashboard";
 import healthRouter from "./api/routes/health.routes";
+import { errorHandler } from "./api/middleware/errorHandler.middleware";
 import logger from "./shared/utils/logger";
 
 
@@ -81,6 +82,9 @@ app.use("/api/timetable", timetableRoutes);
 app.use("/dashboard", dashboardRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/health", healthRouter);
+
+// Global error handler - must be after all routes
+app.use(errorHandler);
 
 app.listen(PORT, () => {
   logger.info(`Server running on port ${PORT}`);

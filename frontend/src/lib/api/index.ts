@@ -57,6 +57,7 @@ export type {
   DashboardStats,
   UpcomingBooking,
   ActivityItem,
+  DashboardData,
 } from "./types";
 
 // Client utilities
@@ -166,6 +167,7 @@ export {
 
 // Dashboard endpoints
 export {
+  getDashboardData,
   getDashboardStats,
   getUpcomingBookings,
   getActivityFeed,

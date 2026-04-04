@@ -448,3 +448,9 @@ export type ActivityItem = {
   createdAt: string;
   eventType: string;
 };
+
+export type DashboardData = {
+  stats: DashboardStats;
+  upcomingBookings: UpcomingBooking[];
+  activities: ActivityItem[];
+};

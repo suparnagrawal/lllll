@@ -1,5 +1,9 @@
 import { request } from "./client";
-import type { DashboardStats, UpcomingBooking, ActivityItem } from "./types";
+import type { DashboardStats, UpcomingBooking, ActivityItem, DashboardData } from "./types";
+
+export async function getDashboardData(): Promise<DashboardData> {
+  return request<DashboardData>("/dashboard/data");
+}
 
 export async function getDashboardStats(): Promise<DashboardStats> {
   return request<DashboardStats>("/dashboard/stats");

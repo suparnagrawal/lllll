@@ -11,11 +11,17 @@ export function validate(schema: ValidationSchema) {
   return (req: Request, res: Response, next: NextFunction): void => {
     try {
       if (schema.params) {
-        req.params = schema.params.parse(req.params);
+        const parsedParams = schema.params.parse(req.params);
+        Object.keys(req.params).forEach(key => delete req.params[key]);
+        Object.assign(req.params, parsedParams);
       }
 
       if (schema.query) {
-        req.query = schema.query.parse(req.query);
+        const parsedQuery = schema.query.parse(req.query);
+        // In Express 5, req.query is read-only but we can mutate its properties
+        const queryObj = req.query as Record<string, any>;
+        Object.keys(queryObj).forEach(key => delete queryObj[key]);
+        Object.assign(queryObj, parsedQuery);
       }
 
       if (schema.body) {

@@ -84,7 +84,7 @@ export class RoomsController {
       throw new NotFoundError('Room not found');
     }
 
-    const room = result[0];
+    const room = result[0]!;
 
     if (
       req.user?.role === 'STAFF' &&
@@ -119,7 +119,7 @@ export class RoomsController {
       throw new NotFoundError('Room not found');
     }
 
-    const room = roomRows[0];
+    const room = roomRows[0]!;
 
     if (
       req.user?.role === 'STAFF' &&
@@ -194,7 +194,7 @@ export class RoomsController {
       throw new NotFoundError('Room not found');
     }
 
-    const room = existing[0];
+    const room = existing[0]!;
 
     if (
       req.user?.role === 'STAFF' &&
@@ -236,7 +236,7 @@ export class RoomsController {
       throw new NotFoundError('Room not found');
     }
 
-    const room = existing[0];
+    const room = existing[0]!;
 
     if (
       req.user?.role === 'STAFF' &&

@@ -151,22 +151,12 @@ export class BookingsController {
     }
 
     if (input && typeof input === 'object' && req.user?.id !== undefined) {
-      const existingMetadata =
-        (input as any).metadata && typeof (input as any).metadata === 'object'
-          ? (input as any).metadata
-          : {};
-
-      (input as any).metadata = {
-        ...existingMetadata,
-        approvedBy:
-          existingMetadata.approvedBy !== undefined
-            ? existingMetadata.approvedBy
-            : req.user.id,
-        approvedAt:
-          existingMetadata.approvedAt !== undefined
-            ? existingMetadata.approvedAt
-            : new Date(),
-      };
+      if ((input as any).approvedBy === undefined) {
+        (input as any).approvedBy = req.user.id;
+      }
+      if ((input as any).approvedAt === undefined) {
+        (input as any).approvedAt = new Date();
+      }
     }
 
     const result = await createBooking(input);
@@ -336,24 +326,10 @@ export class BookingsController {
               return item;
             }
 
-            const existingMetadata =
-              item.metadata && typeof item.metadata === 'object'
-                ? item.metadata
-                : {};
-
             return {
               ...item,
-              metadata: {
-                ...existingMetadata,
-                approvedBy:
-                  existingMetadata.approvedBy !== undefined
-                    ? existingMetadata.approvedBy
-                    : req.user?.id,
-                approvedAt:
-                  existingMetadata.approvedAt !== undefined
-                    ? existingMetadata.approvedAt
-                    : new Date(),
-              },
+              approvedBy: item.approvedBy !== undefined ? item.approvedBy : req.user?.id,
+              approvedAt: item.approvedAt !== undefined ? item.approvedAt : new Date(),
             };
           })
         : items;
