@@ -36,7 +36,7 @@ export function UsersPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [creatingUser, setCreatingUser] = useState(false);
-  const [createForm, setCreateForm] = useState({ name: "", email: "", password: "", role: "FACULTY" as "ADMIN" | "STAFF" | "FACULTY", department: "" });
+  const [createForm, setCreateForm] = useState({ name: "", email: "", password: "", role: "FACULTY" as "ADMIN" | "STAFF" | "FACULTY", department: "", authProvider: "email" as "email" | "google" });
   const [editingUser, setEditingUser] = useState<ManagedUser | null>(null);
   const [deactivatingUser, setDeactivatingUser] = useState<ManagedUser | null>(null);
   const [deletingUser, setDeletingUser] = useState<ManagedUser | null>(null);
@@ -93,11 +93,11 @@ export function UsersPage() {
         name: createForm.name.trim() || undefined,
         role: createForm.role,
         department: createForm.department.trim() || undefined,
-        authProvider: "email",
-        password: createForm.password,
+        authProvider: createForm.authProvider,
+        password: createForm.authProvider === "email" ? createForm.password : undefined,
       });
       setNotice(`User ${createForm.email} created successfully`);
-      setCreateForm({ name: "", email: "", password: "", role: "FACULTY", department: "" });
+      setCreateForm({ name: "", email: "", password: "", role: "FACULTY", department: "", authProvider: "email" });
       await loadUsers(1);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to create user");
@@ -206,10 +206,41 @@ export function UsersPage() {
         <div className="card-header">
           <h3>Add New User</h3>
         </div>
+        <div className="mb-4">
+          <label className="text-sm font-medium mb-2 block">Authentication Provider</label>
+          <div className="flex gap-4">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="authProvider"
+                value="email"
+                checked={createForm.authProvider === "email"}
+                onChange={(e) => setCreateForm({ ...createForm, authProvider: e.target.value as "email" | "google", password: "" })}
+                disabled={creatingUser}
+                className="w-4 h-4"
+              />
+              <span>Email/Password</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="authProvider"
+                value="google"
+                checked={createForm.authProvider === "google"}
+                onChange={(e) => setCreateForm({ ...createForm, authProvider: e.target.value as "email" | "google", password: "" })}
+                disabled={creatingUser}
+                className="w-4 h-4"
+              />
+              <span>Google OAuth</span>
+            </label>
+          </div>
+        </div>
         <div className="grid grid-cols-2 gap-4">
           <Input placeholder="Email" type="email" value={createForm.email} onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })} disabled={creatingUser} required />
           <Input placeholder="Full Name" value={createForm.name} onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })} disabled={creatingUser} />
-          <Input placeholder="Password (min 8)" type="password" value={createForm.password} onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })} disabled={creatingUser} required minLength={8} />
+          {createForm.authProvider === "email" && (
+            <Input placeholder="Password (min 8)" type="password" value={createForm.password} onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })} disabled={creatingUser} required minLength={8} />
+          )}
           <Input placeholder="Department" value={createForm.department} onChange={(e) => setCreateForm({ ...createForm, department: e.target.value })} disabled={creatingUser} />
         </div>
         <div className="flex items-end gap-2">

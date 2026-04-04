@@ -27,6 +27,10 @@ import {
   reallocateTimetableImport,
   saveTimetableImportDecisions,
   transferTimetableImportRow,
+  detectCommitConflicts,
+  commitWithResolutions,
+  cancelCommit,
+  getCommitFreezeStatus,
 } from "./importService";
 import logger from "../../shared/utils/logger";
 
@@ -597,5 +601,123 @@ export async function handleGetProcessedImportRows(req: Request, res: Response) 
     return res.json(report);
   } catch (error) {
     return sendError(res, error, "Failed to fetch processed rows");
+  }
+}
+
+// ============================================================================
+// Conflict Detection and Resolution Handlers
+// ============================================================================
+
+/**
+ * Detect conflicts before committing.
+ * This freezes booking operations and returns any conflicts found.
+ */
+export async function handleDetectCommitConflicts(req: Request, res: Response) {
+  try {
+    const batchId = parsePositiveInteger(req.params.id);
+
+    if (!batchId) {
+      return res.status(400).json({ error: "Invalid batch id" });
+    }
+
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    // Use a simple identifier for the freeze info
+    const userName = `User ${userId}`;
+
+    logger.info("Handling detect commit conflicts request", { batchId, userId });
+
+    const report = await detectCommitConflicts(
+      { batchId, decisions: req.body?.decisions },
+      userId,
+      userName
+    );
+
+    return res.json(report);
+  } catch (error) {
+    return sendError(res, error, "Failed to detect commit conflicts");
+  }
+}
+
+/**
+ * Commit with conflict resolutions.
+ * Applies resolution decisions and creates/deletes bookings accordingly.
+ */
+export async function handleCommitWithResolutions(req: Request, res: Response) {
+  try {
+    const batchId = parsePositiveInteger(req.params.id);
+
+    if (!batchId) {
+      return res.status(400).json({ error: "Invalid batch id" });
+    }
+
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const resolutions = req.body?.resolutions;
+
+    if (!Array.isArray(resolutions)) {
+      return res.status(400).json({ error: "resolutions must be an array" });
+    }
+
+    logger.info("Handling commit with resolutions request", {
+      batchId,
+      userId,
+      resolutionCount: resolutions.length,
+    });
+
+    const report = await commitWithResolutions({ batchId, resolutions }, userId);
+
+    return res.json(report);
+  } catch (error) {
+    return sendError(res, error, "Failed to commit with resolutions");
+  }
+}
+
+/**
+ * Cancel a commit in progress.
+ * Unfreezes booking operations without making changes.
+ */
+export async function handleCancelCommit(req: Request, res: Response) {
+  try {
+    const batchId = parsePositiveInteger(req.params.id);
+
+    if (!batchId) {
+      return res.status(400).json({ error: "Invalid batch id" });
+    }
+
+    logger.info("Handling cancel commit request", { batchId });
+
+    const result = await cancelCommit(batchId);
+
+    return res.json(result);
+  } catch (error) {
+    return sendError(res, error, "Failed to cancel commit");
+  }
+}
+
+/**
+ * Get freeze status for a batch.
+ */
+export async function handleGetFreezeStatus(req: Request, res: Response) {
+  try {
+    const batchId = parsePositiveInteger(req.params.id);
+
+    if (!batchId) {
+      return res.status(400).json({ error: "Invalid batch id" });
+    }
+
+    const status = getCommitFreezeStatus(batchId);
+
+    return res.json(status);
+  } catch (error) {
+    return sendError(res, error, "Failed to get freeze status");
   }
 }

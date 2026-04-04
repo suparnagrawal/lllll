@@ -66,9 +66,6 @@ export function RoomCard({ room, onEditClick }: RoomCardProps) {
           </DropdownMenu>
         </div>
       </CardHeader>
-      <CardContent className="pt-0">
-        <p className="text-sm text-gray-500">ID: {room.id}</p>
-      </CardContent>
     </Card>
   );
 }

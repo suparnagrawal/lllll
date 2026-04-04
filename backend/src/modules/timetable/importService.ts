@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { and, asc, desc, eq, inArray, like, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, like, sql, lt, gt } from "drizzle-orm";
 import XLSX from "xlsx";
 import { db } from "../../db";
 import {
@@ -11,8 +11,15 @@ import {
   timetableImportRows,
   timetableImportOccurrences,
 } from "../../db/schema";
-import { createBookingsBulk } from "../../services/bookingService";
+import { createBookingsBulk, hasBookingOverlap } from "../../services/bookingService";
 import type { BookingCreateResult } from "../../services/bookingService";
+import {
+  freezeBookings,
+  unfreezeBookings,
+  getBookingFreezeState,
+  isBookingFrozen,
+} from "../../services/bookingFreezeService";
+import logger from "../../shared/utils/logger";
 import { DAY_OF_WEEK_VALUES, slotBlocks, slotDays, slotSystems, slotTimeBands } from "./schema";
 import { createBlock } from "./service";
 
@@ -297,6 +304,90 @@ export type TransferImportRowReport = {
   targetBatchId: number;
   targetProcessedRows: number;
   targetBatchStatus: ImportBatchStatus;
+};
+
+// ============================================================================
+// Conflict Resolution Types
+// ============================================================================
+
+export type ConflictResolutionAction = "FORCE_OVERWRITE" | "SKIP" | "ALTERNATIVE_ROOM";
+
+export type DetectedConflict = {
+  occurrenceId: number;
+  rowId: number;
+  rowIndex: number;
+  courseCode: string;
+  slot: string;
+  classroom: string;
+  roomId: number;
+  roomName: string;
+  buildingName: string;
+  startAt: string;
+  endAt: string;
+  conflictingBooking: {
+    id: number;
+    roomId: number;
+    startAt: string;
+    endAt: string;
+    source: string;
+    sourceRef: string | null;
+  };
+};
+
+export type ConflictResolutionDecision = {
+  occurrenceId: number;
+  action: ConflictResolutionAction;
+  alternativeRoomId?: number;
+};
+
+export type ConflictDetectionReport = {
+  batchId: number;
+  status: "FROZEN" | "NO_CONFLICTS";
+  totalOccurrences: number;
+  conflictCount: number;
+  conflicts: DetectedConflict[];
+  frozenAt: string | null;
+  frozenBy: {
+    userId: number;
+    userName: string;
+  } | null;
+};
+
+export type CommitWithResolutionsInput = {
+  batchId: number;
+  resolutions: ConflictResolutionDecision[];
+};
+
+export type CommitWithResolutionsReport = {
+  batchId: number;
+  status: "COMMITTED";
+  totalOccurrences: number;
+  createdBookings: number;
+  skippedOccurrences: number;
+  overwrittenBookings: number;
+  alternativeRoomBookings: number;
+  deletedConflictingBookings: number;
+  warnings: string[];
+  changes: {
+    created: Array<{
+      occurrenceId: number;
+      bookingId: number;
+      roomId: number;
+      startAt: string;
+      endAt: string;
+    }>;
+    deleted: Array<{
+      bookingId: number;
+      roomId: number;
+      startAt: string;
+      endAt: string;
+      reason: string;
+    }>;
+    skipped: Array<{
+      occurrenceId: number;
+      reason: string;
+    }>;
+  };
 };
 
 type ServiceError = Error & { status: number };
@@ -3559,6 +3650,656 @@ export async function getTimetableImportProcessedRows(
     status: batch.status,
     warnings: Array.isArray(batch.warnings) ? (batch.warnings as string[]) : [],
     rows: reportRows,
+  };
+}
+
+// ============================================================================
+// Conflict Detection and Resolution Functions
+// ============================================================================
+
+/**
+ * Detect conflicts for a batch commit. This function:
+ * 1. Freezes booking operations
+ * 2. Analyzes all pending occurrences
+ * 3. Returns conflicts with existing bookings
+ *
+ * If no conflicts are found, the batch can proceed to commit directly.
+ * If conflicts are found, they must be resolved before commit.
+ */
+export async function detectCommitConflicts(
+  input: CommitImportInput,
+  userId: number,
+  userName: string
+): Promise<ConflictDetectionReport> {
+  const batchId = Number(input.batchId);
+  if (!Number.isInteger(batchId) || batchId <= 0) {
+    throw createServiceError(400, "Invalid batchId");
+  }
+
+  logger.info("Starting conflict detection for timetable import", { batchId, userId });
+
+  // Get batch info
+  const [batch] = await db
+    .select({
+      id: timetableImportBatches.id,
+      slotSystemId: timetableImportBatches.slotSystemId,
+      termStartDate: timetableImportBatches.termStartDate,
+      termEndDate: timetableImportBatches.termEndDate,
+      status: timetableImportBatches.status,
+    })
+    .from(timetableImportBatches)
+    .where(eq(timetableImportBatches.id, batchId))
+    .limit(1);
+
+  if (!batch) {
+    throw createServiceError(404, "Import batch not found");
+  }
+
+  if (batch.status === "COMMITTED") {
+    throw createServiceError(400, "Batch is already committed");
+  }
+
+  // Freeze bookings
+  const freezeResult = freezeBookings(batchId, userId, userName);
+  if (!freezeResult.ok) {
+    throw createServiceError(409, freezeResult.message);
+  }
+
+  logger.info("Booking operations frozen for conflict detection", { batchId, userId });
+
+  try {
+    // Parse decisions
+    const explicitDecisions = parseDecisionInput(input.decisions);
+    const savedDecisions = await getSavedDecisions(batchId);
+    const decisions = new Map<number, ImportDecision>();
+
+    for (const saved of savedDecisions) {
+      decisions.set(saved.rowId, {
+        rowId: saved.rowId,
+        action: saved.action,
+        ...(saved.resolvedSlotLabel ? { resolvedSlotLabel: saved.resolvedSlotLabel } : {}),
+        ...(saved.resolvedRoomId ? { resolvedRoomId: saved.resolvedRoomId } : {}),
+        ...(saved.createSlot ? { createSlot: saved.createSlot } : {}),
+        ...(saved.createRoom ? { createRoom: saved.createRoom } : {}),
+      });
+    }
+
+    for (const [rowId, decision] of explicitDecisions.entries()) {
+      decisions.set(rowId, decision);
+    }
+
+    // Get rows and lookups
+    const batchRows = await getBatchRows(batchId);
+    let slotLookup = await getSlotDescriptorLookup(batch.slotSystemId);
+    const buildingLookup = await getBuildingRoomLookup();
+    const slotSystemStructure = await getSlotSystemStructure(batch.slotSystemId);
+    const createdSlotLabelByKey = new Map<string, string>();
+
+    const conflicts: DetectedConflict[] = [];
+    let totalOccurrences = 0;
+
+    for (const row of batchRows) {
+      const decision = decisions.get(row.id);
+      const action = decision?.action ?? (row.classification === "VALID_AND_AUTOMATABLE" ? "AUTO" : "SKIP");
+
+      if (action === "SKIP") {
+        continue;
+      }
+
+      let resolvedSlotLabel = row.resolvedSlotLabel ? normalizeSpace(row.resolvedSlotLabel) : "";
+      let resolvedRoomId = row.resolvedRoomId ?? null;
+
+      // Apply decision
+      if (decision?.action === "RESOLVE") {
+        if (decision.createSlot) {
+          resolvedSlotLabel = await ensureSlotForDecision({
+            slotSystemId: batch.slotSystemId,
+            createSlot: decision.createSlot,
+            defaultLabel: resolvedSlotLabel || row.rawSlot || "",
+            slotSystemStructure,
+            createdSlotLabelByKey,
+          });
+          slotLookup = await getSlotDescriptorLookup(batch.slotSystemId);
+        } else if (decision.resolvedSlotLabel) {
+          resolvedSlotLabel = normalizeSpace(decision.resolvedSlotLabel);
+        }
+
+        if (decision.createRoom) {
+          resolvedRoomId = await ensureRoomForDecision({
+            createRoom: decision.createRoom,
+            buildingLookup,
+          });
+        } else if (decision.resolvedRoomId !== undefined) {
+          resolvedRoomId = decision.resolvedRoomId;
+        }
+      }
+
+      if (!resolvedSlotLabel || !resolvedRoomId) {
+        continue;
+      }
+
+      const descriptors = slotLookup.descriptorsByLabel.get(normalizeKey(resolvedSlotLabel)) ?? [];
+      if (descriptors.length === 0) {
+        continue;
+      }
+
+      // Get room details for conflict info
+      const roomInfo = buildingLookup.roomById.get(resolvedRoomId);
+      const roomName = roomInfo?.name ?? `Room ${resolvedRoomId}`;
+      const buildingName = roomInfo?.buildingId
+        ? (buildingLookup.buildingNameById.get(roomInfo.buildingId) ?? "Unknown Building")
+        : "Unknown Building";
+
+      for (const descriptor of descriptors) {
+        const intervals = buildOccurrenceIntervals({
+          termStartDate: batch.termStartDate,
+          termEndDate: batch.termEndDate,
+          dayOfWeek: descriptor.dayOfWeek,
+          startTime: descriptor.startTime,
+          endTime: descriptor.endTime,
+        });
+
+        for (const interval of intervals) {
+          totalOccurrences++;
+
+          const dedupeKey = hashValue(
+            `${batch.id}|${row.id}|${resolvedRoomId}|${interval.startAt.toISOString()}|${interval.endAt.toISOString()}`
+          );
+
+          // Check if occurrence already exists and has a booking
+          const [existingOccurrence] = await db
+            .select({
+              id: timetableImportOccurrences.id,
+              bookingId: timetableImportOccurrences.bookingId,
+            })
+            .from(timetableImportOccurrences)
+            .where(eq(timetableImportOccurrences.dedupeKey, dedupeKey))
+            .limit(1);
+
+          if (existingOccurrence?.bookingId) {
+            // Already processed, skip
+            continue;
+          }
+
+          // Check for overlapping bookings
+          const overlappingBookings = await db
+            .select({
+              id: bookings.id,
+              roomId: bookings.roomId,
+              startAt: bookings.startAt,
+              endAt: bookings.endAt,
+              source: bookings.source,
+              sourceRef: bookings.sourceRef,
+            })
+            .from(bookings)
+            .where(
+              and(
+                eq(bookings.roomId, resolvedRoomId),
+                lt(bookings.startAt, interval.endAt),
+                gt(bookings.endAt, interval.startAt)
+              )
+            );
+
+          if (overlappingBookings.length > 0) {
+            // Get or create occurrence ID for tracking
+            let occurrenceId = existingOccurrence?.id;
+            if (!occurrenceId) {
+              const [createdOccurrence] = await db
+                .insert(timetableImportOccurrences)
+                .values({
+                  batchId: batch.id,
+                  rowId: row.id,
+                  roomId: resolvedRoomId,
+                  startAt: interval.startAt,
+                  endAt: interval.endAt,
+                  source: "TIMETABLE_ALLOCATION",
+                  sourceRef: `batch:${batch.id}:row:${row.id}:block:${descriptor.blockId}`,
+                  dedupeKey,
+                  status: "PENDING",
+                })
+                .returning({ id: timetableImportOccurrences.id });
+
+              occurrenceId = createdOccurrence?.id ?? 0;
+            }
+
+            for (const conflicting of overlappingBookings) {
+              conflicts.push({
+                occurrenceId: occurrenceId,
+                rowId: row.id,
+                rowIndex: row.rowIndex,
+                courseCode: row.rawCourseCode || "",
+                slot: row.rawSlot || "",
+                classroom: row.rawClassroom || "",
+                roomId: resolvedRoomId,
+                roomName,
+                buildingName,
+                startAt: interval.startAt.toISOString(),
+                endAt: interval.endAt.toISOString(),
+                conflictingBooking: {
+                  id: conflicting.id,
+                  roomId: conflicting.roomId,
+                  startAt: conflicting.startAt.toISOString(),
+                  endAt: conflicting.endAt.toISOString(),
+                  source: conflicting.source,
+                  sourceRef: conflicting.sourceRef,
+                },
+              });
+            }
+          }
+        }
+      }
+    }
+
+    const freezeState = getBookingFreezeState();
+
+    logger.info("Conflict detection completed", {
+      batchId,
+      totalOccurrences,
+      conflictCount: conflicts.length,
+    });
+
+    if (conflicts.length === 0) {
+      // No conflicts, can proceed
+      return {
+        batchId,
+        status: "NO_CONFLICTS",
+        totalOccurrences,
+        conflictCount: 0,
+        conflicts: [],
+        frozenAt: freezeState.frozenBy?.startedAt?.toISOString() ?? null,
+        frozenBy: freezeState.frozenBy
+          ? { userId: freezeState.frozenBy.userId, userName: freezeState.frozenBy.userName }
+          : null,
+      };
+    }
+
+    return {
+      batchId,
+      status: "FROZEN",
+      totalOccurrences,
+      conflictCount: conflicts.length,
+      conflicts,
+      frozenAt: freezeState.frozenBy?.startedAt?.toISOString() ?? null,
+      frozenBy: freezeState.frozenBy
+        ? { userId: freezeState.frozenBy.userId, userName: freezeState.frozenBy.userName }
+        : null,
+    };
+  } catch (error) {
+    // Unfreeze on error
+    unfreezeBookings(batchId);
+    logger.error("Error during conflict detection, unfreezing", { batchId, error });
+    throw error;
+  }
+}
+
+/**
+ * Commit with conflict resolutions.
+ * This function applies the resolution decisions and creates/deletes bookings accordingly.
+ */
+export async function commitWithResolutions(
+  input: CommitWithResolutionsInput,
+  userId: number
+): Promise<CommitWithResolutionsReport> {
+  const batchId = Number(input.batchId);
+  if (!Number.isInteger(batchId) || batchId <= 0) {
+    throw createServiceError(400, "Invalid batchId");
+  }
+
+  // Verify batch is frozen by this batch
+  const freezeState = getBookingFreezeState();
+  if (!freezeState.isFrozen || freezeState.frozenBy?.batchId !== batchId) {
+    throw createServiceError(400, "Batch is not in frozen state for commit. Please restart the commit process.");
+  }
+
+  logger.info("Starting commit with resolutions", {
+    batchId,
+    userId,
+    resolutionCount: input.resolutions?.length ?? 0,
+  });
+
+  const [batch] = await db
+    .select({
+      id: timetableImportBatches.id,
+      slotSystemId: timetableImportBatches.slotSystemId,
+      termStartDate: timetableImportBatches.termStartDate,
+      termEndDate: timetableImportBatches.termEndDate,
+      status: timetableImportBatches.status,
+      warnings: timetableImportBatches.warnings,
+    })
+    .from(timetableImportBatches)
+    .where(eq(timetableImportBatches.id, batchId))
+    .limit(1);
+
+  if (!batch) {
+    unfreezeBookings(batchId);
+    throw createServiceError(404, "Import batch not found");
+  }
+
+  if (batch.status === "COMMITTED") {
+    unfreezeBookings(batchId);
+    throw createServiceError(400, "Batch is already committed");
+  }
+
+  try {
+    // Build resolution map
+    const resolutionMap = new Map<number, ConflictResolutionDecision>();
+    for (const resolution of input.resolutions ?? []) {
+      resolutionMap.set(resolution.occurrenceId, resolution);
+    }
+
+    // Get all pending occurrences
+    const pendingOccurrences = await db
+      .select({
+        id: timetableImportOccurrences.id,
+        rowId: timetableImportOccurrences.rowId,
+        roomId: timetableImportOccurrences.roomId,
+        startAt: timetableImportOccurrences.startAt,
+        endAt: timetableImportOccurrences.endAt,
+        sourceRef: timetableImportOccurrences.sourceRef,
+        dedupeKey: timetableImportOccurrences.dedupeKey,
+        status: timetableImportOccurrences.status,
+        bookingId: timetableImportOccurrences.bookingId,
+      })
+      .from(timetableImportOccurrences)
+      .where(
+        and(
+          eq(timetableImportOccurrences.batchId, batchId),
+          eq(timetableImportOccurrences.status, "PENDING")
+        )
+      );
+
+    const changes: CommitWithResolutionsReport["changes"] = {
+      created: [],
+      deleted: [],
+      skipped: [],
+    };
+
+    let createdBookings = 0;
+    let skippedOccurrences = 0;
+    let overwrittenBookings = 0;
+    let alternativeRoomBookings = 0;
+    let deletedConflictingBookings = 0;
+    const warnings: string[] = [];
+
+    for (const occurrence of pendingOccurrences) {
+      if (occurrence.bookingId) {
+        // Already processed
+        continue;
+      }
+
+      const resolution = resolutionMap.get(occurrence.id);
+      let targetRoomId = occurrence.roomId;
+
+      // Check for conflicts
+      const overlappingBookings = await db
+        .select({
+          id: bookings.id,
+          roomId: bookings.roomId,
+          startAt: bookings.startAt,
+          endAt: bookings.endAt,
+          source: bookings.source,
+          sourceRef: bookings.sourceRef,
+        })
+        .from(bookings)
+        .where(
+          and(
+            eq(bookings.roomId, targetRoomId),
+            lt(bookings.startAt, occurrence.endAt),
+            gt(bookings.endAt, occurrence.startAt)
+          )
+        );
+
+      const hasConflict = overlappingBookings.length > 0;
+
+      if (hasConflict && !resolution) {
+        // Conflict without resolution - skip
+        skippedOccurrences++;
+        changes.skipped.push({
+          occurrenceId: occurrence.id,
+          reason: "Unresolved conflict",
+        });
+
+        await db
+          .update(timetableImportOccurrences)
+          .set({ status: "SKIPPED", errorMessage: "Unresolved conflict" })
+          .where(eq(timetableImportOccurrences.id, occurrence.id));
+
+        continue;
+      }
+
+      if (hasConflict && resolution) {
+        if (resolution.action === "SKIP") {
+          skippedOccurrences++;
+          changes.skipped.push({
+            occurrenceId: occurrence.id,
+            reason: "User chose to skip",
+          });
+
+          await db
+            .update(timetableImportOccurrences)
+            .set({ status: "SKIPPED", errorMessage: "Skipped by user resolution" })
+            .where(eq(timetableImportOccurrences.id, occurrence.id));
+
+          continue;
+        }
+
+        if (resolution.action === "FORCE_OVERWRITE") {
+          // Delete conflicting bookings
+          for (const conflicting of overlappingBookings) {
+            await db.delete(bookings).where(eq(bookings.id, conflicting.id));
+            deletedConflictingBookings++;
+            changes.deleted.push({
+              bookingId: conflicting.id,
+              roomId: conflicting.roomId,
+              startAt: conflicting.startAt.toISOString(),
+              endAt: conflicting.endAt.toISOString(),
+              reason: `Overwritten by timetable import batch ${batchId}`,
+            });
+
+            logger.info("Deleted conflicting booking (FORCE_OVERWRITE)", {
+              deletedBookingId: conflicting.id,
+              batchId,
+              occurrenceId: occurrence.id,
+            });
+          }
+          overwrittenBookings++;
+        }
+
+        if (resolution.action === "ALTERNATIVE_ROOM") {
+          if (!resolution.alternativeRoomId) {
+            skippedOccurrences++;
+            changes.skipped.push({
+              occurrenceId: occurrence.id,
+              reason: "Alternative room not specified",
+            });
+
+            await db
+              .update(timetableImportOccurrences)
+              .set({ status: "SKIPPED", errorMessage: "Alternative room not specified" })
+              .where(eq(timetableImportOccurrences.id, occurrence.id));
+
+            warnings.push(
+              `Occurrence ${occurrence.id}: Alternative room action specified but no room ID provided`
+            );
+            continue;
+          }
+
+          // Check if alternative room also has conflict
+          const altRoomConflicts = await db
+            .select({ id: bookings.id })
+            .from(bookings)
+            .where(
+              and(
+                eq(bookings.roomId, resolution.alternativeRoomId),
+                lt(bookings.startAt, occurrence.endAt),
+                gt(bookings.endAt, occurrence.startAt)
+              )
+            )
+            .limit(1);
+
+          if (altRoomConflicts.length > 0) {
+            skippedOccurrences++;
+            changes.skipped.push({
+              occurrenceId: occurrence.id,
+              reason: "Alternative room also has conflict",
+            });
+
+            await db
+              .update(timetableImportOccurrences)
+              .set({ status: "SKIPPED", errorMessage: "Alternative room also has conflict" })
+              .where(eq(timetableImportOccurrences.id, occurrence.id));
+
+            warnings.push(
+              `Occurrence ${occurrence.id}: Alternative room ${resolution.alternativeRoomId} also has conflicts`
+            );
+            continue;
+          }
+
+          targetRoomId = resolution.alternativeRoomId;
+          alternativeRoomBookings++;
+
+          // Update occurrence with new room
+          await db
+            .update(timetableImportOccurrences)
+            .set({ roomId: targetRoomId })
+            .where(eq(timetableImportOccurrences.id, occurrence.id));
+        }
+      }
+
+      // Create the booking
+      const [insertedBooking] = await db
+        .insert(bookings)
+        .values({
+          roomId: targetRoomId,
+          startAt: occurrence.startAt,
+          endAt: occurrence.endAt,
+          source: "TIMETABLE_ALLOCATION",
+          sourceRef: occurrence.sourceRef,
+        })
+        .returning();
+
+      if (insertedBooking) {
+        createdBookings++;
+        changes.created.push({
+          occurrenceId: occurrence.id,
+          bookingId: insertedBooking.id,
+          roomId: targetRoomId,
+          startAt: occurrence.startAt.toISOString(),
+          endAt: occurrence.endAt.toISOString(),
+        });
+
+        await db
+          .update(timetableImportOccurrences)
+          .set({ status: "CREATED", bookingId: insertedBooking.id, errorMessage: null })
+          .where(eq(timetableImportOccurrences.id, occurrence.id));
+      } else {
+        await db
+          .update(timetableImportOccurrences)
+          .set({ status: "FAILED", errorMessage: "Failed to create booking" })
+          .where(eq(timetableImportOccurrences.id, occurrence.id));
+
+        warnings.push(`Occurrence ${occurrence.id}: Failed to create booking`);
+      }
+    }
+
+    // Mark batch as committed
+    await db
+      .update(timetableImportBatches)
+      .set({ status: "COMMITTED", committedAt: new Date() })
+      .where(eq(timetableImportBatches.id, batchId));
+
+    // Unfreeze
+    unfreezeBookings(batchId);
+
+    logger.info("Commit with resolutions completed", {
+      batchId,
+      createdBookings,
+      skippedOccurrences,
+      overwrittenBookings,
+      alternativeRoomBookings,
+      deletedConflictingBookings,
+    });
+
+    return {
+      batchId,
+      status: "COMMITTED",
+      totalOccurrences: pendingOccurrences.length,
+      createdBookings,
+      skippedOccurrences,
+      overwrittenBookings,
+      alternativeRoomBookings,
+      deletedConflictingBookings,
+      warnings: [
+        ...(Array.isArray(batch.warnings) ? (batch.warnings as string[]) : []),
+        ...warnings,
+      ],
+      changes,
+    };
+  } catch (error) {
+    unfreezeBookings(batchId);
+    logger.error("Error during commit with resolutions, unfreezing", { batchId, error });
+    throw error;
+  }
+}
+
+/**
+ * Cancel a commit that is in progress (frozen state).
+ * Unfreezes booking operations without making any changes.
+ */
+export async function cancelCommit(batchId: number): Promise<{ batchId: number; status: "CANCELLED" }> {
+  if (!Number.isInteger(batchId) || batchId <= 0) {
+    throw createServiceError(400, "Invalid batchId");
+  }
+
+  const freezeState = getBookingFreezeState();
+
+  if (!freezeState.isFrozen) {
+    logger.debug("Cancel commit called but bookings are not frozen", { batchId });
+    return { batchId, status: "CANCELLED" };
+  }
+
+  if (freezeState.frozenBy?.batchId !== batchId) {
+    throw createServiceError(
+      400,
+      `Cannot cancel: bookings are frozen by batch ${freezeState.frozenBy?.batchId}, not batch ${batchId}`
+    );
+  }
+
+  unfreezeBookings(batchId);
+
+  logger.info("Commit cancelled and bookings unfrozen", { batchId });
+
+  return { batchId, status: "CANCELLED" };
+}
+
+/**
+ * Get freeze status for a batch
+ */
+export function getCommitFreezeStatus(batchId: number): {
+  batchId: number;
+  isFrozen: boolean;
+  frozenByThisBatch: boolean;
+  freezeInfo: {
+    batchId: number;
+    userId: number;
+    userName: string;
+    startedAt: string;
+  } | null;
+} {
+  const freezeState = getBookingFreezeState();
+
+  return {
+    batchId,
+    isFrozen: freezeState.isFrozen,
+    frozenByThisBatch: freezeState.frozenBy?.batchId === batchId,
+    freezeInfo: freezeState.frozenBy
+      ? {
+          batchId: freezeState.frozenBy.batchId,
+          userId: freezeState.frozenBy.userId,
+          userName: freezeState.frozenBy.userName,
+          startedAt: freezeState.frozenBy.startedAt.toISOString(),
+        }
+      : null,
   };
 }
 

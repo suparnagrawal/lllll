@@ -24,6 +24,10 @@ import {
 	handleGetSlotSystems,
 	handleGetTimeBands,
 	handleUpdateTimeBand,
+	handleDetectCommitConflicts,
+	handleCommitWithResolutions,
+	handleCancelCommit,
+	handleGetFreezeStatus,
 } from "./controller";
 import { authMiddleware } from "../../middleware/auth";
 import { requireRole } from "../../middleware/rbac";
@@ -68,5 +72,11 @@ router.post("/imports/:id/reallocate", handleReallocateImport);
 router.post("/imports/:id/commit", handleCommitImport);
 router.delete("/imports/:id", handleDeleteImportBatch);
 router.get("/imports/:id/processed-rows", handleGetProcessedImportRows);
+
+// Conflict detection and resolution endpoints
+router.post("/imports/:id/detect-conflicts", handleDetectCommitConflicts);
+router.post("/imports/:id/commit-with-resolutions", handleCommitWithResolutions);
+router.post("/imports/:id/cancel-commit", handleCancelCommit);
+router.get("/imports/:id/freeze-status", handleGetFreezeStatus);
 
 export default router;

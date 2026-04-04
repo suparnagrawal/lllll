@@ -4,6 +4,7 @@ import { eq, lt, gt, and, or, isNull, inArray } from "drizzle-orm";
 import { bookingRequests, users, rooms } from "../db/schema";
 import { authMiddleware } from "../middleware/auth";
 import { requireRole } from "../middleware/rbac";
+import { requireBookingsUnfrozen } from "../middleware/bookingFreeze";
 import { createBooking, hasBookingOverlap } from "../services/bookingService";
 import { getAssignedBuildingIdsForStaff } from "../services/staffBuildingScope";
 import {
@@ -263,7 +264,7 @@ router.get("/", authMiddleware, async (req, res) => {
   }
 });
 
-router.post("/:id/reject", authMiddleware, requireRole(["FACULTY", "STAFF"]), async (req, res) => {
+router.post("/:id/reject", authMiddleware, requireRole(["FACULTY", "STAFF"]), requireBookingsUnfrozen(), async (req, res) => {
   const id = Number(req.params.id);
 
   if (isNaN(id)) {
@@ -353,7 +354,7 @@ router.post("/:id/reject", authMiddleware, requireRole(["FACULTY", "STAFF"]), as
   }
 });
 
-router.post("/:id/approve", authMiddleware, requireRole("STAFF"), async (req, res) => {
+router.post("/:id/approve", authMiddleware, requireRole("STAFF"), requireBookingsUnfrozen(), async (req, res) => {
   const id = Number(req.params.id);
 
   if (isNaN(id)) {

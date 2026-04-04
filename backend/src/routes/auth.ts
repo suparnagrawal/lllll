@@ -203,6 +203,7 @@ router.get("/me", authMiddleware, async (req, res) => {
       role: user.role,
       department: user.department,
       avatarUrl: user.avatarUrl,
+      registeredVia: user.registeredVia,
     });
   } catch (error) {
     logger.error(error);

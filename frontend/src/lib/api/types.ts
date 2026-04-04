@@ -16,6 +16,7 @@ export type AuthUser = {
   department?: string | null;
   avatarUrl?: string | null;
   role: UserRole;
+  registeredVia?: string;
 };
 
 export type AssignableUserRole = "ADMIN" | "STAFF" | "FACULTY" | "STUDENT";
@@ -412,6 +413,114 @@ export type TimetableImportProcessedRowsReport = {
   warnings: string[];
   rows: TimetableImportProcessedRow[];
 };
+
+// ============================================================================
+// Conflict Detection and Resolution Types
+// ============================================================================
+
+export type ConflictResolutionAction = "FORCE_OVERWRITE" | "SKIP" | "ALTERNATIVE_ROOM";
+
+export type DetectedConflict = {
+  occurrenceId: number;
+  rowId: number;
+  rowIndex: number;
+  courseCode: string;
+  slot: string;
+  classroom: string;
+  roomId: number;
+  roomName: string;
+  buildingName: string;
+  startAt: string;
+  endAt: string;
+  conflictingBooking: {
+    id: number;
+    roomId: number;
+    startAt: string;
+    endAt: string;
+    source: string;
+    sourceRef: string | null;
+  };
+};
+
+export type ConflictResolutionDecision = {
+  occurrenceId: number;
+  action: ConflictResolutionAction;
+  alternativeRoomId?: number;
+};
+
+export type ConflictDetectionReport = {
+  batchId: number;
+  status: "FROZEN" | "NO_CONFLICTS";
+  totalOccurrences: number;
+  conflictCount: number;
+  conflicts: DetectedConflict[];
+  frozenAt: string | null;
+  frozenBy: {
+    userId: number;
+    userName: string;
+  } | null;
+};
+
+export type CommitWithResolutionsReport = {
+  batchId: number;
+  status: "COMMITTED";
+  totalOccurrences: number;
+  createdBookings: number;
+  skippedOccurrences: number;
+  overwrittenBookings: number;
+  alternativeRoomBookings: number;
+  deletedConflictingBookings: number;
+  warnings: string[];
+  changes: {
+    created: Array<{
+      occurrenceId: number;
+      bookingId: number;
+      roomId: number;
+      startAt: string;
+      endAt: string;
+    }>;
+    deleted: Array<{
+      bookingId: number;
+      roomId: number;
+      startAt: string;
+      endAt: string;
+      reason: string;
+    }>;
+    skipped: Array<{
+      occurrenceId: number;
+      reason: string;
+    }>;
+  };
+};
+
+export type CancelCommitResponse = {
+  batchId: number;
+  status: "CANCELLED";
+};
+
+export type FreezeStatusResponse = {
+  batchId: number;
+  isFrozen: boolean;
+  frozenByThisBatch: boolean;
+  freezeInfo: {
+    batchId: number;
+    userId: number;
+    userName: string;
+    startedAt: string;
+  } | null;
+};
+
+export type BookingFreezeErrorResponse = {
+  error: string;
+  message: string;
+  freezeInfo: {
+    batchId: number;
+    frozenBy: string;
+    startedAt: string;
+  };
+};
+
+// ============================================================================
 
 export type LoginResponse = {
   accessToken: string;

@@ -30,8 +30,7 @@ export function BuildingsTable({
   const filteredBuildings = useMemo(() => {
     return buildings.filter(
       (b) =>
-        b.name.toLowerCase().includes(search.toLowerCase()) ||
-        b.id.toString().includes(search)
+        b.name.toLowerCase().includes(search.toLowerCase())
     );
   }, [buildings, search]);
 
