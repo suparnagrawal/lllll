@@ -4,8 +4,8 @@ import { buildings, rooms, bookings } from '../../db/schema';
 import { redis, SHORT_TTL } from '../../data/cache/redis.client';
 
 export type RoomWithAvailability = {
-  roomId: number;
-  roomName: string;
+  id: number;
+  name: string;
   isAvailable: boolean;
 };
 
@@ -18,7 +18,7 @@ export type BuildingWithRooms = {
 interface QueryParams {
   startAt: Date;
   endAt: Date;
-  buildingId?: number | null;
+  buildingId?: number | null | undefined;
   buildingIds?: number[];
   limit?: number;
 }
@@ -82,8 +82,8 @@ async function queryAvailability(params: QueryParams): Promise<BuildingWithRooms
 
   for (const row of rows) {
     const room: RoomWithAvailability = {
-      roomId: row.roomId,
-      roomName: row.roomName,
+      id: row.roomId,
+      name: row.roomName,
       isAvailable: Number(row.bookingCount) === 0,
     };
 

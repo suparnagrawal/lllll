@@ -53,7 +53,7 @@ router.get('/', authMiddleware, async (req: Request, res: Response): Promise<voi
     const result = await getAvailabilityWithCache({
       startAt,
       endAt,
-      buildingId: buildingId || undefined,
+      buildingId: buildingId ?? undefined,
       buildingIds: isStaff ? assignedBuildingIds : [],
     });
 
