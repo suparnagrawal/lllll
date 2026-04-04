@@ -13,7 +13,7 @@ export async function login(email: string, password: string): Promise<AuthUser> 
     body: JSON.stringify({ email, password }),
   });
 
-  setAuthSession(response.token, response.user);
+  setAuthSession(response.accessToken, response.refreshToken, response.user);
 
   return response.user;
 }
@@ -56,10 +56,14 @@ export async function startGoogleOAuthLogin(): Promise<void> {
 }
 
 export async function loginWithOAuthToken(token: string): Promise<AuthUser> {
-  localStorage.setItem("authToken", token);
+  localStorage.setItem("authAccessToken", token);
 
   try {
     const user = await request<AuthUser>("/auth/me");
+    // For OAuth, if refreshToken wasn't already set, use empty string
+    if (!localStorage.getItem("authRefreshToken")) {
+      localStorage.setItem("authRefreshToken", "");
+    }
     localStorage.setItem("authUser", JSON.stringify(user));
     return user;
   } catch (error) {
@@ -100,7 +104,7 @@ export async function completeOAuthSetup(input: {
   }
 
   const loginResponse = payload as LoginResponse;
-  setAuthSession(loginResponse.token, loginResponse.user);
+  setAuthSession(loginResponse.accessToken, loginResponse.refreshToken, loginResponse.user);
 
   return loginResponse.user;
 }

@@ -176,7 +176,10 @@ router.get("/me", authMiddleware, async (req, res) => {
     return res.json({
       id: user.id,
       name: user.displayName ?? user.name,
+      email: user.email,
       role: user.role,
+      department: user.department,
+      avatarUrl: user.avatarUrl,
     });
   } catch (error) {
     logger.error(error);
@@ -238,7 +241,10 @@ if (isGoogleOAuthConfigured) {
 
           if (effectiveUser.firstLogin) {
             const accessToken = signAuthToken({ id: effectiveUser.id, role: effectiveUser.role });
-            const refreshToken = signRefreshToken({ id: effectiveUser.id, role: effectiveUser.role });
+            const refreshToken = signRefreshToken({ 
+              id: effectiveUser.id, 
+              role: effectiveUser.role as Exclude<typeof effectiveUser.role, "PENDING_ROLE">
+            });
 
             await db
               .update(users)
@@ -253,7 +259,10 @@ if (isGoogleOAuthConfigured) {
             });
           } else {
             const accessToken = signAuthToken({ id: effectiveUser.id, role: effectiveUser.role });
-            const refreshToken = signRefreshToken({ id: effectiveUser.id, role: effectiveUser.role });
+            const refreshToken = signRefreshToken({ 
+              id: effectiveUser.id, 
+              role: effectiveUser.role as Exclude<typeof effectiveUser.role, "PENDING_ROLE">
+            });
             redirectUrl = buildFrontendUrl("/auth/callback", { accessToken, refreshToken });
           }
 
@@ -411,7 +420,10 @@ router.post("/refresh", async (req, res) => {
     }
 
     const accessToken = signAuthToken({ id: user.id, role: user.role });
-    const newRefreshToken = signRefreshToken({ id: user.id, role: user.role });
+    const newRefreshToken = signRefreshToken({ 
+      id: user.id, 
+      role: user.role as Exclude<typeof user.role, "PENDING_ROLE">
+    });
 
     return res.json({
       accessToken,

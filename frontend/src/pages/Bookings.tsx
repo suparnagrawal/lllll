@@ -39,7 +39,7 @@ export function BookingsPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
 
-  const roomNameById = new Map(rooms.map((r) => [r.id, r.name]));
+  const roomNameById = new Map(rooms?.map((r) => [r.id, r.name]) ?? []);
 
   const bookingSourceLabel = (source: Booking["source"]) => source.replace(/_/g, " ");
 
@@ -159,7 +159,7 @@ export function BookingsPage() {
               onChange={(e) => setFilterBuildingId(e.target.value === "" ? "" : Number(e.target.value))}
             >
               <option value="">All Buildings</option>
-              {buildings.map((b) => (
+              {buildings?.map((b) => (
                 <option key={b.id} value={b.id}>{b.name}</option>
               ))}
             </select>
@@ -173,7 +173,7 @@ export function BookingsPage() {
               onChange={(e) => setFilterRoomId(e.target.value === "" ? "" : Number(e.target.value))}
             >
               <option value="">All Rooms</option>
-              {rooms.map((r) => (
+              {rooms?.map((r) => (
                 <option key={r.id} value={r.id}>{r.name}</option>
               ))}
             </select>
@@ -219,7 +219,7 @@ export function BookingsPage() {
                 disabled={isSubmitting}
               >
                 <option value="">Select a room</option>
-                {rooms.map((r) => (
+                {rooms?.map((r) => (
                   <option key={r.id} value={r.id}>{r.name} (#{r.id})</option>
                 ))}
               </select>

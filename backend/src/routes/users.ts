@@ -14,7 +14,7 @@ import {
 import { authMiddleware } from "../middleware/auth";
 import { requireRole } from "../middleware/rbac";
 import { db } from "../db";
-import { buildings, staffBuildingAssignments, users } from "../db/schema";
+import { buildings, staffBuildingAssignments, users, bookings, bookingRequests } from "../db/schema";
 import logger from "../shared/utils/logger";
 
 type UserRole = "ADMIN" | "STAFF" | "FACULTY" | "STUDENT" | "PENDING_ROLE";
@@ -816,6 +816,78 @@ router.delete("/:id", async (req, res) => {
   } catch (error) {
     logger.error(error);
     return res.status(500).json({ error: "Failed to delete user" });
+  }
+});
+
+// GET /users/profile/export
+// Export user data with bookings and requests (GDPR compliance)
+router.get("/profile/export", authMiddleware, async (req, res) => {
+  try {
+    if (!req.user?.id) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    // Get user profile
+    const userRows = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, req.user.id))
+      .limit(1);
+
+    const user = userRows[0];
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    // Get user's booking requests
+    const userBookingRequests = await db
+      .select()
+      .from(bookingRequests)
+      .where(
+        or(
+          eq(bookingRequests.userId, req.user.id),
+          eq(bookingRequests.facultyId, req.user.id)
+        )
+      );
+
+    // Get user's bookings (if they approved them)
+    const userBookings = await db
+      .select()
+      .from(bookings)
+      .where(eq(bookings.approvedBy, req.user.id));
+
+    return res.json({
+      exportedAt: new Date().toISOString(),
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        department: user.department,
+        registeredVia: user.registeredVia,
+        createdAt: user.createdAt,
+      },
+      bookingRequests: userBookingRequests.map((br) => ({
+        id: br.id,
+        eventType: br.eventType,
+        purpose: br.purpose,
+        status: br.status,
+        startAt: br.startAt,
+        endAt: br.endAt,
+        createdAt: br.createdAt,
+      })),
+      approvedBookings: userBookings.map((b) => ({
+        id: b.id,
+        roomId: b.roomId,
+        startAt: b.startAt,
+        endAt: b.endAt,
+        source: b.source,
+        approvedAt: b.approvedAt,
+      })),
+    });
+  } catch (error) {
+    logger.error(error);
+    return res.status(500).json({ error: "Failed to export user data" });
   }
 });
 

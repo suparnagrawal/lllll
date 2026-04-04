@@ -3,6 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
+import { Input } from "../components/ui/input";
+import { Label } from "../components/ui/label";
 import { Loader2 } from "lucide-react";
 
 interface ToastProps {
@@ -31,7 +33,10 @@ function Toast({ type, message, onDismiss }: ToastProps) {
 
 export default function LoginPage() {
   const navigate = useNavigate();
-  const { user, loginWithGoogle } = useAuth();
+  const { user, login, loginWithGoogle } = useAuth();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [emailLoading, setEmailLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [toast, setToast] = useState<{
     type: "error" | "success";
@@ -63,6 +68,30 @@ export default function LoginPage() {
       navigate("/");
     }
   }, [user, navigate]);
+
+  const handleEmailLogin = useCallback(async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!email.trim() || !password) {
+      setToast({
+        type: "error",
+        message: "Please enter both email and password.",
+      });
+      return;
+    }
+
+    try {
+      setEmailLoading(true);
+      await login(email.trim(), password);
+      // Navigation will happen via useEffect when user state updates
+    } catch (error) {
+      setToast({
+        type: "error",
+        message: error instanceof Error ? error.message : "Login failed. Please check your credentials.",
+      });
+      setEmailLoading(false);
+    }
+  }, [email, password, login]);
 
   const handleGoogleLogin = useCallback(async () => {
     try {
@@ -96,6 +125,58 @@ export default function LoginPage() {
           </CardHeader>
 
           <CardContent className="space-y-6">
+            {/* Email/Password Form */}
+            <form onSubmit={handleEmailLogin} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="email">Email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder="you@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  disabled={emailLoading}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="password">Password</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  disabled={emailLoading}
+                  required
+                />
+              </div>
+              <Button
+                type="submit"
+                disabled={emailLoading}
+                className="w-full"
+              >
+                {emailLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Signing in...
+                  </>
+                ) : (
+                  "Sign in with Email"
+                )}
+              </Button>
+            </form>
+
+            {/* Divider */}
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-gray-300"></div>
+              </div>
+              <div className="relative flex justify-center text-sm">
+                <span className="px-2 bg-card text-muted-foreground">or</span>
+              </div>
+            </div>
+
             {/* Google OAuth Section */}
             <div className="space-y-3">
               <Button
@@ -139,26 +220,6 @@ export default function LoginPage() {
               </Button>
               <p className="text-xs text-center text-muted-foreground">
                 Secure sign-in with your Google account
-              </p>
-            </div>
-
-            {/* Divider */}
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-gray-300"></div>
-              </div>
-              <div className="relative flex justify-center text-sm">
-                <span className="px-2 bg-card text-muted-foreground">or</span>
-              </div>
-            </div>
-
-            {/* Email/Password Section (Coming Soon) */}
-            <div className="space-y-3 p-4 rounded-lg bg-blue-50 border border-blue-200">
-              <h3 className="text-sm font-medium text-gray-900">
-                Email & Password Login
-              </h3>
-              <p className="text-sm text-gray-600">
-                Coming soon. Use Google Sign-in for now.
               </p>
             </div>
           </CardContent>

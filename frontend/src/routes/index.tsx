@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react';
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { AppShell } from '../components/layout/AppShell';
+import { ProtectedRoute } from '../components/auth/ProtectedRoute';
 
 // Lazy load pages
 // eslint-disable-next-line react-refresh/only-export-components
@@ -24,6 +25,8 @@ const AuthSetupPage = lazy(() => import('../pages/AuthSetupPage'));
 // eslint-disable-next-line react-refresh/only-export-components
 const LoginPage = lazy(() => import('../pages/LoginPage'));
 // eslint-disable-next-line react-refresh/only-export-components
+const ProfilePage = lazy(() => import('../pages/ProfilePage'));
+// eslint-disable-next-line react-refresh/only-export-components
 const PageLoader = () => (
   <div className="flex items-center justify-center w-full h-screen">
     <div className="text-lg text-gray-500">Loading...</div>
@@ -33,33 +36,42 @@ const PageLoader = () => (
 // eslint-disable-next-line react-refresh/only-export-components
 export const router = createBrowserRouter([
   {
-    path: '/',
-    element: <AppShell />,
+    element: <ProtectedRoute />,
     children: [
-      { index: true, element: <Suspense fallback={<PageLoader />}><DashboardPage /></Suspense> },
-      { 
-        path: 'rooms', 
-        element: <Suspense fallback={<PageLoader />}><RoomsPage /></Suspense> 
-      },
-      { 
-        path: 'bookings', 
-        element: <Suspense fallback={<PageLoader />}><BookingsPage /></Suspense> 
-      },
-      { 
-        path: 'requests', 
-        element: <Suspense fallback={<PageLoader />}><BookingRequestsPage /></Suspense> 
-      },
-      { 
-        path: 'availability', 
-        element: <Suspense fallback={<PageLoader />}><AvailabilityPage /></Suspense> 
-      },
-      { 
-        path: 'users', 
-        element: <Suspense fallback={<PageLoader />}><UsersPage /></Suspense> 
-      },
-      { 
-        path: 'timetable', 
-        element: <Suspense fallback={<PageLoader />}><TimetableBuilderPage /></Suspense> 
+      {
+        path: '/',
+        element: <AppShell />,
+        children: [
+          { index: true, element: <Suspense fallback={<PageLoader />}><DashboardPage /></Suspense> },
+          { 
+            path: 'rooms', 
+            element: <Suspense fallback={<PageLoader />}><RoomsPage /></Suspense> 
+          },
+          { 
+            path: 'bookings', 
+            element: <Suspense fallback={<PageLoader />}><BookingsPage /></Suspense> 
+          },
+          { 
+            path: 'requests', 
+            element: <Suspense fallback={<PageLoader />}><BookingRequestsPage /></Suspense> 
+          },
+          { 
+            path: 'availability', 
+            element: <Suspense fallback={<PageLoader />}><AvailabilityPage /></Suspense> 
+          },
+          { 
+            path: 'users', 
+            element: <Suspense fallback={<PageLoader />}><UsersPage /></Suspense> 
+          },
+          { 
+            path: 'timetable', 
+            element: <Suspense fallback={<PageLoader />}><TimetableBuilderPage /></Suspense> 
+          },
+          { 
+            path: 'profile', 
+            element: <Suspense fallback={<PageLoader />}><ProfilePage /></Suspense> 
+          },
+        ],
       },
     ],
   },

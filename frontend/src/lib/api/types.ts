@@ -10,6 +10,9 @@ export type SetupRole = "STUDENT" | "FACULTY";
 export type AuthUser = {
   id: number;
   name: string;
+  email?: string;
+  department?: string | null;
+  avatarUrl?: string | null;
   role: UserRole;
 };
 

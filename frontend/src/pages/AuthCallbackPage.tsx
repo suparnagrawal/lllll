@@ -13,11 +13,13 @@ export default function AuthCallbackPage() {
 
   useEffect(() => {
     if (user) {
+      navigate("/");
       return;
     }
 
     const searchParams = new URLSearchParams(window.location.search);
-    const token = searchParams.get("token");
+    const accessToken = searchParams.get("accessToken");
+    const refreshToken = searchParams.get("refreshToken");
     const error = searchParams.get("error");
 
     if (error === "oauth_failed") {
@@ -26,7 +28,7 @@ export default function AuthCallbackPage() {
       return;
     }
 
-    if (!token) {
+    if (!accessToken) {
       setState("error");
       setErrorMessage("Missing OAuth token. Please try signing in again.");
       return;
@@ -38,7 +40,15 @@ export default function AuthCallbackPage() {
       try {
         setState("loading");
         setErrorMessage("");
-        await loginWithToken(token);
+        
+        // Store tokens and fetch user info
+        localStorage.setItem("authAccessToken", accessToken);
+        if (refreshToken) {
+          localStorage.setItem("authRefreshToken", refreshToken);
+        }
+
+        // Use loginWithToken to fetch user data
+        await loginWithToken(accessToken);
 
         if (isCancelled) {
           return;
@@ -48,10 +58,7 @@ export default function AuthCallbackPage() {
         // Small delay to show success state before redirect
         setTimeout(() => {
           if (!isCancelled) {
-            // Check user role after login - if PENDING_ROLE, go to setup
-            // Otherwise go to dashboard
-            // The redirect logic is handled by App.tsx routing
-            window.history.replaceState({}, "", "/");
+            navigate("/");
           }
         }, 500);
       } catch (err) {
@@ -69,7 +76,7 @@ export default function AuthCallbackPage() {
     return () => {
       isCancelled = true;
     };
-  }, [user, loginWithToken]);
+  }, [user, loginWithToken, navigate]);
 
   if (state === "error") {
     return (

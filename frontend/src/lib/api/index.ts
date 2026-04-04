@@ -1,5 +1,5 @@
 // Constants
-export { API_BASE_URL, AUTH_TOKEN_KEY, AUTH_USER_KEY } from "./constants";
+export { API_BASE_URL, AUTH_TOKEN_KEY, AUTH_USER_KEY, AUTH_REFRESH_TOKEN_KEY, LAST_ACTIVITY_KEY, REMEMBER_ME_KEY } from "./constants";
 
 // Types
 export type {
@@ -51,6 +51,7 @@ export type {
   TimetableImportProcessedRow,
   TimetableImportProcessedRowsReport,
   LoginResponse,
+  RefreshTokenResponse,
   ApiErrorPayload,
   BuildingsListResponse,
   TimetableImportBatchListResponse,
@@ -63,12 +64,16 @@ export type {
 export {
   setOnUnauthorized,
   getAuthToken,
+  getRefreshToken,
   getAuthUser,
   clearAuth,
   setAuthSession,
   request,
   requestFormData,
   httpErrorMessage,
+  refreshAccessToken,
+  classifyError,
+  type ErrorType,
 } from "./client";
 
 // Auth endpoints
@@ -78,6 +83,26 @@ export {
   loginWithOAuthToken,
   completeOAuthSetup,
 } from "./auth";
+
+// JWT utilities
+export {
+  decodeToken,
+  isValidToken,
+  getTokenExpiry,
+  isTokenExpiring,
+  isTokenExpired,
+  getTimeUntilExpiry,
+  getTokenType,
+  type TokenPayload,
+} from "./jwt-utils";
+
+// Storage utilities
+export {
+  setEncryptedStorage,
+  getEncryptedStorage,
+  clearEncryptedStorage,
+  hasEncryptedStorage,
+} from "./storage-utils";
 
 // Buildings endpoints
 export {

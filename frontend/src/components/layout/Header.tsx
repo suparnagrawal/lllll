@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '../../auth/AuthContext';
+import { Link } from 'react-router-dom';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -7,7 +8,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from '../ui/dropdown-menu';
-import { Bell, LogOut, User } from 'lucide-react';
+import { Bell, LogOut, User, Settings } from 'lucide-react';
 
 export function Header() {
   const { user, logout } = useAuth();
@@ -57,6 +58,13 @@ export function Header() {
                   <p className="text-xs text-gray-500">{user.role}</p>
                 </div>
                 <DropdownMenuSeparator />
+                 <DropdownMenuItem asChild className="cursor-pointer">
+                   <Link to="/profile" className="flex items-center">
+                     <Settings className="w-4 h-4 mr-2" />
+                     <span>Profile & Settings</span>
+                   </Link>
+                 </DropdownMenuItem>
+                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={handleLogout} className="cursor-pointer">
                   <LogOut className="w-4 h-4 mr-2" />
                   <span>Logout</span>
