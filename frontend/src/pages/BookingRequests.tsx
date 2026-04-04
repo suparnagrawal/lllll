@@ -25,6 +25,18 @@ import type {
   AvailabilityPrefill,
   BookingRequestPrefill,
 } from "./bookingAvailabilityBridge";
+import { Button } from "../components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { Badge } from "../components/ui/badge";
+import { Input } from "../components/ui/input";
+import { Label } from "../components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 
 type StatusFilter = "ALL" | BookingStatus;
 
@@ -56,15 +68,15 @@ const EVENT_TYPE_OPTIONS: BookingEventType[] = [
   "OTHER",
 ];
 
-function statusBadgeClass(status: BookingStatus): string {
-  const map: Record<BookingStatus, string> = {
-    PENDING_FACULTY: "badge-pending-faculty",
-    PENDING_STAFF: "badge-pending-staff",
-    APPROVED: "badge-approved",
-    REJECTED: "badge-rejected",
-    CANCELLED: "badge-cancelled",
+function statusBadgeVariant(status: BookingStatus): "default" | "secondary" | "destructive" | "outline" | "ghost" | "link" {
+  const map: Record<BookingStatus, "default" | "secondary" | "destructive" | "outline" | "ghost" | "link"> = {
+    PENDING_FACULTY: "outline",
+    PENDING_STAFF: "secondary",
+    APPROVED: "default",
+    REJECTED: "destructive",
+    CANCELLED: "outline",
   };
-  return `badge ${map[status]}`;
+  return map[status];
 }
 
 type BookingRequestsPageProps = {
@@ -298,162 +310,221 @@ export function BookingRequestsPage({
   };
 
   return (
-    <section>
-      <div className="page-header">
-        <h2>Booking Requests</h2>
-        <p>Submit and manage room booking requests</p>
+    <div className="space-y-6">
+      {/* Page Header */}
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight">Booking Requests</h1>
+        <p className="text-gray-600 mt-2">
+          Submit and manage room booking requests
+        </p>
       </div>
 
-      {/* Filter chips */}
-      <div className="filter-bar">
+      {/* Filter Chips */}
+      <div className="flex flex-wrap gap-2">
         {STATUS_OPTIONS.map((s) => (
-          <button
+          <Button
             key={s}
             type="button"
-            className={`filter-chip ${statusFilter === s ? "active" : ""}`}
+            variant={statusFilter === s ? "default" : "outline"}
+            size="sm"
             onClick={() => handleFilterChange(s)}
           >
             {s === "ALL" ? "All" : STATUS_LABELS[s]}
-          </button>
+          </Button>
         ))}
       </div>
 
-      {/* Create form */}
+      {/* Create Form */}
       {canCreate && (
-        <form className="card section-gap" onSubmit={handleCreate}>
-          <div className="card-header">
-            <h3>New Request</h3>
-          </div>
-          <div className="form-row">
-            <div className="form-field">
-              <label htmlFor="newRequestRoomId">Room</label>
-              <select
-                id="newRequestRoomId"
-                className="input"
-                value={roomId}
-                onChange={(e) => setRoomId(e.target.value === "" ? "" : Number(e.target.value))}
-                disabled={isSubmitting}
-              >
-                <option value="">Select a room</option>
-                {rooms.map((r) => (
-                  <option key={r.id} value={r.id}>{r.name}</option>
-                ))}
-              </select>
-            </div>
-            <div className="form-field">
-              <label htmlFor="newRequestStartAt">Start</label>
-              <DateInput
-                id="newRequestStartAt"
-                mode="datetime"
-                value={startAt}
-                onChange={setStartAt}
-                disabled={isSubmitting}
-              />
-            </div>
-            <div className="form-field">
-              <label htmlFor="newRequestEndAt">End</label>
-              <DateInput
-                id="newRequestEndAt"
-                mode="datetime"
-                value={endAt}
-                onChange={setEndAt}
-                disabled={isSubmitting}
-              />
-            </div>
-          </div>
-          <div className="form-row">
-            {isStudent && (
-              <div className="form-field">
-                <label htmlFor="newRequestFacultyId">Faculty Approver</label>
-                <select
-                  id="newRequestFacultyId"
-                  className="input"
-                  value={facultyId}
-                  onChange={(e) => setFacultyId(e.target.value === "" ? "" : Number(e.target.value))}
-                  disabled={isSubmitting}
-                >
-                  <option value="">Select a faculty member</option>
-                  {facultyUsers.map((faculty) => (
-                    <option key={faculty.id} value={faculty.id}>
-                      {faculty.name}{faculty.department ? ` (${faculty.department})` : ""}
-                    </option>
-                  ))}
-                </select>
-                {facultyUsers.length === 0 && (
-                  <div className="users-muted">No faculty accounts available. Contact admin to provision faculty access.</div>
-                )}
+        <Card>
+          <CardHeader>
+            <CardTitle>New Request</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleCreate} className="space-y-4">
+              {/* First Row */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="newRequestRoomId">Room *</Label>
+                  <Select
+                    value={String(roomId)}
+                    onValueChange={(value) =>
+                      setRoomId(value === "" ? "" : Number(value))
+                    }
+                    disabled={isSubmitting}
+                  >
+                    <SelectTrigger id="newRequestRoomId">
+                      <SelectValue placeholder="Select a room" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {rooms.map((r) => (
+                        <SelectItem key={r.id} value={String(r.id)}>
+                          {r.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="newRequestStartAt">Start *</Label>
+                  <DateInput
+                    id="newRequestStartAt"
+                    mode="datetime"
+                    value={startAt}
+                    onChange={setStartAt}
+                    disabled={isSubmitting}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="newRequestEndAt">End *</Label>
+                  <DateInput
+                    id="newRequestEndAt"
+                    mode="datetime"
+                    value={endAt}
+                    onChange={setEndAt}
+                    disabled={isSubmitting}
+                  />
+                </div>
               </div>
-            )}
-            <div className="form-field">
-              <label htmlFor="newRequestEventType">Event Type</label>
-              <select
-                id="newRequestEventType"
-                className="input"
-                value={eventType}
-                onChange={(e) => setEventType(e.target.value as BookingEventType)}
-                disabled={isSubmitting}
-              >
-                {EVENT_TYPE_OPTIONS.map((type) => (
-                  <option key={type} value={type}>
-                    {type.replace(/_/g, " ")}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="form-field">
-              <label htmlFor="newRequestPurpose">Purpose</label>
-              <input
-                id="newRequestPurpose"
-                className="input"
-                type="text"
-                value={purpose}
-                onChange={(e) => setPurpose(e.target.value)}
-                placeholder="Why do you need this room?"
-                disabled={isSubmitting}
-              />
-            </div>
-            <div className="form-field">
-              <label htmlFor="newRequestParticipantCount">Participant Count (optional)</label>
-              <input
-                id="newRequestParticipantCount"
-                className="input"
-                type="number"
-                min={1}
-                step={1}
-                value={participantCount}
-                onChange={(e) => setParticipantCount(e.target.value)}
-                placeholder="e.g. 40"
-                disabled={isSubmitting}
-              />
-            </div>
-          </div>
-          <div className="btn-group">
-            <button
-              type="submit"
-              className="btn btn-primary"
-              disabled={isSubmitting || (isStudent && facultyUsers.length === 0)}
-            >
-              {isSubmitting ? "Submitting…" : "Submit Request"}
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              disabled={isSubmitting}
-              onClick={handleCheckAvailability}
-            >
-              Check Availability
-            </button>
-          </div>
-        </form>
+
+              {/* Second Row */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {isStudent && (
+                  <div className="space-y-2">
+                    <Label htmlFor="newRequestFacultyId">
+                      Faculty Approver *
+                    </Label>
+                    <Select
+                      value={String(facultyId)}
+                      onValueChange={(value) =>
+                        setFacultyId(value === "" ? "" : Number(value))
+                      }
+                      disabled={isSubmitting}
+                    >
+                      <SelectTrigger id="newRequestFacultyId">
+                        <SelectValue placeholder="Select a faculty member" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {facultyUsers.map((faculty) => (
+                          <SelectItem key={faculty.id} value={String(faculty.id)}>
+                            {faculty.name}
+                            {faculty.department ? ` (${faculty.department})` : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {facultyUsers.length === 0 && (
+                      <p className="text-sm text-gray-500">
+                        No faculty accounts available. Contact admin to
+                        provision faculty access.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <Label htmlFor="newRequestEventType">Event Type *</Label>
+                  <Select
+                    value={eventType}
+                    onValueChange={(value) =>
+                      setEventType(value as BookingEventType)
+                    }
+                    disabled={isSubmitting}
+                  >
+                    <SelectTrigger id="newRequestEventType">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {EVENT_TYPE_OPTIONS.map((type) => (
+                        <SelectItem key={type} value={type}>
+                          {type.replace(/_/g, " ")}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {/* Third Row */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="newRequestPurpose">Purpose *</Label>
+                  <Input
+                    id="newRequestPurpose"
+                    type="text"
+                    value={purpose}
+                    onChange={(e) => setPurpose(e.target.value)}
+                    placeholder="Why do you need this room?"
+                    disabled={isSubmitting}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="newRequestParticipantCount">
+                    Participant Count (optional)
+                  </Label>
+                  <Input
+                    id="newRequestParticipantCount"
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={participantCount}
+                    onChange={(e) => setParticipantCount(e.target.value)}
+                    placeholder="e.g. 40"
+                    disabled={isSubmitting}
+                  />
+                </div>
+              </div>
+
+              {/* Buttons */}
+              <div className="flex gap-2 pt-2">
+                <Button
+                  type="submit"
+                  disabled={
+                    isSubmitting || (isStudent && facultyUsers.length === 0)
+                  }
+                >
+                  {isSubmitting ? "Submitting…" : "Submit Request"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={isSubmitting}
+                  onClick={handleCheckAvailability}
+                >
+                  Check Availability
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
       )}
 
-      {prefillMessage && <div className="alert alert-success">{prefillMessage}</div>}
-      {error && <div className="alert alert-error">{error}</div>}
-      {loading && <p className="loading-text">Loading requests…</p>}
-      {!loading && requests.length === 0 && <p className="empty-text">No booking requests found.</p>}
+      {/* Alerts */}
+      {prefillMessage && (
+        <div className="bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded-md">
+          {prefillMessage}
+        </div>
+      )}
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-md">
+          {error}
+        </div>
+      )}
 
+      {/* Loading and Empty States */}
+      {loading && (
+        <p className="text-gray-600 text-center py-8">Loading requests…</p>
+      )}
+      {!loading && requests.length === 0 && (
+        <p className="text-gray-600 text-center py-8">No booking requests found.</p>
+      )}
+
+      {/* Requests List */}
       {!loading && requests.length > 0 && (
-        <div className="data-list">
+        <div className="space-y-4">
           {requests.map((req) => {
             const isPendingFaculty = req.status === "PENDING_FACULTY";
             const isPendingStaff = req.status === "PENDING_STAFF";
@@ -479,88 +550,139 @@ export function BookingRequestsPage({
                 : (adminUserNameById[req.facultyId] ?? `User ${req.facultyId}`);
 
             return (
-              <div className="request-card" key={req.id}>
-                <div className="request-card-header">
-                  <span className="data-item-title">Request #{req.id}</span>
-                  <span className={statusBadgeClass(req.status)}>
-                    {STATUS_LABELS[req.status]}
-                  </span>
-                </div>
-
-                <div className="request-card-meta">
-                  <span><strong>Room:</strong> {roomNameById.get(req.roomId) ?? `#${req.roomId}`}</span>
-                  <span><strong>From:</strong> {formatDateTimeDDMMYYYY(req.startAt)}</span>
-                  <span><strong>To:</strong> {formatDateTimeDDMMYYYY(req.endAt)}</span>
-                  <span><strong>Type:</strong> {req.eventType.replace(/_/g, " ")}</span>
-                  {req.participantCount !== null && (
-                    <span><strong>Participants:</strong> {req.participantCount}</span>
-                  )}
-                  {isAdmin && (
-                    <span><strong>Requested By:</strong> {requestedByLabel}</span>
-                  )}
-                  {isAdmin && (
-                    <span><strong>Faculty Approver:</strong> {facultyApproverLabel}</span>
-                  )}
-                  {isAdmin && (
-                    <span><strong>Created:</strong> {formatDateTimeDDMMYYYY(req.createdAt)}</span>
-                  )}
-                </div>
-
-                {req.purpose && (
-                  <div className="request-card-purpose">
-                    💬 {req.purpose}
+              <Card key={req.id}>
+                <CardHeader>
+                  <div className="flex items-start justify-between">
+                    <CardTitle className="text-lg">
+                      Request #{req.id}
+                    </CardTitle>
+                    <Badge variant={statusBadgeVariant(req.status)}>
+                      {STATUS_LABELS[req.status]}
+                    </Badge>
                   </div>
-                )}
-
-                {hasActions && (
-                  <div className="request-card-actions">
-                    {canForward && (
-                      <button
-                        type="button"
-                        className="btn btn-warning btn-sm"
-                        disabled={isActing}
-                        onClick={() => void runAction(req.id, () => forwardBookingRequest(req.id))}
-                      >
-                        {isActing ? "Working…" : "Forward to Staff"}
-                      </button>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* Request Details */}
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+                    <div>
+                      <span className="font-semibold">Room:</span>{" "}
+                      <span>{roomNameById.get(req.roomId) ?? `#${req.roomId}`}</span>
+                    </div>
+                    <div>
+                      <span className="font-semibold">From:</span>{" "}
+                      <span>{formatDateTimeDDMMYYYY(req.startAt)}</span>
+                    </div>
+                    <div>
+                      <span className="font-semibold">To:</span>{" "}
+                      <span>{formatDateTimeDDMMYYYY(req.endAt)}</span>
+                    </div>
+                    <div>
+                      <span className="font-semibold">Type:</span>{" "}
+                      <span>{req.eventType.replace(/_/g, " ")}</span>
+                    </div>
+                    {req.participantCount !== null && (
+                      <div>
+                        <span className="font-semibold">Participants:</span>{" "}
+                        <span>{req.participantCount}</span>
+                      </div>
                     )}
-                    {canApprove && (
-                      <button
-                        type="button"
-                        className="btn btn-success btn-sm"
-                        disabled={isActing}
-                        onClick={() => void runAction(req.id, () => approveBookingRequest(req.id))}
-                      >
-                        {isActing ? "Working…" : "Approve"}
-                      </button>
-                    )}
-                    {canReject && (
-                      <button
-                        type="button"
-                        className="btn btn-danger btn-sm"
-                        disabled={isActing}
-                        onClick={() => void runAction(req.id, () => rejectBookingRequest(req.id))}
-                      >
-                        {isActing ? "Working…" : "Reject"}
-                      </button>
-                    )}
-                    {canCancel && (
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm"
-                        disabled={isActing}
-                        onClick={() => void runAction(req.id, () => cancelBookingRequest(req.id))}
-                      >
-                        {isActing ? "Working…" : "Cancel"}
-                      </button>
+                    {isAdmin && (
+                      <>
+                        <div>
+                          <span className="font-semibold">Requested By:</span>{" "}
+                          <span>{requestedByLabel}</span>
+                        </div>
+                        <div>
+                          <span className="font-semibold">Faculty Approver:</span>{" "}
+                          <span>{facultyApproverLabel}</span>
+                        </div>
+                        <div>
+                          <span className="font-semibold">Created:</span>{" "}
+                          <span>{formatDateTimeDDMMYYYY(req.createdAt)}</span>
+                        </div>
+                      </>
                     )}
                   </div>
-                )}
-              </div>
+
+                  {/* Purpose */}
+                  {req.purpose && (
+                    <div className="border-t pt-3 text-sm">
+                      <span className="font-semibold">Purpose:</span>{" "}
+                      <p className="mt-1">💬 {req.purpose}</p>
+                    </div>
+                  )}
+
+                  {/* Actions */}
+                  {hasActions && (
+                    <div className="border-t pt-4 flex flex-wrap gap-2">
+                      {canForward && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          disabled={isActing}
+                          onClick={() =>
+                            void runAction(req.id, () =>
+                              forwardBookingRequest(req.id)
+                            )
+                          }
+                        >
+                          {isActing ? "Working…" : "Forward to Staff"}
+                        </Button>
+                      )}
+                      {canApprove && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="default"
+                          disabled={isActing}
+                          onClick={() =>
+                            void runAction(req.id, () =>
+                              approveBookingRequest(req.id)
+                            )
+                          }
+                        >
+                          {isActing ? "Working…" : "Approve"}
+                        </Button>
+                      )}
+                      {canReject && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="destructive"
+                          disabled={isActing}
+                          onClick={() =>
+                            void runAction(req.id, () =>
+                              rejectBookingRequest(req.id)
+                            )
+                          }
+                        >
+                          {isActing ? "Working…" : "Reject"}
+                        </Button>
+                      )}
+                      {canCancel && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={isActing}
+                          onClick={() =>
+                            void runAction(req.id, () =>
+                              cancelBookingRequest(req.id)
+                            )
+                          }
+                        >
+                          {isActing ? "Working…" : "Cancel"}
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             );
           })}
         </div>
       )}
-    </section>
+    </div>
   );
 }
