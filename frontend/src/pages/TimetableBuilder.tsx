@@ -1916,7 +1916,7 @@ export function TimetableBuilderPage() {
           </button>
         </div>
 
-        <div className="form-row" style={{ marginTop: "var(--space-4)" }}>
+        <div className="form-row mt-6">
           <div className="form-field">
             <label>Booking prune options</label>
             <div className="btn-group">
@@ -2177,21 +2177,21 @@ export function TimetableBuilderPage() {
 
         {previewReport && (
           <div className="mt-4">
-            <div className="alert alert-success" style={{ marginBottom: "var(--space-3)" }}>
+            <div className="alert alert-success mb-4">
               Processed {previewReport.processedRows} rows · Valid {previewReport.validRows} · Unresolved {previewReport.unresolvedRows}
-              <div style={{ marginTop: "var(--space-1)", fontSize: "0.8rem", color: "var(--gray-600)" }}>
+              <div className="mt-1 text-xs text-muted-foreground">
                 Term: {formatDateDDMMYYYY(previewReport.termStartDate)} - {formatDateDDMMYYYY(previewReport.termEndDate)}
               </div>
             </div>
 
             {previewReport.warnings.length > 0 && (
-              <div className="alert" style={{ marginBottom: "var(--space-3)" }}>
+              <div className="alert mb-4">
                 {previewReport.warnings.join(" | ")}
               </div>
             )}
 
             {isImportBatchCommitted && (
-              <div className="alert" style={{ marginBottom: "var(--space-3)" }}>
+              <div className="alert mb-4">
                 This batch is committed. You can adjust decisions, save, and run reallocation to regenerate its imported bookings.
               </div>
             )}
@@ -2232,18 +2232,18 @@ export function TimetableBuilderPage() {
                       </div>
 
                       {row.reasons.length > 0 && (
-                        <div className="empty-text" style={{ marginTop: "var(--space-2)" }}>
+                        <div className="empty-text mt-2">
                           Reason: {row.reasons.join(" | ")}
                         </div>
                       )}
 
                       {row.suggestions.length > 0 && (
-                        <div className="loading-text" style={{ marginTop: "var(--space-1)" }}>
+                        <div className="loading-text mt-1">
                           Suggestions: {row.suggestions.join(", ")}
                         </div>
                       )}
 
-                      <div className="form-row" style={{ marginTop: "var(--space-3)" }}>
+                      <div className="form-row mt-4">
                         <div className="form-field">
                           <label>Action</label>
                           <select
@@ -2264,12 +2264,12 @@ export function TimetableBuilderPage() {
                             <option value="RESOLVE">Resolve</option>
                           </select>
                           {decision.action === "IGNORE" && (
-                            <div className="data-item-subtitle" style={{ marginTop: "var(--space-1)" }}>
+                            <div className="data-item-subtitle mt-1">
                               Ignore: this row is not relevant for room allocation.
                             </div>
                           )}
                           {decision.action === "SKIP" && (
-                            <div className="data-item-subtitle" style={{ marginTop: "var(--space-1)" }}>
+                            <div className="data-item-subtitle mt-1">
                               Skip: keep this row for later resolution.
                             </div>
                           )}
@@ -2560,12 +2560,12 @@ export function TimetableBuilderPage() {
             </div>
 
             {commitReport.bookingConflictOccurrences > 0 && (
-              <div className="alert" style={{ marginTop: "var(--space-2)" }}>
+              <div className="alert mt-2">
                 Current bookings blocked {commitReport.bookingConflictOccurrences} occurrence(s) across {commitReport.bookingConflictRows} row(s).
               </div>
             )}
 
-            <div className="data-list" style={{ marginTop: "var(--space-3)" }}>
+            <div className="data-list mt-4">
               {commitReport.rowResults.map((row) => (
                 <div className="data-item" key={row.rowId}>
                   <div className="data-item-content">
@@ -2577,7 +2577,7 @@ export function TimetableBuilderPage() {
                     </div>
 
                     {row.bookingConflictReasons.length > 0 && (
-                      <div className="alert" style={{ marginTop: "var(--space-2)" }}>
+                      <div className="alert mt-2">
                         Booking conflicts: {row.bookingConflictReasons.join(" | ")}
                       </div>
                     )}
@@ -2590,7 +2590,7 @@ export function TimetableBuilderPage() {
 
         {(processedRowsLoading || processedRowsError || processedRowsReport) && (
           <div className="mt-4">
-            <div className="card-header" style={{ marginBottom: "var(--space-2)" }}>
+            <div className="card-header mb-2">
               <h3>Processed Rows And Booking CRUD</h3>
               {processedRowsReport && (
                 <span className="badge badge-role">
@@ -2604,13 +2604,13 @@ export function TimetableBuilderPage() {
             )}
 
             {processedRowsError && (
-              <div className="alert alert-error" style={{ marginBottom: "var(--space-3)" }}>
+              <div className="alert alert-error mb-4">
                 {processedRowsError}
               </div>
             )}
 
             {processedRowsReport && processedRowsReport.warnings.length > 0 && (
-              <div className="alert" style={{ marginBottom: "var(--space-3)" }}>
+              <div className="alert mb-4">
                 {processedRowsReport.warnings.join(" | ")}
               </div>
             )}
@@ -2640,24 +2640,24 @@ export function TimetableBuilderPage() {
                         <div className="data-item-subtitle">
                           Resolved Slot: {row.resolvedSlotLabel || "-"} · Resolved Room: {row.resolvedRoomId ?? "-"}
                         </div>
-                        <div className="empty-text" style={{ marginTop: "var(--space-1)" }}>
+                        <div className="empty-text mt-1">
                           Created {row.created} · Already Processed {row.alreadyProcessed} · Failed {row.failed} · Skipped {row.skipped}
                         </div>
 
                         {row.reasons.length > 0 && (
-                          <div className="loading-text" style={{ marginTop: "var(--space-1)" }}>
+                          <div className="loading-text mt-1">
                             Reasons: {row.reasons.join(" | ")}
                           </div>
                         )}
 
                         {row.bookingConflictReasons.length > 0 && (
-                          <div className="alert" style={{ marginTop: "var(--space-2)" }}>
+                          <div className="alert mt-2">
                             Booking conflicts with current schedule: {row.bookingConflictReasons.join(" | ")}
                           </div>
                         )}
 
                         {row.occurrences.length === 0 && (
-                          <p className="empty-text" style={{ marginTop: "var(--space-2)" }}>
+                          <p className="empty-text mt-2">
                             No occurrences generated for this row.
                           </p>
                         )}
@@ -2674,8 +2674,7 @@ export function TimetableBuilderPage() {
                           return (
                             <div
                               key={`occurrence-${occurrence.occurrenceId}`}
-                              className="card"
-                              style={{ marginTop: "var(--space-3)" }}
+                              className="card mt-4"
                             >
                               <div className="data-item-title">
                                 {occurrence.status}
@@ -2685,19 +2684,19 @@ export function TimetableBuilderPage() {
                               </div>
 
                               {occurrence.errorMessage && (
-                                <div className="alert alert-error" style={{ marginTop: "var(--space-2)" }}>
+                                <div className="alert alert-error mt-2">
                                   {occurrence.errorMessage}
                                 </div>
                               )}
 
                               {isAdmin && occurrence.booking && (
-                                <div className="empty-text" style={{ marginTop: "var(--space-2)" }}>
+                                <div className="empty-text mt-2">
                                   Source: {occurrence.booking.source.replace(/_/g, " ")} · Source Ref: {occurrence.booking.sourceRef ?? "-"} · Request Link: {occurrence.booking.requestId ?? "-"} · Approved By: {occurrence.booking.approvedBy ?? "-"} · Approved At: {occurrence.booking.approvedAt ?? "-"}
                                 </div>
                               )}
 
                               {occurrence.booking && bookingEdit ? (
-                                <div className="form-row" style={{ marginTop: "var(--space-3)" }}>
+                                <div className="form-row mt-4">
                                   <div className="form-field">
                                     <label>Booking Room</label>
                                     <select
@@ -2785,7 +2784,7 @@ export function TimetableBuilderPage() {
                                   </div>
                                 </div>
                               ) : (
-                                <p className="empty-text" style={{ marginTop: "var(--space-2)" }}>
+                                <p className="empty-text mt-2">
                                   No linked booking for this occurrence.
                                 </p>
                               )}
@@ -2793,7 +2792,7 @@ export function TimetableBuilderPage() {
                           );
                         })}
 
-                        <div className="form-row" style={{ marginTop: "var(--space-3)" }}>
+                        <div className="form-row mt-4">
                           <div className="form-field">
                             <label>Create Booking Room</label>
                             <select
