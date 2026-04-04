@@ -1,16 +1,19 @@
 import { useState } from "react";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
-import { BuildingsTable } from "./components/BuildingsTable";
-import { RoomsTable } from "./components/RoomsTable";
+import { BuildingsCardGrid } from "./components/BuildingsCardGrid";
+import { BuildingRoomsModal } from "./components/BuildingRoomsModal";
 import { BuildingFormDialog } from "./components/BuildingFormDialog";
 import { RoomFormDialog } from "./components/RoomFormDialog";
+import { useRooms } from "../hooks/useRooms";
 import type { Building, Room } from "../lib/api/types";
 
 export function RoomsPage() {
   const [buildingDialogOpen, setBuildingDialogOpen] = useState(false);
+  const [roomsModalOpen, setRoomsModalOpen] = useState(false);
   const [roomDialogOpen, setRoomDialogOpen] = useState(false);
   const [editingBuilding, setEditingBuilding] = useState<Building | null>(null);
+  const [selectedBuilding, setSelectedBuilding] = useState<Building | null>(null);
   const [editingRoom, setEditingRoom] = useState<Room | null>(null);
+  const { data: allRooms = [], isLoading: roomsLoading } = useRooms();
 
   const handleAddBuilding = () => {
     setEditingBuilding(null);
@@ -20,6 +23,11 @@ export function RoomsPage() {
   const handleEditBuilding = (building: Building) => {
     setEditingBuilding(building);
     setBuildingDialogOpen(true);
+  };
+
+  const handleBuildingClick = (building: Building) => {
+    setSelectedBuilding(building);
+    setRoomsModalOpen(true);
   };
 
   const handleAddRoom = () => {
@@ -32,32 +40,35 @@ export function RoomsPage() {
     setRoomDialogOpen(true);
   };
 
+  const handleRoomDialogClose = () => {
+    setRoomDialogOpen(false);
+    setEditingRoom(null);
+  };
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Buildings & Rooms</h1>
         <p className="text-gray-600 mt-2">
-          Manage your buildings and rooms in one place
+          Click on a building to manage its rooms
         </p>
       </div>
 
-      <Tabs defaultValue="buildings" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="buildings">Buildings</TabsTrigger>
-          <TabsTrigger value="rooms">Rooms</TabsTrigger>
-        </TabsList>
+      <BuildingsCardGrid
+        onBuildingClick={handleBuildingClick}
+        onBuildingEdit={handleEditBuilding}
+        onAddClick={handleAddBuilding}
+      />
 
-        <TabsContent value="buildings" className="space-y-4">
-          <BuildingsTable
-            onAddClick={handleAddBuilding}
-            onEditClick={handleEditBuilding}
-          />
-        </TabsContent>
-
-        <TabsContent value="rooms" className="space-y-4">
-          <RoomsTable onAddClick={handleAddRoom} onEditClick={handleEditRoom} />
-        </TabsContent>
-      </Tabs>
+      <BuildingRoomsModal
+        open={roomsModalOpen}
+        onOpenChange={setRoomsModalOpen}
+        building={selectedBuilding}
+        rooms={Array.isArray(allRooms) ? allRooms : []}
+        onRoomEdit={handleEditRoom}
+        onAddRoom={handleAddRoom}
+        isLoading={roomsLoading}
+      />
 
       <BuildingFormDialog
         open={buildingDialogOpen}
@@ -67,8 +78,9 @@ export function RoomsPage() {
 
       <RoomFormDialog
         open={roomDialogOpen}
-        onOpenChange={setRoomDialogOpen}
+        onOpenChange={handleRoomDialogClose}
         room={editingRoom}
+        defaultBuildingId={selectedBuilding?.id}
       />
     </div>
   );
