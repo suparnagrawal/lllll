@@ -396,7 +396,14 @@ export type TimetableImportProcessedRowsReport = {
 };
 
 export type LoginResponse = {
-  token: string;
+  accessToken: string;
+  refreshToken: string;
+  user: AuthUser;
+};
+
+export type RefreshTokenResponse = {
+  accessToken: string;
+  refreshToken: string;
   user: AuthUser;
 };
 

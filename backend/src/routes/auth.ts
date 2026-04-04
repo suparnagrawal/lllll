@@ -2,7 +2,7 @@ import { type Request, type Response, Router } from "express";
 import bcrypt from "bcrypt";
 import { eq } from "drizzle-orm";
 import passport from "../auth/passport";
-import { signAuthToken, verifySetupToken } from "../auth/jwt";
+import { signAuthToken, signRefreshToken, verifySetupToken, verifyRefreshToken } from "../auth/jwt";
 import { env, isGoogleOAuthConfigured } from "../config/env";
 import { db } from "../db";
 import { users } from "../db/schema";
@@ -128,11 +128,13 @@ router.post("/login", async (req, res) => {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    // Generate JWT
-    const token = signAuthToken({ id: user.id, role: user.role });
+    // Generate JWT tokens
+    const accessToken = signAuthToken({ id: user.id, role: user.role });
+    const refreshToken = signRefreshToken({ id: user.id, role: user.role });
 
     return res.json({
-      token,
+      accessToken,
+      refreshToken,
       user: {
         id: user.id,
         name: user.displayName ?? user.name,
@@ -235,7 +237,8 @@ if (isGoogleOAuthConfigured) {
           let redirectUrl: string;
 
           if (effectiveUser.firstLogin) {
-            const token = signAuthToken({ id: effectiveUser.id, role: effectiveUser.role });
+            const accessToken = signAuthToken({ id: effectiveUser.id, role: effectiveUser.role });
+            const refreshToken = signRefreshToken({ id: effectiveUser.id, role: effectiveUser.role });
 
             await db
               .update(users)
@@ -243,13 +246,15 @@ if (isGoogleOAuthConfigured) {
               .where(eq(users.id, effectiveUser.id));
 
             redirectUrl = buildFrontendUrl("/auth/callback", {
-              token,
+              accessToken,
+              refreshToken,
               firstLogin: "true",
               role: effectiveUser.role,
             });
           } else {
-            const token = signAuthToken({ id: effectiveUser.id, role: effectiveUser.role });
-            redirectUrl = buildFrontendUrl("/auth/callback", { token });
+            const accessToken = signAuthToken({ id: effectiveUser.id, role: effectiveUser.role });
+            const refreshToken = signRefreshToken({ id: effectiveUser.id, role: effectiveUser.role });
+            redirectUrl = buildFrontendUrl("/auth/callback", { accessToken, refreshToken });
           }
 
           await cleanupOAuthSession(req, res);
@@ -354,10 +359,12 @@ router.post("/complete-setup", async (req, res) => {
       return res.status(500).json({ error: "Failed to complete setup" });
     }
 
-    const loginToken = signAuthToken({ id: updated.id, role });
+    const accessToken = signAuthToken({ id: updated.id, role });
+    const refreshToken = signRefreshToken({ id: updated.id, role });
 
     return res.json({
-      token: loginToken,
+      accessToken,
+      refreshToken,
       user: {
         id: updated.id,
         name: updated.displayName ?? updated.name,
@@ -367,6 +374,57 @@ router.post("/complete-setup", async (req, res) => {
   } catch (error) {
     logger.error(error);
     return res.status(500).json({ error: "Complete setup failed" });
+  }
+});
+
+// ------------------------
+// POST /auth/refresh
+// ------------------------
+router.post("/refresh", async (req, res) => {
+  try {
+    const refreshToken = req.body?.refreshToken;
+
+    if (!refreshToken) {
+      return res.status(400).json({ error: "Refresh token is required" });
+    }
+
+    const decoded = verifyRefreshToken(refreshToken);
+
+    if (!decoded) {
+      return res.status(401).json({ error: "Invalid or expired refresh token" });
+    }
+
+    const rows = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, decoded.id))
+      .limit(1);
+
+    const user = rows[0];
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    if (!user.isActive) {
+      return res.status(403).json({ error: "Your account is inactive" });
+    }
+
+    const accessToken = signAuthToken({ id: user.id, role: user.role });
+    const newRefreshToken = signRefreshToken({ id: user.id, role: user.role });
+
+    return res.json({
+      accessToken,
+      refreshToken: newRefreshToken,
+      user: {
+        id: user.id,
+        name: user.displayName ?? user.name,
+        role: user.role,
+      },
+    });
+  } catch (error) {
+    logger.error(error);
+    return res.status(500).json({ error: "Token refresh failed" });
   }
 });
 
