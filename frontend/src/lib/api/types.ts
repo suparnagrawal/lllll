@@ -5,7 +5,9 @@ export type UserRole =
   | "STUDENT"
   | "PENDING_ROLE";
 
-export type SetupRole = "STUDENT" | "FACULTY";
+export type SetupRole = "STUDENT" | "FACULTY" | "ADMIN";
+
+export type AuthMethod = "email" | "google";
 
 export type AuthUser = {
   id: number;
@@ -118,6 +120,18 @@ export type Booking = {
   sourceRef: string | null;
 };
 
+export type BookingDetail = {
+  id: number;
+  startAt: string;
+  endAt: string;
+  activityName?: string;
+  bookedBy?: string;
+  contactInfo?: string;
+  purpose?: string;
+  hasAccess: boolean;
+  visibilityLevel: 'full' | 'restricted' | 'none';
+};
+
 export type NotificationType =
   | "BOOKING_REQUEST_CREATED"
   | "BOOKING_REQUEST_FORWARDED"
@@ -152,6 +166,7 @@ export type AvailabilityRoom = {
   id: number;
   name: string;
   isAvailable: boolean;
+  bookings?: BookingDetail[];
 };
 
 export type AvailabilityBuilding = {
@@ -402,6 +417,7 @@ export type LoginResponse = {
   accessToken: string;
   refreshToken: string;
   user: AuthUser;
+  authProvider?: string;
 };
 
 export type RefreshTokenResponse = {

@@ -9,6 +9,7 @@ import {
   getManagedUsers,
   getBookingRequests,
   getRooms,
+  getBuildings,
   rejectBookingRequest,
 } from "../lib/api";
 import type {
@@ -17,10 +18,12 @@ import type {
   BookingStatus,
   FacultyUser,
   Room,
+  Building,
 } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { DateInput } from "../components/DateInput";
 import { formatDateTimeDDMMYYYY } from "../utils/datetime";
+import { formatRoomDisplayWithBuildingsArray } from "../utils/room";
 import type {
   AvailabilityPrefill,
   BookingRequestPrefill,
@@ -98,6 +101,7 @@ export function BookingRequestsPage({
 
   const [requests, setRequests] = useState<BookingRequest[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
+  const [buildings, setBuildings] = useState<Building[]>([]);
   const [facultyUsers, setFacultyUsers] = useState<FacultyUser[]>([]);
   const [adminUserNameById, setAdminUserNameById] = useState<Record<number, string>>({});
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
@@ -116,7 +120,7 @@ export function BookingRequestsPage({
   const [actingId, setActingId] = useState<number | null>(null);
   const [prefillMessage, setPrefillMessage] = useState<string | null>(null);
 
-  const roomNameById = new Map(rooms.map((r) => [r.id, r.name]));
+  const roomNameById = new Map(rooms.map((r) => [r.id, formatRoomDisplayWithBuildingsArray(r, buildings)]));
 
   const loadAdminUsers = async () => {
     if (!isAdmin) {
@@ -155,6 +159,11 @@ export function BookingRequestsPage({
     catch (e) { setError(e instanceof Error ? e.message : "Failed to load rooms"); }
   };
 
+  const loadBuildings = async () => {
+    try { setBuildings(await getBuildings()); }
+    catch (e) { setError(e instanceof Error ? e.message : "Failed to load buildings"); }
+  };
+
   const loadFacultyUsers = async () => {
     try {
       setFacultyUsers(await getFacultyUsers());
@@ -166,6 +175,7 @@ export function BookingRequestsPage({
   useEffect(() => {
     void (async () => {
       await loadRooms();
+      await loadBuildings();
       await loadRequests("ALL");
 
       if (isStudent) {
@@ -359,7 +369,7 @@ export function BookingRequestsPage({
                     <SelectContent>
                       {rooms.map((r) => (
                         <SelectItem key={r.id} value={String(r.id)}>
-                          {r.name}
+                          {formatRoomDisplayWithBuildingsArray(r, buildings)}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -543,18 +553,18 @@ export function BookingRequestsPage({
             const requestedByLabel =
               req.userId === null
                 ? "-"
-                : (adminUserNameById[req.userId] ?? `User ${req.userId}`);
+                : (adminUserNameById[req.userId] ?? "Unknown User");
             const facultyApproverLabel =
               req.facultyId === null
                 ? "Unassigned"
-                : (adminUserNameById[req.facultyId] ?? `User ${req.facultyId}`);
+                : (adminUserNameById[req.facultyId] ?? "Unknown User");
 
             return (
               <Card key={req.id}>
                 <CardHeader>
                   <div className="flex items-start justify-between">
                     <CardTitle className="text-lg">
-                      Request #{req.id}
+                      Room Booking Request
                     </CardTitle>
                     <Badge variant={statusBadgeVariant(req.status)}>
                       {STATUS_LABELS[req.status]}
@@ -566,7 +576,7 @@ export function BookingRequestsPage({
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
                     <div>
                       <span className="font-semibold">Room:</span>{" "}
-                      <span>{roomNameById.get(req.roomId) ?? `#${req.roomId}`}</span>
+                      <span>{roomNameById.get(req.roomId) ?? "Unknown Room"}</span>
                     </div>
                     <div>
                       <span className="font-semibold">From:</span>{" "}

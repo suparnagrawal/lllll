@@ -446,8 +446,8 @@ export function TimetableBuilderPage() {
     const map = new Map<number, string>();
 
     for (const room of rooms) {
-      const buildingLabel = buildingNameById.get(room.buildingId) ?? `Building #${room.buildingId}`;
-      map.set(room.id, `${buildingLabel} - ${room.name} (#${room.id})`);
+      const buildingLabel = buildingNameById.get(room.buildingId) ?? "Unknown Building";
+      map.set(room.id, `${buildingLabel} - ${room.name}`);
     }
 
     return map;
@@ -970,7 +970,7 @@ export function TimetableBuilderPage() {
       return;
     }
 
-    const selectedLabel = selectedSystem?.name ?? `#${selectedSystemId}`;
+    const selectedLabel = selectedSystem?.name ?? "Unknown";
 
     const approved =
       typeof window === "undefined"
@@ -1673,7 +1673,7 @@ export function TimetableBuilderPage() {
     setImportInfo(null);
 
     try {
-      const transferReport = await apiTransferTimetableImportRow(
+      await apiTransferTimetableImportRow(
         sourceBatchId,
         row.rowId,
         targetSlotSystemId,
@@ -1686,7 +1686,7 @@ export function TimetableBuilderPage() {
       await loadImportBatches(sourceSlotSystemId);
 
       setImportInfo(
-        `Transferred row ${row.rowIndex} to ${targetSlotSystem.name}. Linked batch #${transferReport.targetBatchId} now has ${transferReport.targetProcessedRows} row(s). Source row is marked Skip (Ignore semantics).`,
+        `Transferred row ${row.rowIndex} to ${targetSlotSystem.name}. Row has been transferred. Source row is marked Skip (Ignore semantics).`,
       );
     } catch (e) {
       setImportError(e instanceof Error ? e.message : "Failed to transfer row to another slot system");
@@ -1711,7 +1711,7 @@ export function TimetableBuilderPage() {
 
       const refreshedReport = await apiGetTimetableImportBatch(previewReport.batchId);
       hydratePreviewFromBatch(refreshedReport);
-      setImportInfo(`Saved allocation decisions for batch #${refreshedReport.batchId}.`);
+      setImportInfo(`Saved allocation decisions.`);
 
       await loadGrid(refreshedReport.slotSystemId);
       await loadProcessedRows(refreshedReport.batchId);
@@ -1751,7 +1751,7 @@ export function TimetableBuilderPage() {
 
       const refreshedReport = await apiGetTimetableImportBatch(previewReport.batchId);
       hydratePreviewFromBatch(refreshedReport);
-      setImportInfo(`Reallocated committed batch #${refreshedReport.batchId}.`);
+      setImportInfo(`Allocation decisions reallocated.`);
 
       await loadGrid(refreshedReport.slotSystemId);
       await loadProcessedRows(previewReport.batchId);
@@ -1775,7 +1775,7 @@ export function TimetableBuilderPage() {
       typeof window === "undefined"
         ? true
         : window.confirm(
-            `Delete batch #${activeBatchId}? This will remove all linked imported bookings and cannot be undone.`,
+            `Delete this allocation? This will remove all linked imported bookings and cannot be undone.`,
           );
 
     if (!approved) {
@@ -1804,7 +1804,7 @@ export function TimetableBuilderPage() {
 
       const bookingLabel = result.deletedBookings === 1 ? "booking" : "bookings";
       setImportInfo(
-        `Deleted batch #${result.batchId} and removed ${result.deletedBookings} linked ${bookingLabel}.`,
+        `Allocation deleted and removed ${result.deletedBookings} linked ${bookingLabel}.`,
       );
     } catch (e) {
       setImportError(e instanceof Error ? e.message : "Failed to delete import batch");
@@ -1948,7 +1948,7 @@ export function TimetableBuilderPage() {
           <h3>Classroom Allocation Import</h3>
           {previewReport && (
             <span className="badge badge-role">
-              Batch #{previewReport.batchId} · {previewReport.status}
+              {previewReport.status}
             </span>
           )}
         </div>
@@ -1974,7 +1974,7 @@ export function TimetableBuilderPage() {
               <option value="">Select a batch</option>
               {importBatches.map((batch) => (
                 <option key={batch.batchId} value={batch.batchId}>
-                  #{batch.batchId} · {batch.status} · Valid {batch.validRows} · Resolved {batch.resolvedRows} · Unresolved {batch.unresolvedRows} · {formatDateDDMMYYYY(batch.termStartDate)} to {formatDateDDMMYYYY(batch.termEndDate)} · {batch.fileName}
+                  {batch.status} · Valid {batch.validRows} · Resolved {batch.resolvedRows} · Unresolved {batch.unresolvedRows} · {formatDateDDMMYYYY(batch.termStartDate)} to {formatDateDDMMYYYY(batch.termEndDate)} · {batch.fileName}
                 </option>
               ))}
             </select>
@@ -2503,7 +2503,7 @@ export function TimetableBuilderPage() {
                                     <option value="">Select room</option>
                                     {rooms.map((room) => (
                                       <option key={room.id} value={room.id}>
-                                        {roomLabelById.get(room.id) ?? `Room #${room.id}`}
+                                        {roomLabelById.get(room.id) ?? "Unknown Room"}
                                       </option>
                                     ))}
                                   </select>
@@ -2594,7 +2594,7 @@ export function TimetableBuilderPage() {
               <h3>Processed Rows And Booking CRUD</h3>
               {processedRowsReport && (
                 <span className="badge badge-role">
-                  Batch #{processedRowsReport.batchId} · {processedRowsReport.status}
+                  {processedRowsReport.status}
                 </span>
               )}
             </div>
@@ -2678,10 +2678,10 @@ export function TimetableBuilderPage() {
                               style={{ marginTop: "var(--space-3)" }}
                             >
                               <div className="data-item-title">
-                                Occurrence #{occurrence.occurrenceId} · {occurrence.status}
+                                {occurrence.status}
                               </div>
                               <div className="data-item-subtitle">
-                                {formatDateDDMMYYYY(occurrence.startAt)} to {formatDateDDMMYYYY(occurrence.endAt)} · Room #{occurrence.roomId}
+                                {formatDateDDMMYYYY(occurrence.startAt)} to {formatDateDDMMYYYY(occurrence.endAt)}
                               </div>
 
                               {occurrence.errorMessage && (
@@ -2714,7 +2714,7 @@ export function TimetableBuilderPage() {
                                       <option value="">Select room</option>
                                       {rooms.map((roomOption) => (
                                         <option key={roomOption.id} value={roomOption.id}>
-                                          {roomLabelById.get(roomOption.id) ?? `Room #${roomOption.id}`}
+                                          {roomLabelById.get(roomOption.id) ?? "Unknown Room"}
                                         </option>
                                       ))}
                                     </select>
@@ -2809,7 +2809,7 @@ export function TimetableBuilderPage() {
                               <option value="">Select room</option>
                               {rooms.map((roomOption) => (
                                 <option key={roomOption.id} value={roomOption.id}>
-                                  {roomLabelById.get(roomOption.id) ?? `Room #${roomOption.id}`}
+                                  {roomLabelById.get(roomOption.id) ?? "Unknown Room"}
                                 </option>
                               ))}
                             </select>

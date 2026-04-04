@@ -13,18 +13,34 @@ import {
   SelectValue,
 } from "../components/ui/select";
 import { Label } from "../components/ui/label";
-import { AlertCircle, CheckCircle, Loader2, Users, BookOpen } from "lucide-react";
+import { AlertCircle, CheckCircle, Loader2, Users, BookOpen, Shield } from "lucide-react";
 
 type SetupStep = 1 | 2 | 3;
 
-const setupSchema = z.object({
-  role: z.enum(["STUDENT", "FACULTY"], {
-    errorMap: () => ({ message: "Please select a role" }),
-  }),
-  department: z.string().optional(),
-});
+// Get available roles based on auth provider
+function getAvailableRoles(authProvider: string | null): string[] {
+  if (authProvider === "google") {
+    return ["STUDENT", "FACULTY", "ADMIN"];
+  }
+  // Email auth only allows STUDENT in setup (STAFF/ADMIN need manual assignment)
+  return ["STUDENT"];
+}
 
-type SetupFormData = z.infer<typeof setupSchema>;
+const buildSetupSchema = (authProvider: string | null) => {
+  const availableRoles = getAvailableRoles(authProvider);
+  
+  return z.object({
+    role: z.enum(availableRoles.length > 0 ? (availableRoles as [string, ...string[]]) : ["STUDENT"], {
+      errorMap: () => ({ message: "Please select a role" }),
+    }),
+    department: z.string().optional(),
+  });
+};
+
+type SetupFormData = {
+  role: string;
+  department?: string;
+};
 
 const DEPARTMENTS = [
   "Computer Science",
@@ -37,6 +53,25 @@ const DEPARTMENTS = [
   "Other",
 ];
 
+// Role descriptions for different auth methods
+const ROLE_DESCRIPTIONS: Record<string, string> = {
+  STUDENT: "Access room booking and check availability",
+  FACULTY: "Manage rooms, view requests, and approve bookings",
+  ADMIN: "Administrative access to system management",
+};
+
+const ROLE_ICONS: Record<string, any> = {
+  STUDENT: Users,
+  FACULTY: BookOpen,
+  ADMIN: Shield,
+};
+
+const ROLE_COLORS: Record<string, { border: string; bg: string; icon: string }> = {
+  STUDENT: { border: "border-blue-600", bg: "bg-blue-50", icon: "bg-blue-100 text-blue-600" },
+  FACULTY: { border: "border-green-600", bg: "bg-green-50", icon: "bg-green-100 text-green-600" },
+  ADMIN: { border: "border-purple-600", bg: "bg-purple-50", icon: "bg-purple-100 text-purple-600" },
+};
+
 export default function AuthSetupPage() {
   const navigate = useNavigate();
   const { completeSetup } = useAuth();
@@ -44,6 +79,17 @@ export default function AuthSetupPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string>("");
   const [showSuccess, setShowSuccess] = useState(false);
+  const [authProvider, setAuthProvider] = useState<string | null>(null);
+
+  // Extract authProvider from URL
+  useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    const provider = searchParams.get("authProvider") || "email";
+    setAuthProvider(provider);
+  }, []);
+
+  const setupSchema = buildSetupSchema(authProvider);
+  const availableRoles = getAvailableRoles(authProvider);
 
   const {
     handleSubmit,
@@ -85,7 +131,7 @@ export default function AuthSetupPage() {
     setSubmitError("");
 
     try {
-      await completeSetup(setupToken, data.role, data.department);
+      await completeSetup(setupToken, data.role as any, data.department);
       setShowSuccess(true);
 
       // Redirect to dashboard after 1.5 seconds
@@ -196,62 +242,46 @@ export default function AuthSetupPage() {
                   </Label>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* Student Card */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setValue("role", "STUDENT");
-                        setValue("department", undefined);
-                        setStep(3);
-                      }}
-                      className={`p-6 rounded-lg border-2 transition-all text-left ${
-                        selectedRole === "STUDENT"
-                          ? "border-blue-600 bg-blue-50"
-                          : "border-slate-200 bg-white hover:border-blue-300"
-                      }`}
-                    >
-                      <div className="flex items-start gap-4">
-                        <div className="rounded-lg bg-blue-100 p-3 flex-shrink-0">
-                          <Users className="w-6 h-6 text-blue-600" />
-                        </div>
-                        <div>
-                          <h3 className="font-semibold text-slate-900 mb-1">
-                            Student
-                          </h3>
-                          <p className="text-sm text-slate-600">
-                            Access room booking and check availability
-                          </p>
-                        </div>
-                      </div>
-                    </button>
+                    {availableRoles.map((role) => {
+                      const Icon = ROLE_ICONS[role];
+                      const colors = ROLE_COLORS[role];
+                      const description = ROLE_DESCRIPTIONS[role];
 
-                    {/* Faculty Card */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setValue("role", "FACULTY");
-                        setStep(2);
-                      }}
-                      className={`p-6 rounded-lg border-2 transition-all text-left ${
-                        selectedRole === "FACULTY"
-                          ? "border-green-600 bg-green-50"
-                          : "border-slate-200 bg-white hover:border-green-300"
-                      }`}
-                    >
-                      <div className="flex items-start gap-4">
-                        <div className="rounded-lg bg-green-100 p-3 flex-shrink-0">
-                          <BookOpen className="w-6 h-6 text-green-600" />
-                        </div>
-                        <div>
-                          <h3 className="font-semibold text-slate-900 mb-1">
-                            Faculty
-                          </h3>
-                          <p className="text-sm text-slate-600">
-                            Manage rooms, view requests, and approve bookings
-                          </p>
-                        </div>
-                      </div>
-                    </button>
+                      return (
+                        <button
+                          key={role}
+                          type="button"
+                          onClick={() => {
+                            setValue("role", role);
+                            setValue("department", undefined);
+                            if (role !== "FACULTY") {
+                              setStep(3);
+                            } else {
+                              setStep(2);
+                            }
+                          }}
+                          className={`p-6 rounded-lg border-2 transition-all text-left ${
+                            selectedRole === role
+                              ? `border-current ${colors.bg}`
+                              : "border-slate-200 bg-white hover:border-slate-300"
+                          }`}
+                        >
+                          <div className="flex items-start gap-4">
+                            <div className={`rounded-lg ${colors.icon} p-3 flex-shrink-0`}>
+                              <Icon className="w-6 h-6" />
+                            </div>
+                            <div>
+                              <h3 className="font-semibold text-slate-900 mb-1">
+                                {role}
+                              </h3>
+                              <p className="text-sm text-slate-600">
+                                {description}
+                              </p>
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
                   </div>
 
                   {errors.role && (
@@ -271,7 +301,7 @@ export default function AuthSetupPage() {
               </div>
             )}
 
-            {/* Step 2: Department Selection */}
+            {/* Step 2: Department Selection (only for Faculty) */}
             {step === 2 && (
               <div className="space-y-6">
                 <div>
@@ -334,7 +364,9 @@ export default function AuthSetupPage() {
                     <div className="flex justify-between items-center">
                       <span className="text-slate-600">Role:</span>
                       <span className="font-medium text-slate-900">
-                        {selectedRole === "STUDENT" ? "👤 Student" : "👨‍🏫 Faculty"}
+                        {selectedRole === "STUDENT" && "👤 Student"}
+                        {selectedRole === "FACULTY" && "👨‍🏫 Faculty"}
+                        {selectedRole === "ADMIN" && "🔐 Admin"}
                       </span>
                     </div>
                     {selectedRole === "FACULTY" && watch("department") && (
@@ -345,12 +377,19 @@ export default function AuthSetupPage() {
                         </span>
                       </div>
                     )}
+                    {authProvider && (
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-600">Login Method:</span>
+                        <span className="font-medium text-slate-900">
+                          {authProvider === "google" ? "🔐 Google OAuth" : "📧 Email/Password"}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
                 <p className="text-sm text-slate-600">
-                  By completing this setup, you agree to our Terms of Service and Privacy
-                  Policy.
+                  By completing this setup, you agree to our Terms of Service and Privacy Policy.
                 </p>
 
                 <div className="flex gap-3 pt-4">

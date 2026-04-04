@@ -86,10 +86,23 @@ router.post("/login", async (req, res) => {
   try {
     const email = req.body?.email?.trim()?.toLowerCase();
     const password = req.body?.password;
+    const authProvider = req.body?.authProvider ?? "email";
 
-    // Validation
-    if (!email || !password) {
-      return res.status(400).json({ error: "Email and password are required" });
+    // Validation: email required for both methods
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
+    // Email domain validation
+    if (!email.endsWith("@iitj.ac.in")) {
+      return res.status(400).json({
+        error: "Please use your @iitj.ac.in email address",
+      });
+    }
+
+    // Password required only for email auth
+    if (authProvider === "email" && !password) {
+      return res.status(400).json({ error: "Password is required for email login" });
     }
 
     // Find user
@@ -105,9 +118,16 @@ router.post("/login", async (req, res) => {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    if (user.registeredVia === "google" || user.googleId !== null) {
+    // Check if user's registered method matches auth provider
+    if (authProvider === "email" && user.registeredVia === "google") {
       return res.status(403).json({
         error: "This account uses Google login. Please continue with Google.",
+      });
+    }
+
+    if (authProvider === "google" && user.registeredVia === "email") {
+      return res.status(403).json({
+        error: "This account uses email/password login. Please use email and password.",
       });
     }
 
@@ -121,11 +141,13 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    // Compare password
-    const isMatch = await bcrypt.compare(password, user.passwordHash);
+    // Password validation for email auth only
+    if (authProvider === "email") {
+      const isMatch = await bcrypt.compare(password, user.passwordHash);
 
-    if (!isMatch) {
-      return res.status(401).json({ error: "Invalid credentials" });
+      if (!isMatch) {
+        return res.status(401).json({ error: "Invalid credentials" });
+      }
     }
 
     // Generate JWT tokens
@@ -140,6 +162,7 @@ router.post("/login", async (req, res) => {
         name: user.displayName ?? user.name,
         role: user.role,
       },
+      authProvider,
     });
 
   } catch (error) {
@@ -256,6 +279,7 @@ if (isGoogleOAuthConfigured) {
               refreshToken,
               firstLogin: "true",
               role: effectiveUser.role,
+              authProvider: "google",
             });
           } else {
             const accessToken = signAuthToken({ id: effectiveUser.id, role: effectiveUser.role });
@@ -263,7 +287,11 @@ if (isGoogleOAuthConfigured) {
               id: effectiveUser.id, 
               role: effectiveUser.role as Exclude<typeof effectiveUser.role, "PENDING_ROLE">
             });
-            redirectUrl = buildFrontendUrl("/auth/callback", { accessToken, refreshToken });
+            redirectUrl = buildFrontendUrl("/auth/callback", { 
+              accessToken, 
+              refreshToken,
+              authProvider: "google",
+            });
           }
 
           await cleanupOAuthSession(req, res);
@@ -312,25 +340,8 @@ router.post("/complete-setup", async (req, res) => {
       return res.status(401).json({ error: "Invalid or expired setup token" });
     }
 
-    const role = req.body?.role as SetupRole | undefined;
+    const role = req.body?.role as string | undefined;
     const rawDepartment = req.body?.department;
-
-    if (role !== "STUDENT" && role !== "FACULTY") {
-      return res.status(400).json({
-        error: "role must be STUDENT or FACULTY",
-      });
-    }
-
-    if (rawDepartment !== undefined && typeof rawDepartment !== "string") {
-      return res.status(400).json({
-        error: "department must be a string when provided",
-      });
-    }
-
-    const department =
-      typeof rawDepartment === "string" && rawDepartment.trim().length > 0
-        ? rawDepartment.trim()
-        : null;
 
     const rows = await db
       .select()
@@ -354,10 +365,32 @@ router.post("/complete-setup", async (req, res) => {
       });
     }
 
+    // Role validation based on auth provider
+    const allowedRoles = user.registeredVia === "google" 
+      ? ["STUDENT", "FACULTY", "ADMIN"] 
+      : ["STUDENT", "STAFF", "ADMIN"];
+
+    if (!role || !allowedRoles.includes(role)) {
+      return res.status(400).json({
+        error: `role must be one of: ${allowedRoles.join(", ")}`,
+      });
+    }
+
+    if (rawDepartment !== undefined && typeof rawDepartment !== "string") {
+      return res.status(400).json({
+        error: "department must be a string when provided",
+      });
+    }
+
+    const department =
+      typeof rawDepartment === "string" && rawDepartment.trim().length > 0
+        ? rawDepartment.trim()
+        : null;
+
     const [updated] = await db
       .update(users)
       .set({
-        role,
+        role: role as SetupRole | "ADMIN",
         department,
         firstLogin: false,
       })
@@ -368,8 +401,8 @@ router.post("/complete-setup", async (req, res) => {
       return res.status(500).json({ error: "Failed to complete setup" });
     }
 
-    const accessToken = signAuthToken({ id: updated.id, role });
-    const refreshToken = signRefreshToken({ id: updated.id, role });
+    const accessToken = signAuthToken({ id: updated.id, role: updated.role });
+    const refreshToken = signRefreshToken({ id: updated.id, role: updated.role as Exclude<typeof updated.role, "PENDING_ROLE"> });
 
     return res.json({
       accessToken,

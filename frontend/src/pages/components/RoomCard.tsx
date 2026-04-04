@@ -1,8 +1,14 @@
 import { useState } from "react";
-import { Edit2, Trash2 } from "lucide-react";
+import { MoreVertical } from "lucide-react";
 import type { Room } from "../../lib/api/types";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../../components/ui/dropdown-menu";
 import { useDeleteRoom } from "../../hooks/useRooms";
 
 interface RoomCardProps {
@@ -30,31 +36,38 @@ export function RoomCard({ room, onEditClick }: RoomCardProps) {
   };
 
   return (
-    <Card className="hover:shadow-md transition-all duration-200">
-      <CardHeader className="pb-3 flex flex-row items-start justify-between space-y-0">
-        <CardTitle className="text-base">{room.name}</CardTitle>
-        <div className="flex gap-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onEditClick}
-            className="hover:bg-blue-50 h-8 w-8 p-0"
-          >
-            <Edit2 className="h-4 w-4 text-blue-600" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleDelete}
-            disabled={isDeleting}
-            className="hover:bg-red-50 h-8 w-8 p-0"
-          >
-            <Trash2 className="h-4 w-4 text-red-600" />
-          </Button>
+    <Card className="hover:shadow-lg transition-all duration-200 hover:scale-105">
+      <CardHeader className="pb-4 flex flex-row items-start justify-between space-y-0">
+        <div className="flex-1">
+          <CardTitle className="text-lg font-semibold break-words">{room.name}</CardTitle>
+        </div>
+        <div className="flex-shrink-0 ml-3">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9"
+                title="Room actions"
+              >
+                <MoreVertical className="h-5 w-5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={onEditClick}>Edit</DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={handleDelete}
+                disabled={isDeleting}
+                className="text-red-600"
+              >
+                {isDeleting ? "Deleting..." : "Delete"}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </CardHeader>
-      <CardContent>
-        <p className="text-xs text-gray-500">Room ID: {room.id}</p>
+      <CardContent className="pt-0">
+        <p className="text-sm text-gray-500">ID: {room.id}</p>
       </CardContent>
     </Card>
   );

@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware } from "../middleware/auth";
 import { getAssignedBuildingIdsForStaff } from "../services/staffBuildingScope";
-import { getAvailabilityWithCache, BuildingWithRooms } from '../data/queries/availability.queries';
+import { getAvailabilityWithBookingsAndRbac, BuildingWithRooms } from '../data/queries/availability.queries';
 import logger from "../shared/utils/logger";
 
 const router = Router();
@@ -50,11 +50,14 @@ router.get('/', authMiddleware, async (req: Request, res: Response): Promise<voi
       return;
     }
 
-    const result = await getAvailabilityWithCache({
+    const result = await getAvailabilityWithBookingsAndRbac({
       startAt,
       endAt,
       buildingId: buildingId ?? undefined,
       buildingIds: isStaff ? assignedBuildingIds : [],
+      userId: req.user!.id,
+      userRole: req.user!.role,
+      staffBuildingIds: assignedBuildingIds,
     });
 
     res.json(result);

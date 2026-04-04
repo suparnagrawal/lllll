@@ -8,6 +8,7 @@ import type { Booking } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { DateInput } from "../components/DateInput";
 import { formatDateTimeDDMMYYYY } from "../utils/datetime";
+import { formatRoomDisplayWithBuildingsArray } from "../utils/room";
 
 export function BookingsPage() {
   const { user } = useAuth();
@@ -56,8 +57,8 @@ export function BookingsPage() {
   }, [isAdmin, managedUsersResponse]);
 
   const roomNameById = useMemo(
-    () => new Map(rooms.map((r) => [r.id, r.name])),
-    [rooms]
+    () => new Map(rooms.map((r) => [r.id, formatRoomDisplayWithBuildingsArray(r, buildings)])),
+    [rooms, buildings]
   );
 
   const bookingSourceLabel = useCallback(
@@ -147,7 +148,7 @@ export function BookingsPage() {
             >
               <option value="">All Rooms</option>
               {rooms?.map((r) => (
-                <option key={r.id} value={r.id}>{r.name}</option>
+                <option key={r.id} value={r.id}>{formatRoomDisplayWithBuildingsArray(r, buildings)}</option>
               ))}
             </select>
           </div>
@@ -190,7 +191,7 @@ export function BookingsPage() {
               >
                 <option value="">Select a room</option>
                 {rooms?.map((r) => (
-                  <option key={r.id} value={r.id}>{r.name} (#{r.id})</option>
+                  <option key={r.id} value={r.id}>{formatRoomDisplayWithBuildingsArray(r, buildings)}</option>
                 ))}
               </select>
             </div>
@@ -234,18 +235,17 @@ export function BookingsPage() {
             const approvedByLabel =
               b.approvedBy === null
                 ? "-"
-                : (adminUserNameById[b.approvedBy] ?? `User ${b.approvedBy}`);
+                : (adminUserNameById[b.approvedBy] ?? "Unknown User");
             const requestLabel = b.requestId === null ? "-" : String(b.requestId);
 
             return (
               <div className="data-item" key={b.id}>
                 <div className="data-item-content">
                   <div className="data-item-title">
-                    Booking #{b.id}
-                    {b.requestId ? ` · Request #${b.requestId}` : ""}
+                    {roomNameById.get(b.roomId) ?? "Unknown Room"}
                   </div>
                   <div className="data-item-subtitle">
-                    {roomNameById.get(b.roomId) ?? `Room #${b.roomId}`} · {formatDateTimeDDMMYYYY(b.startAt)} – {formatDateTimeDDMMYYYY(b.endAt)}
+                    {formatDateTimeDDMMYYYY(b.startAt)} – {formatDateTimeDDMMYYYY(b.endAt)}
                   </div>
                   {isAdmin && (
                     <div className="empty-text" style={{ marginTop: "var(--space-1)" }}>

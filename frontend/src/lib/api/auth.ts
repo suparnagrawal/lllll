@@ -7,10 +7,10 @@ import {
 } from "./client";
 import type { AuthUser, SetupRole, LoginResponse, ApiErrorPayload } from "./types";
 
-export async function login(email: string, password: string): Promise<AuthUser> {
+export async function login(email: string, password: string, authProvider: string = "email"): Promise<AuthUser> {
   const response = await request<LoginResponse>("/auth/login", {
     method: "POST",
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, authProvider }),
   });
 
   setAuthSession(response.accessToken, response.refreshToken, response.user);

@@ -382,7 +382,7 @@ export function BookingRequestWizard({
                               className="cursor-pointer"
                             />
                             <div>
-                              <p className="font-medium text-sm">{room.name}</p>
+                              <p className="font-medium text-sm">{building.buildingName} - {room.name}</p>
                               {!room.isAvailable && (
                                 <p className="text-xs text-red-500">
                                   Not available

@@ -21,6 +21,7 @@ export default function AuthCallbackPage() {
     const accessToken = searchParams.get("accessToken");
     const refreshToken = searchParams.get("refreshToken");
     const error = searchParams.get("error");
+    const authProvider = searchParams.get("authProvider");
 
     if (error === "oauth_failed") {
       setState("error");
@@ -58,7 +59,12 @@ export default function AuthCallbackPage() {
         // Small delay to show success state before redirect
         setTimeout(() => {
           if (!isCancelled) {
-            navigate("/");
+            // If OAuth and first login, redirect to setup page
+            if (authProvider === "google") {
+              navigate(`/auth/setup?authProvider=${authProvider}`);
+            } else {
+              navigate("/");
+            }
           }
         }, 500);
       } catch (err) {

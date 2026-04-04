@@ -28,7 +28,7 @@ type AuthContextValue = {
   user: AuthUser | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string, authProvider?: string) => Promise<void>;
   loginWithGoogle: () => Promise<void>;
   loginWithToken: (token: string) => Promise<void>;
   completeSetup: (setupToken: string, role: SetupRole, department?: string) => Promise<void>;
@@ -175,8 +175,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const login = useCallback(async (email: string, password: string) => {
-    const loggedInUser = await apiLogin(email, password);
+  const login = useCallback(async (email: string, password: string, authProvider: string = "email") => {
+    const loggedInUser = await apiLogin(email, password, authProvider);
     setUser(loggedInUser);
     lastActivityRef.current = Date.now();
     localStorage.setItem(LAST_ACTIVITY_KEY, String(lastActivityRef.current));
