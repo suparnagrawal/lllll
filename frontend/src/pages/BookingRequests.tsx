@@ -10,14 +10,14 @@ import {
   getBookingRequests,
   getRooms,
   rejectBookingRequest,
-} from "../api/api";
+} from "../lib/api";
 import type {
   BookingEventType,
   BookingRequest,
   BookingStatus,
   FacultyUser,
   Room,
-} from "../api/api";
+} from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { DateInput } from "../components/DateInput";
 import { formatDateTimeDDMMYYYY } from "../utils/datetime";

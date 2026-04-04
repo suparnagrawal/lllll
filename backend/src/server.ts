@@ -6,6 +6,9 @@ import session from "express-session";
 import passport from "./auth/passport";
 import { env } from "./config/env";
 import { pool } from "./db";
+import { generalLimiter, authLimiter, uploadLimiter } from "./api/middleware/rateLimit.middleware";
+import { requestLogger } from "./api/middleware/requestLogger.middleware";
+import { performanceMiddleware } from "./api/middleware/performance.middleware";
 import buildingsRouter from "./routes/buildings";
 import roomsRouter from "./routes/rooms";
 import bookingsRouter from "./routes/bookings";
@@ -15,6 +18,9 @@ import authRoutes from "./routes/auth";
 import usersRoutes from "./routes/users";
 import notificationsRoutes from "./routes/notifications";
 import timetableRoutes from "./modules/timetable/routes";
+import dashboardRoutes from "./routes/dashboard";
+import healthRouter from "./api/routes/health.routes";
+import logger from "./shared/utils/logger";
 
 
 const app = express();
@@ -47,6 +53,17 @@ app.use(passport.session());
 
 app.use(express.json());
 
+// Performance middleware - track response times
+app.use(performanceMiddleware);
+
+// Request logger middleware
+app.use(requestLogger);
+
+// Apply rate limiters
+app.use("/api", generalLimiter);
+app.use("/api/auth", authLimiter);
+app.use("/api/timetable/imports", uploadLimiter);
+
 // routes
 app.use("/buildings", buildingsRouter);
 app.use("/rooms", roomsRouter);
@@ -61,7 +78,10 @@ app.use("/notifications", notificationsRoutes);
 app.use("/api/notifications", notificationsRoutes);
 app.use("/timetable", timetableRoutes);
 app.use("/api/timetable", timetableRoutes);
+app.use("/dashboard", dashboardRoutes);
+app.use("/api/dashboard", dashboardRoutes);
+app.use("/health", healthRouter);
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  logger.info(`Server running on port ${PORT}`);
 });

@@ -16,8 +16,8 @@ import {
   startGoogleOAuthLogin,
   setOnUnauthorized,
   type SetupRole,
-} from "../api/api";
-import type { AuthUser } from "../api/api";
+} from "../lib/api";
+import type { AuthUser } from "../lib/api";
 
 type AuthContextValue = {
   user: AuthUser | null;
@@ -81,6 +81,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth(): AuthContextValue {
   const ctx = useContext(AuthContext);
   if (!ctx) {

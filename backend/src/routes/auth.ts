@@ -7,6 +7,7 @@ import { env, isGoogleOAuthConfigured } from "../config/env";
 import { db } from "../db";
 import { users } from "../db/schema";
 import { authMiddleware } from "../middleware/auth";
+import logger from "../shared/utils/logger";
 
 const router = Router();
 
@@ -53,7 +54,7 @@ async function cleanupOAuthSession(req: Request, res: Response): Promise<void> {
 
       req.session.destroy((destroyError) => {
         if (destroyError) {
-          console.error(destroyError);
+          logger.error(destroyError);
         }
 
         resolve();
@@ -63,7 +64,7 @@ async function cleanupOAuthSession(req: Request, res: Response): Promise<void> {
     if (typeof req.logout === "function") {
       req.logout((logoutError) => {
         if (logoutError) {
-          console.error(logoutError);
+          logger.error(logoutError);
         }
 
         destroySession();
@@ -140,7 +141,7 @@ router.post("/login", async (req, res) => {
     });
 
   } catch (error) {
-    console.error(error);
+    logger.error(error);
     return res.status(500).json({ error: "Login failed" });
   }
 });
@@ -176,7 +177,7 @@ router.get("/me", authMiddleware, async (req, res) => {
       role: user.role,
     });
   } catch (error) {
-    console.error(error);
+    logger.error(error);
     return res.status(500).json({ error: "Failed to fetch current user" });
   }
 });
@@ -199,7 +200,7 @@ if (isGoogleOAuthConfigured) {
 
         if (error || !authenticatedUser) {
           if (error) {
-            console.error(error);
+            logger.error(error);
           }
 
           await cleanupOAuthSession(req, res);
@@ -254,7 +255,7 @@ if (isGoogleOAuthConfigured) {
           await cleanupOAuthSession(req, res);
           return res.redirect(redirectUrl);
         } catch (callbackError) {
-          console.error(callbackError);
+          logger.error(callbackError);
           await cleanupOAuthSession(req, res);
           return res.redirect(failedRedirect);
         }
@@ -364,7 +365,7 @@ router.post("/complete-setup", async (req, res) => {
       },
     });
   } catch (error) {
-    console.error(error);
+    logger.error(error);
     return res.status(500).json({ error: "Complete setup failed" });
   }
 });

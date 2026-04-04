@@ -1,23 +1,10 @@
 import { Router, Request, Response } from 'express';
-import { and, asc, eq, gt, inArray, lt, sql } from 'drizzle-orm';
-import { db } from '../db';
-import { buildings, rooms, bookings } from '../db/schema';
 import { authMiddleware } from "../middleware/auth";
 import { getAssignedBuildingIdsForStaff } from "../services/staffBuildingScope";
+import { getAvailabilityWithCache, BuildingWithRooms } from '../data/queries/availability.queries';
+import logger from "../shared/utils/logger";
 
 const router = Router();
-
-type AvailabilityRoom = {
-  id: number;
-  name: string;
-  isAvailable: boolean;
-};
-
-type AvailabilityBuilding = {
-  buildingId: number;
-  buildingName: string;
-  rooms: AvailabilityRoom[];
-};
 
 function parseDate(value: unknown): Date | null {
   if (typeof value !== 'string' || value.trim() === '') return null;
@@ -28,7 +15,6 @@ function parseDate(value: unknown): Date | null {
 function parseOptionalInt(value: unknown): number | null {
   if (value === undefined) return null;
   if (typeof value !== 'string' || value.trim() === '') return null;
-
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
@@ -64,65 +50,16 @@ router.get('/', authMiddleware, async (req: Request, res: Response): Promise<voi
       return;
     }
 
-    const conditions = [];
+    const result = await getAvailabilityWithCache({
+      startAt,
+      endAt,
+      buildingId: buildingId || undefined,
+      buildingIds: isStaff ? assignedBuildingIds : [],
+    });
 
-    if (buildingId !== null) {
-      conditions.push(eq(rooms.buildingId, buildingId));
-    }
-
-    if (isStaff) {
-      conditions.push(inArray(rooms.buildingId, assignedBuildingIds));
-    }
-
-    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
-
-    const rows = await db
-      .select({
-        buildingId: buildings.id,
-        buildingName: buildings.name,
-        roomId: rooms.id,
-        roomName: rooms.name,
-        bookingCount: sql<number>`count(${bookings.id})`,
-      })
-      .from(rooms)
-      .innerJoin(buildings, eq(rooms.buildingId, buildings.id))
-      .leftJoin(
-        bookings,
-        and(
-          eq(bookings.roomId, rooms.id),
-          lt(bookings.startAt, endAt),
-          gt(bookings.endAt, startAt)
-        )
-      )
-      .where(whereClause)
-      .groupBy(buildings.id, buildings.name, rooms.id, rooms.name)
-      .orderBy(asc(buildings.name), asc(rooms.name));
-
-    const grouped = new Map<number, AvailabilityBuilding>();
-
-    for (const row of rows) {
-      const room: AvailabilityRoom = {
-        id: row.roomId,
-        name: row.roomName,
-        isAvailable: Number(row.bookingCount) === 0,
-      };
-
-      const existing = grouped.get(row.buildingId);
-
-      if (existing) {
-        existing.rooms.push(room);
-      } else {
-        grouped.set(row.buildingId, {
-          buildingId: row.buildingId,
-          buildingName: row.buildingName,
-          rooms: [room],
-        });
-      }
-    }
-
-    res.json(Array.from(grouped.values()));
+    res.json(result);
   } catch (error) {
-    console.error('GET /availability error:', error);
+    logger.error('GET /availability error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });

@@ -8,13 +8,13 @@ import {
   updateManagedUserActiveStatus,
   updateUserBuildingAssignments,
   updateManagedUserRole,
-} from "../api/api";
+} from "../lib/api";
 import type {
   AssignableUserRole,
   Building,
   ManagedUser,
   UserRole,
-} from "../api/api";
+} from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { formatDateDDMMYYYY } from "../utils/datetime";
 

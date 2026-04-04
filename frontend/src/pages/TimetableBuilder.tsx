@@ -30,7 +30,7 @@ import {
   transferTimetableImportRow as apiTransferTimetableImportRow,
   updateBooking as apiUpdateBooking,
   updateTimeBand as apiUpdateTimeBand,
-} from "../api/api";
+} from "../lib/api";
 import type {
   Building,
   DayOfWeek,
@@ -47,7 +47,7 @@ import type {
   TimetableImportPreviewRow,
   TimetableImportPreviewReport,
   TimetableImportSavedDecision,
-} from "../api/api";
+} from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { formatDateDDMMYYYY } from "../utils/datetime";
 import { DateInput } from "../components/DateInput";
@@ -976,7 +976,7 @@ export function TimetableBuilderPage() {
       typeof window === "undefined"
         ? true
         : window.confirm(
-            `Prune imported bookings linked to slot system \"${selectedLabel}\"? This keeps manual bookings and cannot be undone.`,
+            `Prune imported bookings linked to slot system "${selectedLabel}"? This keeps manual bookings and cannot be undone.`,
           );
 
     if (!approved) {

@@ -28,6 +28,7 @@ import {
   saveTimetableImportDecisions,
   transferTimetableImportRow,
 } from "./importService";
+import logger from "../../shared/utils/logger";
 
 function parsePositiveInteger(value: unknown): number | null {
   const parsed = Number(value);
@@ -48,7 +49,7 @@ function sendError(res: Response, error: unknown, fallbackMessage: string) {
     return res.status(status).json({ error: error.message });
   }
 
-  console.error(error);
+  logger.error(error);
   return res.status(500).json({ error: fallbackMessage });
 }
 

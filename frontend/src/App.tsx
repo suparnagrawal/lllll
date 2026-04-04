@@ -6,7 +6,7 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
   type AppNotification,
-} from "./api/api";
+} from "./lib/api";
 import { RoomsPage } from "./pages/Rooms";
 import { BookingRequestsPage } from "./pages/BookingRequests";
 import { BookingsPage } from "./pages/Bookings";

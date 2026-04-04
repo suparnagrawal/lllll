@@ -12,6 +12,7 @@ import {
   sendRoleAwareNotifications,
   type NotificationDraft,
 } from "../services/notificationService";
+import logger from "../shared/utils/logger";
 
 const router = Router();
 
@@ -123,7 +124,7 @@ async function dispatchNotificationsSafely(drafts: NotificationDraft[]) {
   try {
     await sendRoleAwareNotifications(drafts);
   } catch (error) {
-    console.error("Failed to dispatch booking request notifications", error);
+    logger.error("Failed to dispatch booking request notifications", error);
   }
 }
 
@@ -177,7 +178,7 @@ router.get("/:id", authMiddleware, async (req, res) => {
 
     return res.json(bookingRequest);
   } catch (error) {
-    console.error(error);
+    logger.error(error);
     return res.status(500).json({ error: "Failed to fetch request" });
   }
 });
@@ -257,7 +258,7 @@ router.get("/", authMiddleware, async (req, res) => {
 
     return res.json(requests);
   } catch (error) {
-    console.error(error);
+    logger.error(error);
     return res.status(500).json({ error: "Failed to fetch requests" });
   }
 });
@@ -347,7 +348,7 @@ router.post("/:id/reject", authMiddleware, requireRole(["FACULTY", "STAFF"]), as
     return res.json(updated[0]);
 
   } catch (error) {
-    console.error(error);
+    logger.error(error);
     return res.status(500).json({ error: "Reject failed" });
   }
 });
@@ -502,7 +503,7 @@ router.post("/:id/approve", authMiddleware, requireRole("STAFF"), async (req, re
       });
     }
 
-    console.error(error);
+    logger.error(error);
     return res.status(500).json({ error: "Approval failed" });
   }
 });
@@ -574,7 +575,7 @@ router.post("/:id/forward", authMiddleware, requireRole("FACULTY"), async (req, 
     return res.json(updated[0]);
 
   } catch (error) {
-    console.error(error);
+    logger.error(error);
     return res.status(500).json({ error: "Forward failed" });
   }
 });
@@ -648,7 +649,7 @@ router.post("/:id/cancel",authMiddleware, async (req, res) => {
 
     return res.json(updated[0]);
   } catch (error) {
-    console.error("Cancel booking request error:", error);
+    logger.error("Cancel booking request error:", error);
     return res.status(500).json({ error: "Failed to cancel request" });
   }
 });
@@ -876,7 +877,7 @@ router.post("/", authMiddleware, requireRole(["STUDENT", "FACULTY"]), async (req
       return res.status(404).json({ error: "Room not found" });
     }
 
-    console.error(error);
+    logger.error(error);
     return res.status(500).json({ error: "Insert failed" });
   }
 });

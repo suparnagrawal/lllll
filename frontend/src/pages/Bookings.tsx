@@ -7,8 +7,8 @@ import {
   getBuildings,
   getManagedUsers,
   getRooms,
-} from "../api/api";
-import type { Booking, Building, Room } from "../api/api";
+} from "../lib/api";
+import type { Booking, Building, Room } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { DateInput } from "../components/DateInput";
 import { formatDateTimeDDMMYYYY } from "../utils/datetime";

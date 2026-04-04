@@ -15,6 +15,7 @@ import { authMiddleware } from "../middleware/auth";
 import { requireRole } from "../middleware/rbac";
 import { db } from "../db";
 import { buildings, staffBuildingAssignments, users } from "../db/schema";
+import logger from "../shared/utils/logger";
 
 type UserRole = "ADMIN" | "STAFF" | "FACULTY" | "STUDENT" | "PENDING_ROLE";
 
@@ -162,7 +163,7 @@ router.get("/faculty", authMiddleware, async (req, res) => {
 
     return res.json(rows);
   } catch (error) {
-    console.error(error);
+    logger.error(error);
     return res.status(500).json({ error: "Failed to fetch faculty users" });
   }
 });
@@ -314,7 +315,7 @@ router.get("/", async (req, res) => {
       },
     });
   } catch (error) {
-    console.error(error);
+    logger.error(error);
     return res.status(500).json({ error: "Failed to fetch users" });
   }
 });
@@ -459,7 +460,7 @@ router.post("/", async (req, res) => {
 
     return res.status(201).json(inserted[0]);
   } catch (error) {
-    console.error(error);
+    logger.error(error);
     return res.status(500).json({ error: "Failed to create user" });
   }
 });
@@ -542,7 +543,7 @@ router.patch("/:id/role", async (req, res) => {
 
     return res.json(updated);
   } catch (error) {
-    console.error(error);
+    logger.error(error);
     return res.status(500).json({ error: "Failed to update role" });
   }
 });
@@ -598,7 +599,7 @@ router.get("/:id/building-assignments", async (req, res) => {
       });
     }
 
-    console.error(error);
+    logger.error(error);
     return res.status(500).json({ error: "Failed to fetch building assignments" });
   }
 });
@@ -692,7 +693,7 @@ router.put("/:id/building-assignments", async (req, res) => {
       });
     }
 
-    console.error(error);
+    logger.error(error);
     return res.status(500).json({ error: "Failed to update building assignments" });
   }
 });
@@ -751,7 +752,7 @@ router.patch("/:id/active", async (req, res) => {
 
     return res.json(updated[0]);
   } catch (error) {
-    console.error(error);
+    logger.error(error);
     return res.status(500).json({ error: "Failed to update active status" });
   }
 });
@@ -813,7 +814,7 @@ router.delete("/:id", async (req, res) => {
 
     return res.json({ ok: true });
   } catch (error) {
-    console.error(error);
+    logger.error(error);
     return res.status(500).json({ error: "Failed to delete user" });
   }
 });

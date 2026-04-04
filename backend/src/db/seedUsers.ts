@@ -3,6 +3,7 @@ import "../config/env";
 import { db } from "./index";
 import { users } from "./schema";
 import bcrypt from "bcrypt";
+import logger from "../shared/utils/logger";
 
 async function seed() {
   try {
@@ -40,15 +41,15 @@ async function seed() {
       await db.insert(users).values(user);
     }
 
-    console.log("✅ Users seeded successfully");
+    logger.info("✅ Users seeded successfully");
     process.exit(0);
   } catch (error: any) {
     if (error?.cause?.code === "23505") {
-      console.log("⚠️ Users already exist (unique constraint hit)");
+      logger.info("⚠️ Users already exist (unique constraint hit)");
       process.exit(0);
     }
 
-    console.error("❌ Seeding failed:", error);
+    logger.error("❌ Seeding failed:", error);
     process.exit(1);
   }
 }

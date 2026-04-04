@@ -5,6 +5,7 @@ import type { UserRole } from "../auth/jwt";
 import { env } from "../config/env";
 import { db } from "../db";
 import { notifications, staffBuildingAssignments, users } from "../db/schema";
+import logger from "../shared/utils/logger";
 
 type DbExecutor = typeof db | any;
 
@@ -133,7 +134,7 @@ async function sendEmailNotification(
 
     return true;
   } catch (error) {
-    console.error("Failed to send notification email", {
+    logger.error("Failed to send notification email", {
       recipientId: recipient.id,
       role: recipient.role,
       error,
