@@ -7,6 +7,7 @@ import passport from "./auth/passport";
 import { env } from "./config/env";
 import { pool } from "./db";
 import { generalLimiter, authLimiter, uploadLimiter } from "./api/middleware/rateLimit.middleware";
+import { markInternalOperation } from "./api/middleware/internalOperation.middleware";
 import { requestLogger } from "./api/middleware/requestLogger.middleware";
 import { performanceMiddleware } from "./api/middleware/performance.middleware";
 import buildingsRouter from "./routes/buildings";
@@ -59,6 +60,9 @@ app.use(performanceMiddleware);
 
 // Request logger middleware
 app.use(requestLogger);
+
+// Mark internal operations before rate limiting
+app.use(markInternalOperation);
 
 // Apply rate limiters
 app.use("/api", generalLimiter);

@@ -13,6 +13,9 @@ export const generalLimiter = rateLimit({
   max: 100,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => {
+    return (req as any).isInternalOperation === true;
+  },
 });
 
 export const authLimiter = rateLimit({
