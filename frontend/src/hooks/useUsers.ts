@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as usersApi from '../lib/api/users';
+import { queryConfigs } from '../lib/queryConfig';
 import type { UserRole, AssignableUserRole } from '../lib/api/types';
 
 type ManagedUsersFilters = {
@@ -15,6 +16,7 @@ export function useFacultyUsers() {
   return useQuery({
     queryKey: ['faculty-users'],
     queryFn: () => usersApi.getFacultyUsers(),
+    ...queryConfigs.users,
   });
 }
 
@@ -22,6 +24,7 @@ export function useManagedUsers(filters?: ManagedUsersFilters) {
   return useQuery({
     queryKey: ['managed-users', filters],
     queryFn: () => usersApi.getManagedUsers(filters),
+    ...queryConfigs.users,
   });
 }
 
@@ -78,6 +81,7 @@ export function useUserBuildingAssignments(userId: number) {
     queryKey: ['user-building-assignments', userId],
     queryFn: () => usersApi.getUserBuildingAssignments(userId),
     enabled: !!userId,
+    ...queryConfigs.staffAssignments,
   });
 }
 

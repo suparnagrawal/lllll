@@ -1,10 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as roomsApi from '../lib/api/rooms';
+import { queryConfigs } from '../lib/queryConfig';
 
 export function useRooms(buildingId?: number) {
   return useQuery({
     queryKey: ['rooms', buildingId],
     queryFn: () => roomsApi.getRooms(buildingId),
+    ...queryConfigs.rooms,
   });
 }
 
@@ -51,5 +53,6 @@ export function useRoomAvailability(roomId: number, startAt?: string, endAt?: st
       return roomsApi.getRoomAvailability(roomId, startAt, endAt);
     },
     enabled: !!roomId && !!startAt && !!endAt,
+    ...queryConfigs.roomAvailability,
   });
 }

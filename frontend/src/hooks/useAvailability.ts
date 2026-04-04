@@ -4,6 +4,7 @@ import {
   getBuildings,
   getRooms,
 } from "../lib/api";
+import { queryConfigs } from "../lib/queryConfig";
 
 export function useAvailability(
   startAt: string,
@@ -15,7 +16,7 @@ export function useAvailability(
     queryKey: ["availability", startAt, endAt, buildingId],
     queryFn: () => getAvailability(startAt, endAt, buildingId),
     enabled: enabled && !!startAt && !!endAt,
-    staleTime: 5 * 60 * 1000,
+    ...queryConfigs.availability,
   });
 }
 
@@ -23,7 +24,7 @@ export function useBuildings() {
   return useQuery({
     queryKey: ["buildings"],
     queryFn: () => getBuildings(),
-    staleTime: 5 * 60 * 1000,
+    ...queryConfigs.buildings,
   });
 }
 
@@ -32,6 +33,6 @@ export function useRooms(buildingId?: number, enabled = true) {
     queryKey: ["rooms", buildingId],
     queryFn: () => getRooms(buildingId),
     enabled: enabled && buildingId !== undefined,
-    staleTime: 5 * 60 * 1000,
+    ...queryConfigs.rooms,
   });
 }

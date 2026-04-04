@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as profileApi from '../lib/api/profile';
+import { queryConfigs } from '../lib/queryConfig';
 import type { UpdateProfileInput } from '../lib/api/profile';
 
 export function useUserProfile(userId?: number) {
@@ -7,6 +8,7 @@ export function useUserProfile(userId?: number) {
     queryKey: ['user-profile', userId],
     queryFn: () => profileApi.getCurrentUserProfile(),
     enabled: !!userId,
+    ...queryConfigs.profile,
   });
 }
 
@@ -38,6 +40,7 @@ export function useUserActivityLog(userId?: number, limit: number = 10) {
     queryKey: ['user-activity-log', userId, limit],
     queryFn: () => profileApi.getUserActivityLog(userId || 0, limit),
     enabled: !!userId,
+    ...queryConfigs.profile,
   });
 }
 
@@ -46,6 +49,7 @@ export function useUserSessions(userId?: number) {
     queryKey: ['user-sessions', userId],
     queryFn: () => profileApi.getUserSessions(userId || 0),
     enabled: !!userId,
+    ...queryConfigs.profile,
   });
 }
 
@@ -65,5 +69,6 @@ export function useExportUserData(userId?: number) {
     queryKey: ['export-user-data', userId],
     queryFn: () => profileApi.exportUserData(userId || 0),
     enabled: false,
+    ...queryConfigs.profile,
   });
 }

@@ -1,10 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as slotsApi from '../lib/api/slots';
+import { queryConfigs } from '../lib/queryConfig';
 
 export function useSlotSystems() {
   return useQuery({
     queryKey: ['slot-systems'],
     queryFn: () => slotsApi.getSlotSystems(),
+    ...queryConfigs.slotSystems,
   });
 }
 

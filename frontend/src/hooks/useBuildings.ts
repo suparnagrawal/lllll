@@ -1,10 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as buildingsApi from '../lib/api/buildings';
+import { queryConfigs } from '../lib/queryConfig';
 
 export function useBuildings() {
   return useQuery({
     queryKey: ['buildings'],
     queryFn: () => buildingsApi.getBuildings(),
+    ...queryConfigs.buildings,
   });
 }
 

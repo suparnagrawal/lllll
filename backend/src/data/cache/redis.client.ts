@@ -18,6 +18,20 @@ export const cacheKeys = {
   user: (id: number) => `user:${id}`,
 };
 
-export const SHORT_TTL = 300; // 5 minutes
-export const MEDIUM_TTL = 1800; // 30 minutes
-export const LONG_TTL = 3600; // 1 hour
+// Cache TTL constants optimized by data volatility
+// Override defaults using environment variables: CACHE_VERY_SHORT_TTL, CACHE_SHORT_TTL, etc.
+
+// Highly volatile data (bookings, real-time availability) - should rarely cache
+export const VERY_SHORT_TTL = parseInt(process.env.CACHE_VERY_SHORT_TTL || '120', 10); // 2 minutes
+
+// Volatile data (room/building availability) - changes frequently with bookings
+export const SHORT_TTL = parseInt(process.env.CACHE_SHORT_TTL || '300', 10); // 5 minutes
+
+// Moderately volatile data (user profiles, building/room metadata) - changes occasionally
+export const MEDIUM_TTL = parseInt(process.env.CACHE_MEDIUM_TTL || '1800', 10); // 30 minutes
+
+// Relatively static data (event types, configuration) - rarely changes
+export const LONG_TTL = parseInt(process.env.CACHE_LONG_TTL || '3600', 10); // 1 hour
+
+// Very static data (reference lists, enumerations) - can cache longer
+export const VERY_LONG_TTL = parseInt(process.env.CACHE_VERY_LONG_TTL || '7200', 10); // 2 hours

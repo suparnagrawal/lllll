@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as bookingsApi from '../lib/api/bookings';
+import { queryConfigs } from '../lib/queryConfig';
 
 type BookingFilters = {
   roomId?: number;
@@ -12,8 +13,7 @@ export function useBookings(filters?: BookingFilters) {
   return useQuery({
     queryKey: ['bookings', filters],
     queryFn: () => bookingsApi.getBookings(filters),
-    staleTime: 1000 * 60 * 5, // 5 minutes
-    gcTime: 1000 * 60 * 10,  // 10 minutes (formerly cacheTime)
+    ...queryConfigs.bookings,
   });
 }
 

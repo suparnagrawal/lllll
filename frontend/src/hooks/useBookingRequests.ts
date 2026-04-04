@@ -1,11 +1,13 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as bookingRequestsApi from '../lib/api/booking-requests';
+import { queryConfigs } from '../lib/queryConfig';
 import type { BookingStatus } from '../lib/api/types';
 
 export function useBookingRequests(status?: BookingStatus) {
   return useQuery({
     queryKey: ['booking-requests', status],
     queryFn: () => bookingRequestsApi.getBookingRequests(status),
+    ...queryConfigs.bookingRequests,
   });
 }
 
