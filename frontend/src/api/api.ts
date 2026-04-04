@@ -411,10 +411,6 @@ type ApiErrorPayload = {
   message?: string;
 };
 
-type BuildingsListResponse = {
-  data: Building[];
-};
-
 type TimetableImportBatchListResponse = {
   data: TimetableImportBatchSummary[];
 };
@@ -653,24 +649,21 @@ export async function completeOAuthSetup(input: {
 /* ===== Buildings ===== */
 
 export async function getBuildings(): Promise<Building[]> {
-  const response = await request<BuildingsListResponse>("/buildings");
-  return response.data;
+  return request<Building[]>("/buildings");
 }
 
 export async function createBuilding(name: string): Promise<Building> {
-  const response = await request<{ data: Building }>("/buildings", {
+  return request<Building>("/buildings", {
     method: "POST",
     body: JSON.stringify({ name }),
   });
-  return response.data;
 }
 
 export async function updateBuilding(id: number, name: string): Promise<Building> {
-  const response = await request<{ data: Building }>(`/buildings/${id}`, {
+  return request<Building>(`/buildings/${id}`, {
     method: "PATCH",
     body: JSON.stringify({ name }),
   });
-  return response.data;
 }
 
 export async function deleteBuilding(id: number): Promise<void> {
@@ -695,11 +688,10 @@ export async function createRoom(name: string, buildingId: number): Promise<Room
 }
 
 export async function updateRoom(id: number, name: string): Promise<Room> {
-  const response = await request<{ data: Room }>(`/rooms/${id}`, {
+  return request<Room>(`/rooms/${id}`, {
     method: "PATCH",
     body: JSON.stringify({ name }),
   });
-  return response.data;
 }
 
 export async function deleteRoom(id: number): Promise<void> {

@@ -415,10 +415,6 @@ export type ApiErrorPayload = {
   message?: string;
 };
 
-export type BuildingsListResponse = {
-  data: Building[];
-};
-
 export type TimetableImportBatchListResponse = {
   data: TimetableImportBatchSummary[];
 };

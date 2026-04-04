@@ -15,11 +15,10 @@ export async function createRoom(name: string, buildingId: number): Promise<Room
 }
 
 export async function updateRoom(id: number, name: string): Promise<Room> {
-  const response = await request<{ data: Room }>(`/rooms/${id}`, {
+  return request<Room>(`/rooms/${id}`, {
     method: "PATCH",
     body: JSON.stringify({ name }),
   });
-  return response.data;
 }
 
 export async function deleteRoom(id: number): Promise<void> {

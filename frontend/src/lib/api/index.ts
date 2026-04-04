@@ -53,7 +53,6 @@ export type {
   LoginResponse,
   RefreshTokenResponse,
   ApiErrorPayload,
-  BuildingsListResponse,
   TimetableImportBatchListResponse,
   DashboardStats,
   UpcomingBooking,
