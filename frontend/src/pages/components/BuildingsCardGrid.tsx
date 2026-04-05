@@ -12,6 +12,7 @@ interface BuildingsCardGridProps {
   onAddClick: () => void;
   userRole?: UserRole;
   buildings?: Building[];
+  staffBuildingIds?: number[];
 }
 
 export function BuildingsCardGrid({
@@ -20,6 +21,7 @@ export function BuildingsCardGrid({
   onAddClick,
   userRole,
   buildings: propBuildings,
+  staffBuildingIds = [],
 }: BuildingsCardGridProps) {
   const [search, setSearch] = useState("");
   
@@ -29,19 +31,29 @@ export function BuildingsCardGrid({
   
   const { data: allRooms = [] } = useRooms();
 
-  const canAddBuilding = userRole === "ADMIN";
+  const isAdmin = userRole === "ADMIN";
+  const isStaff = userRole === "STAFF";
+  const canAddBuilding = isAdmin;
 
   const filteredBuildings = useMemo(() => {
     return buildings.filter(
       (b) =>
         b.name.toLowerCase().includes(search.toLowerCase()) ||
-        b.id.toString().includes(search)
+        b.id.toString().includes(search) ||
+        (b.location && b.location.toLowerCase().includes(search.toLowerCase()))
     );
   }, [buildings, search]);
 
   const getRoomCount = (buildingId: number) => {
     const rooms = Array.isArray(allRooms) ? allRooms : [];
     return rooms.filter((r) => r.buildingId === buildingId).length;
+  };
+
+  // Determine if user can edit a specific building
+  const canEditBuilding = (buildingId: number) => {
+    if (isAdmin) return true;
+    if (isStaff && staffBuildingIds.includes(buildingId)) return true;
+    return false;
   };
 
   if (error) {
@@ -83,6 +95,8 @@ export function BuildingsCardGrid({
               onClick={() => onBuildingClick(building)}
               onEdit={() => onBuildingEdit(building)}
               userRole={userRole}
+              canEdit={canEditBuilding(building.id)}
+              isAssigned={isStaff && staffBuildingIds.includes(building.id)}
             />
           ))}
         </div>

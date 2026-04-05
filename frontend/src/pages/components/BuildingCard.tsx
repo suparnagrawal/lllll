@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Trash2, Edit2, MoreVertical } from "lucide-react";
+import { Trash2, Edit2, MoreVertical, MapPin, Check } from "lucide-react";
 import type { Building, UserRole } from "../../lib/api/types";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
@@ -17,6 +17,8 @@ interface BuildingCardProps {
   onClick: () => void;
   onEdit: () => void;
   userRole?: UserRole;
+  canEdit?: boolean;
+  isAssigned?: boolean;
 }
 
 export function BuildingCard({
@@ -24,11 +26,11 @@ export function BuildingCard({
   roomCount,
   onClick,
   onEdit,
-  userRole,
+  canEdit = false,
+  isAssigned = false,
 }: BuildingCardProps) {
   const [isDeleting, setIsDeleting] = useState(false);
   const deleteBuilding = useDeleteBuilding();
-  const isAdmin = userRole === "ADMIN";
 
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -56,8 +58,16 @@ export function BuildingCard({
       className="cursor-pointer hover:shadow-lg hover:border-blue-500 transition-all duration-200"
     >
       <CardHeader className="pb-3 flex flex-row items-start justify-between space-y-0">
-        <CardTitle className="text-lg flex-1">{building.name}</CardTitle>
-        {isAdmin && (
+        <div className="flex-1">
+          <CardTitle className="text-lg">{building.name}</CardTitle>
+          {isAssigned && (
+            <div className="flex items-center gap-1 mt-1 text-xs font-medium text-green-700 bg-green-50 px-2 py-1 rounded w-fit">
+              <Check className="h-3 w-3" />
+              Assigned to you
+            </div>
+          )}
+        </div>
+        {canEdit && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
               <Button variant="ghost" size="sm" className="h-8 w-8 p-0 flex-shrink-0">
@@ -81,7 +91,13 @@ export function BuildingCard({
           </DropdownMenu>
         )}
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-2">
+        {building.location && (
+          <div className="flex items-start gap-2 text-sm text-gray-600">
+            <MapPin className="h-4 w-4 mt-0.5 flex-shrink-0" />
+            <span className="line-clamp-2">{building.location}</span>
+          </div>
+        )}
         <div className="text-sm text-gray-600">
           <p className="font-semibold text-gray-900">{roomCount}</p>
           <p className="text-gray-600">

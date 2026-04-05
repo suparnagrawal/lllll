@@ -12,6 +12,7 @@ import {
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { BuildingActions } from "./BuildingActions";
+import { Check } from "lucide-react";
 import type { Building, UserRole } from "../../lib/api/types";
 
 interface BuildingsTableProps {
@@ -81,19 +82,20 @@ export function BuildingsTable({
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Rooms</TableHead>
+              {isStaff && <TableHead>Status</TableHead>}
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={3} className="text-center py-8">
+                <TableCell colSpan={isStaff ? 4 : 3} className="text-center py-8">
                   Loading buildings...
                 </TableCell>
               </TableRow>
             ) : filteredBuildings.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={3} className="text-center py-8">
+                <TableCell colSpan={isStaff ? 4 : 3} className="text-center py-8">
                   {buildings.length === 0
                     ? "No buildings yet"
                     : "No buildings match your search"}
@@ -104,6 +106,18 @@ export function BuildingsTable({
                 <TableRow key={building.id}>
                   <TableCell className="font-medium">{building.name}</TableCell>
                   <TableCell>{getRoomCount(building.id)}</TableCell>
+                  {isStaff && (
+                    <TableCell>
+                      {staffBuildingIds.includes(building.id) ? (
+                        <div className="flex items-center gap-1 text-xs font-medium text-green-700 bg-green-50 px-2 py-1 rounded w-fit">
+                          <Check className="h-3 w-3" />
+                          Assigned
+                        </div>
+                      ) : (
+                        <span className="text-xs text-gray-500">Not assigned</span>
+                      )}
+                    </TableCell>
+                  )}
                   <TableCell>
                     <BuildingActions
                       building={building}
