@@ -558,3 +558,237 @@ export async function getRoomDayAvailabilityQuery(
     hourlySlots,
   };
 }
+
+/**
+ * Generate time slots for matrix view.
+ * Creates an array of time strings in HH:MM format.
+ */
+export function generateTimeSlots(
+  startTime: string,
+  endTime: string,
+  durationMinutes: number
+): string[] {
+  const slots: string[] = [];
+  const startParts = startTime.split(':');
+  const endParts = endTime.split(':');
+  
+  const startHour = parseInt(startParts[0] || '0', 10);
+  const startMin = parseInt(startParts[1] || '0', 10);
+  const endHour = parseInt(endParts[0] || '23', 10);
+  const endMin = parseInt(endParts[1] || '59', 10);
+
+  let current = new Date();
+  current.setHours(startHour, startMin, 0, 0);
+
+  const end = new Date();
+  end.setHours(endHour, endMin, 0, 0);
+
+  while (current < end) {
+    slots.push(
+      `${current.getHours().toString().padStart(2, '0')}:${current
+        .getMinutes()
+        .toString()
+        .padStart(2, '0')}`
+    );
+    current.setMinutes(current.getMinutes() + durationMinutes);
+  }
+
+  return slots;
+}
+
+/**
+ * Check if a booking overlaps with a time slot.
+ */
+function bookingOverlapsSlot(
+  booking: { startAt: Date; endAt: Date },
+  slotTime: string,
+  date: string,
+  durationMinutes: number
+): boolean {
+  const [slotHour, slotMin] = slotTime.split(':').map(Number);
+  const slotStart = new Date(`${date}T${slotTime}:00.000Z`);
+  const slotEnd = new Date(slotStart);
+  slotEnd.setMinutes(slotEnd.getMinutes() + durationMinutes);
+
+  return booking.startAt < slotEnd && booking.endAt > slotStart;
+}
+
+export interface MatrixSlot {
+  time: string;
+  status: 'booked' | 'available';
+  bookingCount: number;
+  bookings: BookingDetail[];
+}
+
+export interface MatrixRoom {
+  roomId: number;
+  roomName: string;
+  slots: MatrixSlot[];
+}
+
+export interface BuildingMatrix {
+  buildingId: number;
+  buildingName: string;
+  date: string;
+  timeRange: { start: string; end: string };
+  slotDuration: number;
+  matrix: MatrixRoom[];
+}
+
+/**
+ * Get building matrix availability for efficient matrix view rendering.
+ * Optimized for single building + single day queries.
+ * Returns pre-computed matrix structure (rooms × time slots).
+ * Includes RBAC filtering for booking details.
+ */
+export async function getBuildingMatrixAvailability(
+  buildingId: number,
+  startTime: string, // HH:MM format
+  endTime: string, // HH:MM format
+  date: string, // YYYY-MM-DD format
+  slotDuration: number, // minutes per slot
+  user: {
+    id: number;
+    role: 'ADMIN' | 'STAFF' | 'FACULTY' | 'STUDENT' | 'PENDING_ROLE';
+    staffBuildingIds?: number[];
+  }
+): Promise<BuildingMatrix> {
+  // Generate time slots
+  const slots = generateTimeSlots(startTime, endTime, slotDuration);
+
+  // Parse day boundaries
+  const dayStart = new Date(`${date}T00:00:00.000Z`);
+  const dayEnd = new Date(dayStart);
+  dayEnd.setDate(dayEnd.getDate() + 1);
+
+  // Construct time range boundaries for query
+  const queryStart = new Date(`${date}T${startTime}:00.000Z`);
+  const queryEnd = new Date(`${date}T${endTime}:00.000Z`);
+
+  // Get all rooms in building
+  const roomsData = await db
+    .select({
+      id: rooms.id,
+      name: rooms.name,
+      buildingId: buildings.id,
+      buildingName: buildings.name,
+    })
+    .from(rooms)
+    .innerJoin(buildings, eq(rooms.buildingId, buildings.id))
+    .where(eq(rooms.buildingId, buildingId))
+    .orderBy(asc(rooms.name));
+
+  if (roomsData.length === 0) {
+    throw new Error(`Building with id ${buildingId} not found`);
+  }
+
+  const buildingName = roomsData[0]!.buildingName;
+  const roomIds = roomsData.map((r) => r.id);
+
+  // Get all bookings for all rooms in the time range (single optimized query)
+  const bookingsData = await db
+    .select({
+      bookingId: bookings.id,
+      startAt: bookings.startAt,
+      endAt: bookings.endAt,
+      roomId: bookings.roomId,
+      requestId: bookings.requestId,
+      userId: bookingRequests.userId,
+      facultyId: bookingRequests.facultyId,
+      eventType: bookingRequests.eventType,
+      purpose: bookingRequests.purpose,
+      userName: users.name,
+      userEmail: users.email,
+    })
+    .from(bookings)
+    .where(
+      and(
+        inArray(bookings.roomId, roomIds),
+        lt(bookings.startAt, queryEnd),
+        gt(bookings.endAt, queryStart)
+      )
+    )
+    .leftJoin(bookingRequests, eq(bookings.requestId, bookingRequests.id))
+    .leftJoin(
+      users,
+      or(
+        eq(bookingRequests.userId, users.id),
+        eq(bookingRequests.facultyId, users.id)
+      )
+    )
+    .orderBy(asc(bookings.roomId), asc(bookings.startAt));
+
+  // Group bookings by room
+  const bookingsByRoom = new Map<number, typeof bookingsData>();
+  for (const booking of bookingsData) {
+    if (!bookingsByRoom.has(booking.roomId)) {
+      bookingsByRoom.set(booking.roomId, []);
+    }
+    bookingsByRoom.get(booking.roomId)!.push(booking);
+  }
+
+  // Build matrix structure
+  const matrix: MatrixRoom[] = roomsData.map((room) => {
+    const roomBookings = bookingsByRoom.get(room.id) || [];
+
+    const matrixSlots: MatrixSlot[] = slots.map((slotTime) => {
+      // Find bookings that overlap this slot
+      const slotBookings = roomBookings.filter((booking) =>
+        bookingOverlapsSlot(booking, slotTime, date, slotDuration)
+      );
+
+      // Process booking details with RBAC filtering
+      const processedBookings: BookingDetail[] = slotBookings.map((booking) => {
+        const bookingUserId = booking.userId || booking.facultyId;
+        const visibilityLevel = getBookingVisibilityLevel(
+          user.role,
+          user.id,
+          bookingUserId,
+          buildingId,
+          user.staffBuildingIds || []
+        );
+
+        const detail: BookingDetail = {
+          id: booking.bookingId,
+          startAt: booking.startAt.toISOString(),
+          endAt: booking.endAt.toISOString(),
+          hasAccess: visibilityLevel === 'full',
+          visibilityLevel,
+        };
+
+        if (visibilityLevel === 'full') {
+          if (booking.eventType) {
+            detail.activityName = booking.eventType;
+          }
+          detail.bookedBy = booking.userName || 'Unknown';
+          detail.contactInfo = booking.userEmail || '';
+          detail.purpose = booking.purpose || '';
+        }
+
+        return detail;
+      });
+
+      return {
+        time: slotTime,
+        status: processedBookings.length > 0 ? 'booked' : 'available',
+        bookingCount: processedBookings.length,
+        bookings: processedBookings,
+      };
+    });
+
+    return {
+      roomId: room.id,
+      roomName: room.name,
+      slots: matrixSlots,
+    };
+  });
+
+  return {
+    buildingId,
+    buildingName,
+    date,
+    timeRange: { start: startTime, end: endTime },
+    slotDuration,
+    matrix,
+  };
+}

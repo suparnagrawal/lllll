@@ -18,6 +18,7 @@ interface BuildingCardProps {
   onEdit: () => void;
   userRole?: UserRole;
   canEdit?: boolean;
+  canDelete?: boolean;
   isAssigned?: boolean;
 }
 
@@ -27,6 +28,7 @@ export function BuildingCard({
   onClick,
   onEdit,
   canEdit = false,
+  canDelete = false,
   isAssigned = false,
 }: BuildingCardProps) {
   const [isDeleting, setIsDeleting] = useState(false);
@@ -79,14 +81,16 @@ export function BuildingCard({
                 <Edit2 className="h-4 w-4 mr-2" />
                 Edit
               </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={handleDelete}
-                disabled={isDeleting}
-                className="text-red-600"
-              >
-                <Trash2 className="h-4 w-4 mr-2" />
-                {isDeleting ? "Deleting..." : "Delete"}
-              </DropdownMenuItem>
+              {canDelete && (
+                <DropdownMenuItem
+                  onClick={handleDelete}
+                  disabled={isDeleting}
+                  className="text-red-600"
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  {isDeleting ? "Deleting..." : "Delete"}
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         )}

@@ -31,8 +31,12 @@ export function validate(schema: ValidationSchema) {
       next();
     } catch (error) {
       if (error instanceof ZodError) {
+        const message = error.errors
+          .map(e => `${e.path.join('.')}: ${e.message}`)
+          .join('; ');
         res.status(400).json({
           error: 'Validation failed',
+          message: message || 'Invalid request data',
           details: error.errors,
         });
       } else {

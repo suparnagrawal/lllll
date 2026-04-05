@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -12,6 +12,7 @@ import {
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
+import { Textarea } from "../../components/ui/textarea";
 import {
   useCreateBuilding,
   useUpdateBuilding,
@@ -20,6 +21,7 @@ import type { Building } from "../../lib/api/types";
 
 const buildingSchema = z.object({
   name: z.string().min(1, "Building name is required").max(100),
+  location: z.string().max(500).optional(),
 });
 
 type BuildingFormData = z.infer<typeof buildingSchema>;
@@ -42,10 +44,6 @@ export function BuildingFormDialog({
   const updateMutation = useUpdateBuilding();
   const isLoading = createMutation.isPending || updateMutation.isPending;
 
-  if (!canView) {
-    return null;
-  }
-
   const {
     register,
     handleSubmit,
@@ -55,16 +53,38 @@ export function BuildingFormDialog({
     resolver: zodResolver(buildingSchema),
     defaultValues: {
       name: building?.name || "",
+      location: building?.location || "",
     },
   });
+
+  // Reset form when building changes
+  useEffect(() => {
+    if (open) {
+      reset({
+        name: building?.name || "",
+        location: building?.location || "",
+      });
+    }
+  }, [open, building, reset]);
+
+  if (!canView) {
+    return null;
+  }
 
   const onSubmit = async (data: BuildingFormData) => {
     try {
       setError(null);
       if (building?.id) {
-        await updateMutation.mutateAsync({ id: building.id, name: data.name });
+        await updateMutation.mutateAsync({
+          id: building.id,
+          name: data.name,
+          location: data.location || null,
+        });
       } else {
-        await createMutation.mutateAsync(data.name);
+        await createMutation.mutateAsync({
+          name: data.name,
+          location: data.location || null,
+        });
       }
       reset();
       onOpenChange(false);
@@ -91,21 +111,35 @@ export function BuildingFormDialog({
           <DialogDescription>
             {building
               ? "Update the building details"
-              : "Enter the building name and code"}
+              : "Enter the building name and location"}
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="name">Building Name</Label>
+            <Label htmlFor="name">Building Name *</Label>
             <Input
               id="name"
-              placeholder="e.g., Main Campus"
+              placeholder="e.g., Main Campus Building"
               {...register("name")}
               disabled={isLoading}
             />
             {errors.name && (
               <p className="text-sm text-red-500">{errors.name.message}</p>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="location">Location</Label>
+            <Textarea
+              id="location"
+              placeholder="e.g., North Campus, near the library..."
+              {...register("location")}
+              disabled={isLoading}
+              rows={2}
+            />
+            {errors.location && (
+              <p className="text-sm text-red-500">{errors.location.message}</p>
             )}
           </div>
 

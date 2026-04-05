@@ -1,12 +1,47 @@
 import { z } from 'zod';
 
+export const roomTypeValues = [
+  'LECTURE_HALL',
+  'CLASSROOM',
+  'SEMINAR_ROOM',
+  'COMPUTER_LAB',
+  'CONFERENCE_ROOM',
+  'AUDITORIUM',
+  'WORKSHOP',
+  'OTHER',
+] as const;
+
+export const roomTypeSchema = z.enum(roomTypeValues);
+
 export const createRoomSchema = z.object({
   name: z.string().min(1, 'name is required').trim(),
   buildingId: z.number().int().positive('buildingId must be a positive integer'),
+  capacity: z
+    .number()
+    .int()
+    .positive('capacity must be a positive integer')
+    .nullable()
+    .optional(),
+  roomType: roomTypeSchema.optional().default('OTHER'),
+  hasProjector: z.boolean().optional().default(false),
+  hasMic: z.boolean().optional().default(false),
+  accessible: z.boolean().optional().default(true),
+  equipmentList: z.string().trim().optional().nullable(),
 });
 
 export const updateRoomSchema = z.object({
   name: z.string().min(1, 'name is required').trim().optional(),
+  capacity: z
+    .number()
+    .int()
+    .positive('capacity must be a positive integer')
+    .nullable()
+    .optional(),
+  roomType: roomTypeSchema.optional(),
+  hasProjector: z.boolean().optional(),
+  hasMic: z.boolean().optional(),
+  accessible: z.boolean().optional(),
+  equipmentList: z.string().trim().optional().nullable(),
 });
 
 export const listRoomsSchema = z.object({

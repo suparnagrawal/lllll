@@ -719,6 +719,7 @@ router.post("/", authMiddleware, requireRole(["STUDENT", "FACULTY"]), async (req
       .select({
         id: rooms.id,
         buildingId: rooms.buildingId,
+        accessible: rooms.accessible,
       })
       .from(rooms)
       .where(eq(rooms.id, roomId))
@@ -728,6 +729,13 @@ router.post("/", authMiddleware, requireRole(["STUDENT", "FACULTY"]), async (req
 
     if (!room) {
       return res.status(404).json({ error: "Room not found" });
+    }
+
+    // Block booking requests for inaccessible rooms
+    if (room.accessible === false) {
+      return res.status(400).json({
+        error: "This room is currently not accessible and cannot accept bookings",
+      });
     }
 
     let facultyId: number | null = null;

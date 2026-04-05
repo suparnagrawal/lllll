@@ -1,11 +1,8 @@
 import { Request, Response } from 'express';
 import { db } from '../../db';
 import { buildings, rooms } from '../../db/schema';
-import { eq, inArray } from 'drizzle-orm';
-import {
-  getAssignedBuildingIdsForStaff,
-  isBuildingAssignedToStaff,
-} from '../../services/staffBuildingScope';
+import { eq } from 'drizzle-orm';
+import { isBuildingAssignedToStaff } from '../../services/staffBuildingScope';
 import {
   NotFoundError,
   ForbiddenError,
@@ -15,26 +12,7 @@ import {
 
 export class BuildingsController {
   async list(req: Request, res: Response): Promise<void> {
-    const isStaff = req.user?.role === 'STAFF';
-    const assignedBuildingIds = isStaff
-      ? await getAssignedBuildingIdsForStaff(req.user!.id)
-      : [];
-
-    if (isStaff) {
-      if (assignedBuildingIds.length === 0) {
-        res.json([]);
-        return;
-      }
-
-      const result = await db
-        .select()
-        .from(buildings)
-        .where(inArray(buildings.id, assignedBuildingIds));
-
-      res.json(result);
-      return;
-    }
-
+    // Staff can view all buildings (but only manage their assigned ones)
     const result = await db.select().from(buildings);
     res.json(result);
   }
@@ -43,12 +21,7 @@ export class BuildingsController {
     const { id } = req.params;
     const buildingId = Number(id);
 
-    if (
-      req.user?.role === 'STAFF' &&
-      !(await isBuildingAssignedToStaff(req.user.id, buildingId))
-    ) {
-      throw new ForbiddenError('You do not have access to this building');
-    }
+    // Staff can view any building (but only manage their assigned ones)
 
     const result = await db
       .select()
@@ -67,12 +40,7 @@ export class BuildingsController {
     const { id } = req.params;
     const buildingId = Number(id);
 
-    if (
-      req.user?.role === 'STAFF' &&
-      !(await isBuildingAssignedToStaff(req.user.id, buildingId))
-    ) {
-      throw new ForbiddenError('You do not have access to this building');
-    }
+    // Staff can view rooms in any building (but only manage their assigned buildings)
 
     const building = await db
       .select({ id: buildings.id })
@@ -93,12 +61,16 @@ export class BuildingsController {
   }
 
   async create(req: Request, res: Response): Promise<void> {
-    const { name } = req.body;
+    const { name, location, managedByStaffId } = req.body;
 
     try {
       const result = await db
         .insert(buildings)
-        .values({ name })
+        .values({
+          name,
+          location: location ?? null,
+          managedByStaffId: managedByStaffId ?? null,
+        })
         .returning();
 
       res.status(201).json(result[0]);
@@ -107,13 +79,17 @@ export class BuildingsController {
         throw new ConflictError('Building already exists');
       }
 
+      if (error?.cause?.code === '23503') {
+        throw new ValidationError('Invalid managedByStaffId');
+      }
+
       throw error;
     }
   }
 
   async update(req: Request, res: Response): Promise<void> {
     const { id } = req.params;
-    const { name } = req.body;
+    const { name, location, managedByStaffId } = req.body;
 
     const buildingId = Number(id);
 
@@ -124,10 +100,21 @@ export class BuildingsController {
       throw new ForbiddenError('You do not have access to this building');
     }
 
+    // Build update object with only provided fields
+    const updateData: Partial<{
+      name: string;
+      location: string | null;
+      managedByStaffId: number | null;
+    }> = {};
+
+    if (name !== undefined) updateData.name = name;
+    if (location !== undefined) updateData.location = location;
+    if (managedByStaffId !== undefined) updateData.managedByStaffId = managedByStaffId;
+
     try {
       const result = await db
         .update(buildings)
-        .set({ name })
+        .set(updateData)
         .where(eq(buildings.id, buildingId))
         .returning();
 
@@ -141,6 +128,10 @@ export class BuildingsController {
         throw new ConflictError('Building already exists');
       }
 
+      if (error?.cause?.code === '23503') {
+        throw new ValidationError('Invalid managedByStaffId');
+      }
+
       throw error;
     }
   }
@@ -149,11 +140,9 @@ export class BuildingsController {
     const { id } = req.params;
     const buildingId = Number(id);
 
-    if (
-      req.user?.role === 'STAFF' &&
-      !(await isBuildingAssignedToStaff(req.user.id, buildingId))
-    ) {
-      throw new ForbiddenError('You do not have access to this building');
+    // Only admins can delete buildings
+    if (req.user?.role !== 'ADMIN') {
+      throw new ForbiddenError('Only administrators can delete buildings');
     }
 
     try {

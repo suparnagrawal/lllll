@@ -10,20 +10,40 @@ import {
   integer,
   timestamp,
   jsonb,
+  varchar,
+  json,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { slotSystems } from "../modules/timetable/schema";
+
+// Forward declaration for users reference (defined later in this file)
+// We use a late reference pattern here
+
+export const roomTypeEnum = pgEnum("room_type", [
+  "LECTURE_HALL",
+  "CLASSROOM",
+  "SEMINAR_ROOM",
+  "COMPUTER_LAB",
+  "CONFERENCE_ROOM",
+  "AUDITORIUM",
+  "WORKSHOP",
+  "OTHER",
+]);
 
 export const buildings = pgTable(
   "buildings",
   {
     id: serial("id").primaryKey(),
     name: text("name").notNull(),
+    description: text("description"),
+    location: text("location"),
+    managedByStaffId: integer("managed_by_staff_id"),
   },
   (table) => ({
     nameUnique: uniqueIndex("buildings_name_unique").on(
       sql`lower(${table.name})`
     ),
+    managedByIdx: index("buildings_managed_by_idx").on(table.managedByStaffId),
   })
 );
 
@@ -35,12 +55,19 @@ export const rooms = pgTable(
     buildingId: integer("building_id")
       .notNull()
       .references(() => buildings.id),
+    capacity: integer("capacity"),
+    roomType: roomTypeEnum("room_type").default("OTHER"),
+    hasProjector: boolean("has_projector").notNull().default(false),
+    hasMic: boolean("has_mic").notNull().default(false),
+    accessible: boolean("accessible").notNull().default(true),
+    equipmentList: text("equipment_list"),
   },
   (table) => ({
     roomUniquePerBuilding: uniqueIndex("rooms_building_name_unique").on(
       table.buildingId,
       sql`lower(${table.name})`
     ),
+    accessibleIdx: index("rooms_accessible_idx").on(table.accessible),
   })
 );
 
@@ -374,6 +401,16 @@ export const bookingRequests = pgTable(
     status: bookingStatusEnum("status").notNull().default("PENDING_FACULTY"),
 
     createdAt: timestamp("created_at").notNull().defaultNow(),
+
+    bookingId: integer("booking_id").references(() => bookings.id, {
+      onDelete: "set null",
+    }),
+
+    rejectionReason: text("rejection_reason"),
+
+    internalNote: text("internal_note"),
+
+    decidedAt: timestamp("decided_at"),
   },
   (table) => ({
     userIdIdx: index("booking_requests_user_id_idx").on(table.userId),
@@ -661,6 +698,27 @@ export const slotChangeRequests = pgTable(
       sql`${table.proposedEnd} > ${table.proposedStart}`,
     ),
   }),
+);
+
+// Session store table (created by connect-pg-simple)
+export const userSessions = pgTable(
+  "user_sessions",
+  {
+    sid: varchar("sid").primaryKey(),
+    sess: json("sess").$type<{
+      cookie: {
+        originalMaxAge: number;
+        expires: string;
+        httpOnly: boolean;
+        path: string;
+      };
+      passport?: { user: number };
+    }>().notNull(),
+    expire: timestamp("expire", { precision: 6, withTimezone: false }).notNull(),
+  },
+  (table) => ({
+    expireIdx: index("IDX_session_expire").on(table.expire),
+  })
 );
 
 export * from "../modules/timetable/schema";

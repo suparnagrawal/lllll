@@ -168,6 +168,75 @@ router.get("/faculty", authMiddleware, async (req, res) => {
   }
 });
 
+// Allow staff to view their own building assignments, or admin to view any
+router.get("/:id/building-assignments", authMiddleware, async (req, res) => {
+  try {
+    const targetId = Number(req.params.id);
+    const requesterId = req.user?.id;
+    const requesterRole = req.user?.role;
+
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+      return res.status(400).json({ error: "Invalid id" });
+    }
+
+    // Staff can only view their own assignments, admins can view any
+    if (requesterRole === "STAFF" && requesterId !== targetId) {
+      return res.status(403).json({ error: "You can only view your own building assignments" });
+    }
+
+    if (requesterRole !== "ADMIN" && requesterRole !== "STAFF") {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const targetRows = await db
+      .select({ id: users.id, role: users.role })
+      .from(users)
+      .where(eq(users.id, targetId))
+      .limit(1);
+
+    const target = targetRows[0];
+
+    if (!target) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    if (target.role !== "STAFF") {
+      return res.json({ userId: targetId, buildingIds: [], buildings: [] });
+    }
+
+    const assignedRows = await db
+      .select({
+        buildingId: buildings.id,
+        buildingName: buildings.name,
+      })
+      .from(staffBuildingAssignments)
+      .innerJoin(
+        buildings,
+        eq(staffBuildingAssignments.buildingId, buildings.id),
+      )
+      .where(eq(staffBuildingAssignments.staffId, targetId))
+      .orderBy(asc(buildings.name));
+
+    return res.json({
+      userId: targetId,
+      buildingIds: assignedRows.map((row) => row.buildingId),
+      buildings: assignedRows.map((row) => ({
+        id: row.buildingId,
+        name: row.buildingName,
+      })),
+    });
+  } catch (error) {
+    if (isMissingAssignmentsTableError(error)) {
+      return res.status(503).json({
+        error: "Staff building assignments are unavailable until database migrations are applied",
+      });
+    }
+
+    logger.error(error);
+    return res.status(500).json({ error: "Failed to fetch building assignments" });
+  }
+});
+
 router.use(authMiddleware, requireRole("ADMIN"));
 
 router.get("/", async (req, res) => {
@@ -545,62 +614,6 @@ router.patch("/:id/role", async (req, res) => {
   } catch (error) {
     logger.error(error);
     return res.status(500).json({ error: "Failed to update role" });
-  }
-});
-router.get("/:id/building-assignments", async (req, res) => {
-  try {
-    const targetId = Number(req.params.id);
-
-    if (!Number.isInteger(targetId) || targetId <= 0) {
-      return res.status(400).json({ error: "Invalid id" });
-    }
-
-    const targetRows = await db
-      .select({ id: users.id, role: users.role })
-      .from(users)
-      .where(eq(users.id, targetId))
-      .limit(1);
-
-    const target = targetRows[0];
-
-    if (!target) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    if (target.role !== "STAFF") {
-      return res.json({ userId: targetId, buildingIds: [], buildings: [] });
-    }
-
-    const assignedRows = await db
-      .select({
-        buildingId: buildings.id,
-        buildingName: buildings.name,
-      })
-      .from(staffBuildingAssignments)
-      .innerJoin(
-        buildings,
-        eq(staffBuildingAssignments.buildingId, buildings.id),
-      )
-      .where(eq(staffBuildingAssignments.staffId, targetId))
-      .orderBy(asc(buildings.name));
-
-    return res.json({
-      userId: targetId,
-      buildingIds: assignedRows.map((row) => row.buildingId),
-      buildings: assignedRows.map((row) => ({
-        id: row.buildingId,
-        name: row.buildingName,
-      })),
-    });
-  } catch (error) {
-    if (isMissingAssignmentsTableError(error)) {
-      return res.status(503).json({
-        error: "Staff building assignments are unavailable until database migrations are applied",
-      });
-    }
-
-    logger.error(error);
-    return res.status(500).json({ error: "Failed to fetch building assignments" });
   }
 });
 

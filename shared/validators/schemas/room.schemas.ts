@@ -3,10 +3,52 @@ import { z } from 'zod';
 export const createRoomSchema = z.object({
   name: z.string().min(1, 'name is required').trim(),
   buildingId: z.number().int().positive('buildingId must be a positive integer'),
+  capacity: z
+    .union([
+      z.literal(null),
+      z.number().int().positive('Capacity must be a positive number'),
+    ])
+    .nullable()
+    .optional(),
+  roomType: z.enum([
+    "LECTURE_HALL",
+    "CLASSROOM",
+    "SEMINAR_ROOM",
+    "COMPUTER_LAB",
+    "CONFERENCE_ROOM",
+    "AUDITORIUM",
+    "WORKSHOP",
+    "OTHER",
+  ]).optional(),
+  hasProjector: z.boolean().optional(),
+  hasMic: z.boolean().optional(),
+  accessible: z.boolean().optional(),
+  equipmentList: z.string().nullable().optional(),
 });
 
 export const updateRoomSchema = z.object({
   name: z.string().min(1, 'name is required').trim().optional(),
+  capacity: z
+    .union([
+      z.literal(null),
+      z.number().int().positive('Capacity must be a positive number'),
+    ])
+    .nullable()
+    .optional(),
+  roomType: z.enum([
+    "LECTURE_HALL",
+    "CLASSROOM",
+    "SEMINAR_ROOM",
+    "COMPUTER_LAB",
+    "CONFERENCE_ROOM",
+    "AUDITORIUM",
+    "WORKSHOP",
+    "OTHER",
+  ]).optional(),
+  hasProjector: z.boolean().optional(),
+  hasMic: z.boolean().optional(),
+  accessible: z.boolean().optional(),
+  equipmentList: z.string().nullable().optional(),
 });
 
 export const listRoomsSchema = z.object({

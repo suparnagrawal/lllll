@@ -1,5 +1,5 @@
 import { request } from "./client";
-import type { Room } from "./types";
+import type { Room, RoomType } from "./types";
 
 export async function getRooms(buildingId?: number): Promise<Room[]> {
   const query =
@@ -7,17 +7,38 @@ export async function getRooms(buildingId?: number): Promise<Room[]> {
   return request<Room[]>(`/rooms${query}`);
 }
 
-export async function createRoom(name: string, buildingId: number): Promise<Room> {
+export type CreateRoomInput = {
+  name: string;
+  buildingId: number;
+  capacity?: number | null;
+  roomType?: RoomType;
+  hasProjector?: boolean;
+  hasMic?: boolean;
+  accessible?: boolean;
+  equipmentList?: string | null;
+};
+
+export async function createRoom(input: CreateRoomInput): Promise<Room> {
   return request<Room>("/rooms", {
     method: "POST",
-    body: JSON.stringify({ name, buildingId }),
+    body: JSON.stringify(input),
   });
 }
 
-export async function updateRoom(id: number, name: string): Promise<Room> {
+export type UpdateRoomInput = {
+  name?: string;
+  capacity?: number | null;
+  roomType?: RoomType;
+  hasProjector?: boolean;
+  hasMic?: boolean;
+  accessible?: boolean;
+  equipmentList?: string | null;
+};
+
+export async function updateRoom(id: number, input: UpdateRoomInput): Promise<Room> {
   return request<Room>(`/rooms/${id}`, {
     method: "PATCH",
-    body: JSON.stringify({ name }),
+    body: JSON.stringify(input),
   });
 }
 

@@ -56,6 +56,9 @@ export function BuildingsCardGrid({
     return false;
   };
 
+  // Only admins can delete buildings
+  const canDeleteBuilding = isAdmin;
+
   if (error) {
     return (
       <div className="flex flex-col gap-4">
@@ -96,6 +99,7 @@ export function BuildingsCardGrid({
               onEdit={() => onBuildingEdit(building)}
               userRole={userRole}
               canEdit={canEditBuilding(building.id)}
+              canDelete={canDeleteBuilding}
               isAssigned={isStaff && staffBuildingIds.includes(building.id)}
             />
           ))}

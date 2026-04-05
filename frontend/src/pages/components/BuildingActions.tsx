@@ -13,9 +13,10 @@ interface BuildingActionsProps {
   building: Building;
   onEdit: () => void;
   canEdit?: boolean;
+  canDelete?: boolean;
 }
 
-export function BuildingActions({ building, onEdit, canEdit = false }: BuildingActionsProps) {
+export function BuildingActions({ building, onEdit, canEdit = false, canDelete = false }: BuildingActionsProps) {
   const [isDeleting, setIsDeleting] = useState(false);
   const deleteBuilding = useDeleteBuilding();
 
@@ -43,13 +44,15 @@ export function BuildingActions({ building, onEdit, canEdit = false }: BuildingA
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuItem onClick={onEdit}>Edit</DropdownMenuItem>
-          <DropdownMenuItem
-            onClick={handleDelete}
-            disabled={isDeleting}
-            className="text-red-600"
-          >
-            {isDeleting ? "Deleting..." : "Delete"}
-          </DropdownMenuItem>
+          {canDelete && (
+            <DropdownMenuItem
+              onClick={handleDelete}
+              disabled={isDeleting}
+              className="text-red-600"
+            >
+              {isDeleting ? "Deleting..." : "Delete"}
+            </DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
     ) : null

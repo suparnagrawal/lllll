@@ -54,15 +54,10 @@ export const router = createBrowserRouter([
             element: <Suspense fallback={<PageLoader />}><ProfilePage /></Suspense> 
           },
           
-          // Accessible to ADMIN and STAFF
-          {
-            element: <RequireRole roles={['ADMIN', 'STAFF']} />,
-            children: [
-              { 
-                path: 'rooms', 
-                element: <Suspense fallback={<PageLoader />}><RoomsPage /></Suspense> 
-              },
-            ],
+          // Accessible to all authenticated users (view-only for students/faculty)
+          { 
+            path: 'rooms', 
+            element: <Suspense fallback={<PageLoader />}><RoomsPage /></Suspense> 
           },
 
           // Accessible to ADMIN and STAFF

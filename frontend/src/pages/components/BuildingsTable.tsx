@@ -55,6 +55,9 @@ export function BuildingsTable({
     return false;
   };
 
+  // Only admins can delete buildings
+  const canDeleteBuilding = isAdmin;
+
   if (error) {
     return (
       <div className="flex flex-col gap-4">
@@ -123,6 +126,7 @@ export function BuildingsTable({
                       building={building}
                       onEdit={() => onEditClick(building)}
                       canEdit={canEditBuilding(building.id)}
+                      canDelete={canDeleteBuilding}
                     />
                   </TableCell>
                 </TableRow>

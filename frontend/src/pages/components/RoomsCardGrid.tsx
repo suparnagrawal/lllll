@@ -11,6 +11,7 @@ interface RoomsCardGridProps {
   onAddClick: () => void;
   isLoading?: boolean;
   userRole?: UserRole;
+  canEdit?: boolean;
 }
 
 export function RoomsCardGrid({
@@ -20,11 +21,15 @@ export function RoomsCardGrid({
   onAddClick,
   isLoading = false,
   userRole,
+  canEdit = false,
 }: RoomsCardGridProps) {
-  const canAddRoom = userRole === "ADMIN" || userRole === "STAFF";
+  // canEdit prop takes precedence if provided, otherwise fall back to role-based check
+  const canEditOrAddRoom = canEdit || userRole === "ADMIN";
 
   const filteredRooms = useMemo(() => {
-    return rooms.filter((room) => room.buildingId === buildingId);
+    return rooms
+      .filter((room) => room.buildingId === buildingId)
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
   }, [rooms, buildingId]);
 
   return (
@@ -36,7 +41,7 @@ export function RoomsCardGrid({
             {filteredRooms.length} {filteredRooms.length === 1 ? "room" : "rooms"} total
           </p>
         </div>
-        {canAddRoom && (
+        {canEditOrAddRoom && (
           <Button onClick={onAddClick} size="sm" className="gap-2">
             <Plus className="h-4 w-4" />
             Add Room
@@ -52,13 +57,14 @@ export function RoomsCardGrid({
           <p className="text-sm mt-1">Click "Add Room" to create one</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {filteredRooms.map((room) => (
             <RoomCard
               key={room.id}
               room={room}
               onEditClick={() => onEditClick(room)}
               userRole={userRole}
+              canEdit={canEdit}
             />
           ))}
         </div>
