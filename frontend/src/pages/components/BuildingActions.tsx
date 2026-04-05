@@ -12,9 +12,10 @@ import type { Building } from "../../lib/api/types";
 interface BuildingActionsProps {
   building: Building;
   onEdit: () => void;
+  canEdit?: boolean;
 }
 
-export function BuildingActions({ building, onEdit }: BuildingActionsProps) {
+export function BuildingActions({ building, onEdit, canEdit = false }: BuildingActionsProps) {
   const [isDeleting, setIsDeleting] = useState(false);
   const deleteBuilding = useDeleteBuilding();
 
@@ -33,22 +34,24 @@ export function BuildingActions({ building, onEdit }: BuildingActionsProps) {
   };
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm">
-          •••
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuItem onClick={onEdit}>Edit</DropdownMenuItem>
-        <DropdownMenuItem
-          onClick={handleDelete}
-          disabled={isDeleting}
-          className="text-red-600"
-        >
-          {isDeleting ? "Deleting..." : "Delete"}
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    canEdit ? (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="sm">
+            •••
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onClick={onEdit}>Edit</DropdownMenuItem>
+          <DropdownMenuItem
+            onClick={handleDelete}
+            disabled={isDeleting}
+            className="text-red-600"
+          >
+            {isDeleting ? "Deleting..." : "Delete"}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    ) : null
   );
 }

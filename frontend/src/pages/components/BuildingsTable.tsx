@@ -12,20 +12,28 @@ import {
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { BuildingActions } from "./BuildingActions";
-import type { Building } from "../../lib/api/types";
+import type { Building, UserRole } from "../../lib/api/types";
 
 interface BuildingsTableProps {
   onAddClick: () => void;
   onEditClick: (building: Building) => void;
+  userRole?: UserRole;
+  staffBuildingIds?: number[];
 }
 
 export function BuildingsTable({
   onAddClick,
   onEditClick,
+  userRole,
+  staffBuildingIds = [],
 }: BuildingsTableProps) {
   const [search, setSearch] = useState("");
   const { data: buildings = [], isLoading, error, refetch } = useBuildings();
   const { data: allRooms = [] } = useRooms();
+
+  const isAdmin = userRole === "ADMIN";
+  const isStaff = userRole === "STAFF";
+  const canAddBuilding = isAdmin;
 
   const filteredBuildings = useMemo(() => {
     return buildings.filter(
@@ -37,6 +45,13 @@ export function BuildingsTable({
   const getRoomCount = (buildingId: number) => {
     const rooms = Array.isArray(allRooms) ? allRooms : [];
     return rooms.filter((r) => r.buildingId === buildingId).length;
+  };
+
+  // Determine if user can edit a specific building
+  const canEditBuilding = (buildingId: number) => {
+    if (isAdmin) return true;
+    if (isStaff && staffBuildingIds.includes(buildingId)) return true;
+    return false;
   };
 
   if (error) {
@@ -57,7 +72,7 @@ export function BuildingsTable({
           onChange={(e) => setSearch(e.target.value)}
           className="max-w-sm"
         />
-        <Button onClick={onAddClick}>+ Add Building</Button>
+        {canAddBuilding && <Button onClick={onAddClick}>+ Add Building</Button>}
       </div>
 
       <div className="rounded-lg border">
@@ -93,6 +108,7 @@ export function BuildingsTable({
                     <BuildingActions
                       building={building}
                       onEdit={() => onEditClick(building)}
+                      canEdit={canEditBuilding(building.id)}
                     />
                   </TableCell>
                 </TableRow>
