@@ -75,6 +75,7 @@ export function BuildingAssignmentDialog({ user, open, onOpenChange, onSuccess }
   };
 
   const isLoading = loadingBuildings || loadingAssignments;
+  const isStaffUser = user?.role === "STAFF";
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -92,16 +93,21 @@ export function BuildingAssignmentDialog({ user, open, onOpenChange, onSuccess }
           </div>
         )}
 
-        <div className="space-y-4">
-          {isLoading ? (
-            <div className="text-center py-8 text-muted-foreground">
-              Loading buildings...
-            </div>
-          ) : buildings.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              No buildings available
-            </div>
-          ) : (
+        {!isStaffUser ? (
+          <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 p-3 rounded text-sm">
+            Building assignments are only available for STAFF users. The selected user has role: <strong>{user?.role}</strong>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {isLoading ? (
+              <div className="text-center py-8 text-muted-foreground">
+                Loading buildings...
+              </div>
+            ) : buildings.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                No buildings available
+              </div>
+            ) : (
             <div className="space-y-3">
               <div className="flex items-center justify-between pb-2 border-b">
                 <span className="text-sm font-medium">
@@ -136,8 +142,9 @@ export function BuildingAssignmentDialog({ user, open, onOpenChange, onSuccess }
                 ))}
               </div>
             </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
 
         <div className="flex gap-2 justify-end pt-4">
           <Button
@@ -151,7 +158,7 @@ export function BuildingAssignmentDialog({ user, open, onOpenChange, onSuccess }
           <Button
             type="button"
             onClick={handleSave}
-            disabled={saving || isLoading}
+            disabled={saving || isLoading || !isStaffUser}
           >
             {saving ? "Saving..." : "Save"}
           </Button>
