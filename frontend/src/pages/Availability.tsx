@@ -6,6 +6,7 @@ import { useBuildings } from "../hooks/useBuildings";
 import { useRooms } from "../hooks/useRooms";
 import { useAuth } from "../auth/AuthContext";
 import { getUserBuildingAssignments } from "../lib/api";
+import { ExactAvailabilityView } from "./components/ExactAvailabilityView";
 import type { Room } from "../lib/api";
 import type { BookingRequestPrefill } from "./bookingAvailabilityBridge";
 
@@ -28,7 +29,7 @@ export function AvailabilityPage({
   const isAdmin = user?.role === "ADMIN";
   const canViewBookingsPage = isStaff || isAdmin;
 
-  const [viewMode, setViewMode] = useState<"time" | "room">("time");
+  const [viewMode, setViewMode] = useState<"time" | "room" | "exact">("time");
   const [selectedBuildingId, setSelectedBuildingId] = useState<number | null>(null);
   const [selectedRoomId, setSelectedRoomId] = useState<number | null>(null);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
@@ -140,6 +141,16 @@ export function AvailabilityPage({
             }`}
           >
             Browse by Room
+          </button>
+          <button
+            onClick={() => setViewMode("exact")}
+            className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+              viewMode === "exact"
+                ? "bg-blue-500 text-white"
+                : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+            }`}
+          >
+            Exact Availability
           </button>
         </div>
       </div>
@@ -416,6 +427,91 @@ export function AvailabilityPage({
           </>
         )}
       </div>
+      )}
+
+      {/* Exact Availability View */}
+      {viewMode === "exact" && (
+        <div className="space-y-6">
+          {/* Date and Time Selection for Exact View */}
+          <div className="card">
+            <div className="card-header">
+              <h3>Select Date Range and Time</h3>
+              <p className="text-sm text-gray-600 mt-1">Choose dates to check exact room availability</p>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Date Selection */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Select Dates
+                  </label>
+                  <input
+                    type="date"
+                    value={selectedDates[0] || new Date().toISOString().split('T')[0]}
+                    onChange={(e) => {
+                      if (!selectedDates.includes(e.target.value)) {
+                        setSelectedDates([...selectedDates, e.target.value]);
+                      }
+                    }}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                  {selectedDates.length > 0 && (
+                    <div className="mt-3 space-y-2">
+                      {selectedDates.map((date, idx) => (
+                        <div key={date} className="flex items-center justify-between bg-gray-50 p-2 rounded">
+                          <span className="text-sm font-medium text-gray-700">{new Date(date).toLocaleDateString()}</span>
+                          {selectedDates.length > 1 && (
+                            <button
+                              onClick={() => setSelectedDates(selectedDates.filter((_, i) => i !== idx))}
+                              className="text-red-600 hover:text-red-800"
+                            >
+                              <X size={16} />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Time Range From */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Time From
+                  </label>
+                  <input
+                    type="time"
+                    value={timeRangeStart}
+                    onChange={(e) => setTimeRangeStart(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+
+                {/* Time Range To */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Time To
+                  </label>
+                  <input
+                    type="time"
+                    value={timeRangeEnd}
+                    onChange={(e) => setTimeRangeEnd(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Exact Availability View Component */}
+          {selectedDates.length > 0 && (
+            <ExactAvailabilityView
+              selectedDates={selectedDates}
+              timeRangeStart={timeRangeStart}
+              timeRangeEnd={timeRangeEnd}
+            />
+          )}
+        </div>
       )}
     </div>
   );
