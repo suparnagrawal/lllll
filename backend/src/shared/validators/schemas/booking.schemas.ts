@@ -1,9 +1,24 @@
 import { z } from 'zod';
 
+// Custom datetime coercion that accepts multiple formats
+const dateTimeString = z
+  .union([z.string(), z.instanceof(Date)])
+  .pipe(
+    z.coerce.date().refine((d) => !isNaN(d.getTime()), {
+      message: 'Invalid datetime value'
+    })
+  )
+  .transform((d) => {
+    if (d instanceof Date) {
+      return d.toISOString();
+    }
+    return new Date(d as any).toISOString();
+  });
+
 export const createBookingSchema = z.object({
   roomId: z.number().int().positive('roomId must be a positive integer'),
-  startAt: z.string().datetime('startAt must be a valid datetime string'),
-  endAt: z.string().datetime('endAt must be a valid datetime string'),
+  startAt: dateTimeString,
+  endAt: dateTimeString,
   metadata: z.record(z.any()).optional(),
 }).refine((data) => {
   const start = new Date(data.startAt);
@@ -16,8 +31,8 @@ export const createBookingSchema = z.object({
 
 export const updateBookingSchema = z.object({
   roomId: z.number().int().positive('roomId must be a positive integer').optional(),
-  startAt: z.string().datetime('startAt must be a valid datetime string').optional(),
-  endAt: z.string().datetime('endAt must be a valid datetime string').optional(),
+  startAt: dateTimeString.optional(),
+  endAt: dateTimeString.optional(),
 }).refine((data) => {
   if (data.startAt && data.endAt) {
     const start = new Date(data.startAt);
@@ -31,8 +46,8 @@ export const updateBookingSchema = z.object({
 });
 
 export const listBookingsSchema = z.object({
-  startAt: z.string().datetime('startAt must be a valid datetime string').optional(),
-  endAt: z.string().datetime('endAt must be a valid datetime string').optional(),
+  startAt: dateTimeString.optional(),
+  endAt: dateTimeString.optional(),
   roomId: z.string()
     .optional()
     .transform((val) => val ? Number(val) : undefined)
@@ -64,8 +79,8 @@ export const bulkCreateBookingSchema = z.object({
   items: z.array(
     z.object({
       roomId: z.number().int().positive('roomId must be a positive integer'),
-      startAt: z.string().datetime('startAt must be a valid datetime string'),
-      endAt: z.string().datetime('endAt must be a valid datetime string'),
+      startAt: dateTimeString,
+      endAt: dateTimeString,
       metadata: z.record(z.any()).optional(),
       clientRowId: z.string().optional(),
     }).refine((data) => {

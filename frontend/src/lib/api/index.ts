@@ -26,6 +26,8 @@ export type {
   BookingPruneResult,
   AvailabilityRoom,
   AvailabilityBuilding,
+  TimelineSegment,
+  RoomDayTimeline,
   DayOfWeek,
   SlotSystem,
   SlotDay,
@@ -163,6 +165,7 @@ export {
 // Availability endpoints
 export {
   getAvailability,
+  getRoomDayTimeline,
 } from "./availability";
 
 // Dashboard endpoints

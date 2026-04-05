@@ -25,6 +25,15 @@ router.get(
 );
 
 router.get(
+  '/:id/availability/day/timeline',
+  authMiddleware,
+  validate({ params: idParamSchema, query: roomDayAvailabilitySchema }),
+  (req, res, next) => {
+    controller.getRoomDayAvailabilityTimeline(req, res).catch(next);
+  }
+);
+
+router.get(
   '/:id/availability/day',
   authMiddleware,
   validate({ params: idParamSchema, query: roomDayAvailabilitySchema }),

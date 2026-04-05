@@ -195,6 +195,34 @@ export type AvailabilityBuilding = {
   rooms: AvailabilityRoom[];
 };
 
+export type TimelineSegment = {
+  start: string;      // ISO 8601 datetime
+  end: string;        // ISO 8601 datetime
+  status: 'free' | 'booked';
+  booking?: {
+    id: number;
+    title?: string;
+    startAt: string;
+    endAt: string;
+    bookedBy?: string;
+    activityName?: string;
+    contactInfo?: string;
+    purpose?: string;
+  };
+  isRestricted?: boolean;  // true if booking details are masked
+};
+
+export type RoomDayTimeline = {
+  room: {
+    id: number;
+    name: string;
+    buildingId: number;
+    buildingName: string;
+  };
+  date: string;  // YYYY-MM-DD
+  segments: TimelineSegment[];
+};
+
 export type DayOfWeek = "MON" | "TUE" | "WED" | "THU" | "FRI" | "SAT" | "SUN";
 
 export type SlotSystem = {

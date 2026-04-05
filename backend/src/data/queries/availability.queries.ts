@@ -15,6 +15,34 @@ export type BookingDetail = {
   visibilityLevel: 'full' | 'restricted' | 'none';
 };
 
+export type TimelineSegment = {
+  start: string;      // ISO 8601 datetime
+  end: string;        // ISO 8601 datetime
+  status: 'free' | 'booked';
+  booking?: {
+    id: number;
+    title?: string;
+    startAt: string;
+    endAt: string;
+    bookedBy?: string;
+    activityName?: string;
+    contactInfo?: string;
+    purpose?: string;
+  };
+  isRestricted?: boolean;  // true if booking details are masked
+};
+
+export type RoomDayTimeline = {
+  room: {
+    id: number;
+    name: string;
+    buildingId: number;
+    buildingName: string;
+  };
+  date: string;  // YYYY-MM-DD
+  segments: TimelineSegment[];
+};
+
 export type RoomWithAvailability = {
   id: number;
   name: string;
@@ -594,6 +622,277 @@ export function generateTimeSlots(
   }
 
   return slots;
+}
+
+/**
+ * Helper function: Convert ISO string to minutes since midnight
+ */
+function getMinutesFromMidnight(isoString: string): number {
+  const date = new Date(isoString);
+  return date.getHours() * 60 + date.getMinutes();
+}
+
+/**
+ * Helper function: Merge adjacent segments with same status and visibility
+ */
+function mergeAdjacentSegments(segments: TimelineSegment[]): TimelineSegment[] {
+  if (segments.length === 0) return [];
+
+  const merged: TimelineSegment[] = [];
+  let current = { ...segments[0]! };
+
+  for (let i = 1; i < segments.length; i++) {
+    const next = segments[i]!;
+    const sameStatus = current.status === next.status;
+    const sameVisibility = !!current.isRestricted === !!next.isRestricted;
+    const adjacent = current.end === next.start;
+
+    if (sameStatus && sameVisibility && adjacent) {
+      // Merge: extend current segment
+      current.end = next.end;
+    } else {
+      // Cannot merge: save current and start new
+      merged.push(current);
+      current = { ...next };
+    }
+  }
+
+  merged.push(current);
+  return merged;
+}
+
+/**
+ * Get continuous timeline of room availability for a full day with RBAC-aware visibility.
+ * 
+ * Returns segments covering the entire 24-hour period:
+ * - "free" segments: room is available
+ * - "booked" segments: room has a booking (details may be masked based on RBAC)
+ * 
+ * RBAC Masking Rules:
+ * - Admin: sees all booking details
+ * - Staff: sees details only if booking is in their assigned buildings
+ * - Faculty/Student: sees details only for their own bookings
+ * - Restricted: booking details are hidden, shows isRestricted: true
+ */
+export async function getRoomDayAvailabilityTimeline(
+  roomId: number,
+  dateStr: string,
+  user: {
+    id: number;
+    role: 'ADMIN' | 'STAFF' | 'FACULTY' | 'STUDENT' | 'PENDING_ROLE';
+    staffBuildingIds?: number[];
+  }
+): Promise<RoomDayTimeline> {
+  // Parse date and construct 24-hour range (00:00 - 23:59:59)
+  const dayStart = new Date(`${dateStr}T00:00:00.000Z`);
+  const dayEnd = new Date(dayStart);
+  dayEnd.setDate(dayEnd.getDate() + 1);
+
+  // Get room details
+  const roomData = await db
+    .select({
+      id: rooms.id,
+      name: rooms.name,
+      buildingId: rooms.buildingId,
+      buildingName: buildings.name,
+    })
+    .from(rooms)
+    .innerJoin(buildings, eq(rooms.buildingId, buildings.id))
+    .where(eq(rooms.id, roomId))
+    .limit(1);
+
+  if (roomData.length === 0) {
+    throw new Error(`Room with id ${roomId} not found`);
+  }
+
+  const roomInfo = roomData[0]!;
+
+  // Get all bookings for this room on this day
+  const bookingData = await db
+    .select({
+      bookingId: bookings.id,
+      startAt: bookings.startAt,
+      endAt: bookings.endAt,
+      requestId: bookings.requestId,
+      userId: bookingRequests.userId,
+      facultyId: bookingRequests.facultyId,
+      eventType: bookingRequests.eventType,
+      purpose: bookingRequests.purpose,
+      userName: users.name,
+      userEmail: users.email,
+    })
+    .from(bookings)
+    .leftJoin(bookingRequests, eq(bookings.requestId, bookingRequests.id))
+    .leftJoin(
+      users,
+      or(
+        eq(bookingRequests.userId, users.id),
+        eq(bookingRequests.facultyId, users.id)
+      )
+    )
+    .where(
+      and(
+        eq(bookings.roomId, roomId),
+        lt(bookings.startAt, dayEnd),
+        gt(bookings.endAt, dayStart)
+      )
+    )
+    .orderBy(asc(bookings.startAt));
+
+  // Step 1: Merge overlapping bookings and collect time points
+  interface MergedBooking {
+    start: Date;
+    end: Date;
+    bookingId: number;
+    userId: number | null;
+    facultyId: number | null;
+    userName: string | null;
+    userEmail: string | null;
+    eventType: string | null;
+    purpose: string | null;
+  }
+
+  const mergedBookings: MergedBooking[] = [];
+  const timePoints = new Set<number>(); // milliseconds since epoch
+
+  timePoints.add(dayStart.getTime());
+  timePoints.add(dayEnd.getTime());
+
+  // Sort bookings by start time
+  const sortedBookings = [...bookingData].sort(
+    (a, b) => a.startAt.getTime() - b.startAt.getTime()
+  );
+
+  // Merge overlapping bookings
+  for (const booking of sortedBookings) {
+    const start = booking.startAt;
+    const end = booking.endAt;
+
+    if (mergedBookings.length === 0) {
+      mergedBookings.push({
+        start,
+        end,
+        bookingId: booking.bookingId,
+        userId: booking.userId,
+        facultyId: booking.facultyId,
+        userName: booking.userName,
+        userEmail: booking.userEmail,
+        eventType: booking.eventType,
+        purpose: booking.purpose,
+      });
+    } else {
+      const last = mergedBookings[mergedBookings.length - 1]!;
+      
+      if (start < last.end) {
+        // Overlaps: extend the last merged booking
+        last.end = new Date(Math.max(last.end.getTime(), end.getTime()));
+      } else {
+        // No overlap: add as new segment
+        mergedBookings.push({
+          start,
+          end,
+          bookingId: booking.bookingId,
+          userId: booking.userId,
+          facultyId: booking.facultyId,
+          userName: booking.userName,
+          userEmail: booking.userEmail,
+          eventType: booking.eventType,
+          purpose: booking.purpose,
+        });
+      }
+    }
+
+    // Collect time points
+    timePoints.add(start.getTime());
+    timePoints.add(end.getTime());
+  }
+
+  // Step 2: Build raw segments (before RBAC masking)
+  const rawSegments: TimelineSegment[] = [];
+  const sortedPoints = Array.from(timePoints).sort((a, b) => a - b);
+
+  for (let i = 0; i < sortedPoints.length - 1; i++) {
+    const timeStart = sortedPoints[i]!;
+    const timeEnd = sortedPoints[i + 1]!;
+    const segStart = new Date(timeStart);
+    const segEnd = new Date(timeEnd);
+
+    // Find if any booking covers this segment
+    const coveringBooking = mergedBookings.find(
+      (b) => b.start <= segStart && segEnd <= b.end
+    );
+
+    const segmentObj: TimelineSegment = {
+      start: segStart.toISOString(),
+      end: segEnd.toISOString(),
+      status: coveringBooking ? 'booked' : 'free',
+    };
+
+    if (coveringBooking) {
+      const bookingObj: NonNullable<TimelineSegment['booking']> = {
+        id: coveringBooking.bookingId,
+        startAt: coveringBooking.start.toISOString(),
+        endAt: coveringBooking.end.toISOString(),
+      };
+
+      if (coveringBooking.eventType) bookingObj.title = coveringBooking.eventType;
+      if (coveringBooking.userName) bookingObj.bookedBy = coveringBooking.userName;
+      if (coveringBooking.eventType) bookingObj.activityName = coveringBooking.eventType;
+      if (coveringBooking.userEmail) bookingObj.contactInfo = coveringBooking.userEmail;
+      if (coveringBooking.purpose) bookingObj.purpose = coveringBooking.purpose;
+
+      segmentObj.booking = bookingObj;
+    }
+
+    rawSegments.push(segmentObj);
+  }
+
+  // Step 3: Apply RBAC masking (mask booking details based on user role)
+  const maskedSegments: TimelineSegment[] = rawSegments.map((seg) => {
+    if (!seg.booking) {
+      return seg;
+    }
+
+    const booking = seg.booking;
+    const bookingUserId = booking.bookedBy ? 
+      bookingData.find(b => b.userName === booking.bookedBy)?.userId ?? null :
+      null;
+
+    const visibility = getBookingVisibilityLevel(
+      user.role,
+      user.id,
+      bookingUserId,
+      roomInfo.buildingId,
+      user.staffBuildingIds || []
+    );
+
+    if (visibility === 'full') {
+      // Full access: keep all details
+      return seg;
+    } else {
+      // Restricted: hide booking details
+      return {
+        start: seg.start,
+        end: seg.end,
+        status: 'booked' as const,
+        isRestricted: true,
+      };
+    }
+  });
+
+  // Step 4: Merge adjacent segments with same status and visibility
+  const finalSegments = mergeAdjacentSegments(maskedSegments);
+
+  return {
+    room: {
+      id: roomInfo.id,
+      name: roomInfo.name,
+      buildingId: roomInfo.buildingId,
+      buildingName: roomInfo.buildingName,
+    },
+    date: dateStr,
+    segments: finalSegments,
+  };
 }
 
 /**

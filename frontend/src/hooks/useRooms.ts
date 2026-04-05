@@ -3,10 +3,11 @@ import * as roomsApi from '../lib/api/rooms';
 import { queryConfigs } from '../lib/queryConfig';
 import type { CreateRoomInput, UpdateRoomInput } from '../lib/api/rooms';
 
-export function useRooms(buildingId?: number) {
+export function useRooms(buildingId?: number, enabled = true) {
   return useQuery({
     queryKey: ['rooms', buildingId],
     queryFn: () => roomsApi.getRooms(buildingId),
+    enabled: buildingId === undefined ? enabled : enabled && buildingId !== undefined,
     ...queryConfigs.rooms,
   });
 }

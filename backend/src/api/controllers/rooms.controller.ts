@@ -12,7 +12,7 @@ import {
   ValidationError,
   ConflictError,
 } from '../../domain/errors/AppError';
-import { getRoomDayAvailabilityQuery } from '../../data/queries/availability.queries';
+import { getRoomDayAvailabilityQuery, getRoomDayAvailabilityTimeline } from '../../data/queries/availability.queries';
 
 export class RoomsController {
   async list(req: Request, res: Response): Promise<void> {
@@ -172,6 +172,66 @@ export class RoomsController {
     );
 
     res.json(availability);
+  }
+
+  async getRoomDayAvailabilityTimeline(req: Request, res: Response): Promise<void> {
+    const { id } = req.params;
+    const { date } = req.query;
+
+    const roomId = Number(id);
+
+    // Verify date format (YYYY-MM-DD)
+    if (!date || typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      throw new ValidationError('Invalid date format. Expected YYYY-MM-DD');
+    }
+
+    // Verify room exists and check RBAC
+    const roomRows = await db
+      .select({
+        id: rooms.id,
+        name: rooms.name,
+        buildingId: rooms.buildingId,
+      })
+      .from(rooms)
+      .where(eq(rooms.id, roomId))
+      .limit(1);
+
+    if (roomRows.length === 0) {
+      throw new NotFoundError('Room not found');
+    }
+
+    const room = roomRows[0]!;
+
+    if (
+      req.user?.role === 'STAFF' &&
+      !(await isBuildingAssignedToStaff(req.user.id, room.buildingId))
+    ) {
+      throw new ForbiddenError('You do not have access to this building');
+    }
+
+    // Get staff building IDs if needed for RBAC
+    const staffBuildingIds =
+      req.user?.role === 'STAFF'
+        ? await getAssignedBuildingIdsForStaff(req.user.id)
+        : [];
+
+    // Query availability timeline with RBAC filtering
+    const timeline = await getRoomDayAvailabilityTimeline(
+      roomId,
+      date,
+      {
+        id: req.user!.id,
+        role: req.user!.role as
+          | 'ADMIN'
+          | 'STAFF'
+          | 'FACULTY'
+          | 'STUDENT'
+          | 'PENDING_ROLE',
+        staffBuildingIds,
+      }
+    );
+
+    res.json(timeline);
   }
 
   async create(req: Request, res: Response): Promise<void> {

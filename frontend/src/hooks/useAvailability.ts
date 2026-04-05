@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   getAvailability,
   getBuildings,
-  getRooms,
+  getRoomDayTimeline,
 } from "../lib/api";
 import { queryConfigs } from "../lib/queryConfig";
 
@@ -20,19 +20,29 @@ export function useAvailability(
   });
 }
 
+export function useRoomDayTimeline(
+  roomId: number,
+  date: string,
+  enabled = true
+) {
+  return useQuery({
+    queryKey: ["roomDayTimeline", roomId, date],
+    queryFn: () => getRoomDayTimeline(roomId, date),
+    enabled: enabled && !!roomId && !!date,
+    retry: (failureCount, error: any) => {
+      // Don't retry on 429 (rate limit), let component handle it
+      if (error?.response?.status === 429) return false;
+      // Retry other errors up to 2 times
+      return failureCount < 2;
+    },
+    ...queryConfigs.availability,
+  });
+}
+
 export function useBuildings() {
   return useQuery({
     queryKey: ["buildings"],
     queryFn: () => getBuildings(),
     ...queryConfigs.buildings,
-  });
-}
-
-export function useRooms(buildingId?: number, enabled = true) {
-  return useQuery({
-    queryKey: ["rooms", buildingId],
-    queryFn: () => getRooms(buildingId),
-    enabled: enabled && buildingId !== undefined,
-    ...queryConfigs.rooms,
   });
 }
