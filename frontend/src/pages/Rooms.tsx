@@ -13,7 +13,6 @@ export function RoomsPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === "ADMIN";
   const isStaff = user?.role === "STAFF";
-  const isAuthorized = isAdmin || isStaff;
 
   const [buildingDialogOpen, setBuildingDialogOpen] = useState(false);
   const [roomsModalOpen, setRoomsModalOpen] = useState(false);
@@ -26,7 +25,7 @@ export function RoomsPage() {
   const { data: allBuildings = [] } = useBuildings();
   const { data: allRooms = [], isLoading: roomsLoading } = useRooms();
 
-  // Load staff's assigned buildings
+  // Load staff's assigned buildings for RBAC on edit/delete
   useEffect(() => {
     if (!isStaff || !user) return;
 
@@ -73,30 +72,18 @@ export function RoomsPage() {
     setEditingRoom(null);
   };
 
-  // Filter buildings based on user role
-  const visibleBuildings = isStaff
-    ? allBuildings.filter((b) => staffBuildingIds.includes(b.id))
-    : allBuildings;
-
-  if (!isAuthorized) {
-    return (
-      <div className="space-y-6">
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6">
-          <h2 className="text-lg font-semibold text-yellow-900">Access Restricted</h2>
-          <p className="text-yellow-800 mt-2">
-            This page is only available to Admin and Staff users. Please contact your administrator if you need access.
-          </p>
-        </div>
-      </div>
-    );
-  }
+  // All users can view all buildings and rooms
+  // Edit/delete permissions are handled at the component level
+  const visibleBuildings = allBuildings;
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Buildings & Rooms</h1>
         <p className="text-gray-600 mt-2">
-          Click on a building to manage its rooms
+          {isAdmin || isStaff
+            ? "Click on a building to manage its rooms"
+            : "Browse available buildings and rooms"}
         </p>
       </div>
 
@@ -106,6 +93,7 @@ export function RoomsPage() {
         onAddClick={handleAddBuilding}
         userRole={user?.role}
         buildings={visibleBuildings}
+        staffBuildingIds={staffBuildingIds}
       />
 
       <BuildingRoomsModal
@@ -117,13 +105,20 @@ export function RoomsPage() {
         onAddRoom={handleAddRoom}
         isLoading={roomsLoading}
         userRole={user?.role}
+        canEdit={
+          isAdmin ||
+          (isStaff && selectedBuilding !== null && staffBuildingIds.includes(selectedBuilding.id))
+        }
       />
 
       <BuildingFormDialog
         open={buildingDialogOpen}
         onOpenChange={setBuildingDialogOpen}
         building={editingBuilding}
-        canView={isAdmin}
+        canView={
+          isAdmin ||
+          (isStaff && editingBuilding !== null && staffBuildingIds.includes(editingBuilding.id))
+        }
       />
 
       <RoomFormDialog
