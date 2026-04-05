@@ -5,7 +5,7 @@ import passport from "../auth/passport";
 import { signAuthToken, signRefreshToken, verifySetupToken, verifyRefreshToken } from "../auth/jwt";
 import { env, isGoogleOAuthConfigured } from "../config/env";
 import { db } from "../db";
-import { users } from "../db/schema";
+import { users, buildings, staffBuildingAssignments } from "../db/schema";
 import { authMiddleware } from "../middleware/auth";
 import logger from "../shared/utils/logger";
 
@@ -196,6 +196,24 @@ router.get("/me", authMiddleware, async (req, res) => {
       return res.status(403).json({ error: "Your account is inactive" });
     }
 
+    // Fetch assigned buildings if user is STAFF
+    let assignedBuildings: Array<{ id: number; name: string }> = [];
+    if (user.role === "STAFF") {
+      const buildingRows = await db
+        .select({
+          id: buildings.id,
+          name: buildings.name,
+        })
+        .from(buildings)
+        .innerJoin(
+          staffBuildingAssignments,
+          eq(buildings.id, staffBuildingAssignments.buildingId)
+        )
+        .where(eq(staffBuildingAssignments.staffId, user.id));
+
+      assignedBuildings = buildingRows;
+    }
+
     return res.json({
       id: user.id,
       name: user.displayName ?? user.name,
@@ -204,6 +222,7 @@ router.get("/me", authMiddleware, async (req, res) => {
       department: user.department,
       avatarUrl: user.avatarUrl,
       registeredVia: user.registeredVia,
+      buildings: assignedBuildings,
     });
   } catch (error) {
     logger.error(error);

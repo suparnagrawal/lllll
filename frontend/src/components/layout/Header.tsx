@@ -56,6 +56,14 @@ export function Header() {
                 <div className="px-2 py-1.5 text-sm">
                   <p className="font-medium text-gray-900">{user.name}</p>
                   <p className="text-xs text-gray-500">{user.role}</p>
+                   {user.buildings && user.buildings.length > 0 && (
+                     <div className="mt-2 pt-2 border-t border-gray-200">
+                       <p className="text-xs font-medium text-gray-700 mb-1">Buildings:</p>
+                       {user.buildings.map((building) => (
+                         <p key={building.id} className="text-xs text-gray-600">{building.name}</p>
+                       ))}
+                     </div>
+                   )}
                   <div className="flex items-center gap-1 mt-1">
                     {user.registeredVia === 'google' ? (
                       <>

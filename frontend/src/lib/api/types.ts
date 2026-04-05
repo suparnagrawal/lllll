@@ -17,6 +17,7 @@ export type AuthUser = {
   avatarUrl?: string | null;
   role: UserRole;
   registeredVia?: string;
+  buildings?: Array<{ id: number; name: string }>;
 };
 
 export type AssignableUserRole = "ADMIN" | "STAFF" | "FACULTY" | "STUDENT";
@@ -61,15 +62,33 @@ export type StaffBuildingAssignmentsResponse = {
   buildings: Building[];
 };
 
+export type RoomType =
+  | "LECTURE_HALL"
+  | "CLASSROOM"
+  | "SEMINAR_ROOM"
+  | "COMPUTER_LAB"
+  | "CONFERENCE_ROOM"
+  | "AUDITORIUM"
+  | "WORKSHOP"
+  | "OTHER";
+
 export type Building = {
   id: number;
   name: string;
+  location: string | null;
+  managedByStaffId: number | null;
 };
 
 export type Room = {
   id: number;
   name: string;
   buildingId: number;
+  capacity: number | null;
+  roomType: RoomType | null;
+  hasProjector: boolean;
+  hasMic: boolean;
+  accessible: boolean;
+  equipmentList: string | null;
 };
 
 export type BookingStatus =
