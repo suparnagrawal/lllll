@@ -4,6 +4,7 @@ import {
   setAuthSession,
   clearAuth,
   httpErrorMessage,
+  getRetryAfterSeconds,
 } from "./client";
 import type { AuthUser, SetupRole, LoginResponse, ApiErrorPayload } from "./types";
 
@@ -44,10 +45,13 @@ export async function startGoogleOAuthLogin(): Promise<void> {
 
   if (!response.ok) {
     const apiPayload = payload as ApiErrorPayload | null;
+    const retryAfterSeconds = response.status === 429 
+      ? getRetryAfterSeconds(response)
+      : null;
     const message =
       apiPayload?.error ??
       apiPayload?.message ??
-      httpErrorMessage(response.status);
+      httpErrorMessage(response.status, retryAfterSeconds);
 
     throw new Error(message);
   }
