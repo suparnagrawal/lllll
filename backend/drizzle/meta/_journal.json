@@ -162,6 +162,13 @@
       "when": 1775374917267,
       "tag": "0022_deep_johnny_blaze",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1775390538123,
+      "tag": "0023_steep_pete_wisdom",
+      "breakpoints": true
     }
   ]
 }

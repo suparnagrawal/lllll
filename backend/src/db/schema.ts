@@ -179,6 +179,11 @@ export const timetableImportBatches = pgTable(
       .notNull()
       .default(sql`'[]'::jsonb`),
 
+    auxiliaryHeaders: jsonb("auxiliary_headers")
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+
     status: timetableImportBatchStatusEnum("status")
       .notNull()
       .default("PREVIEWED"),
@@ -244,6 +249,11 @@ export const timetableImportRows = pgTable(
     }),
 
     rowHash: text("row_hash"),
+
+    auxiliaryData: jsonb("auxiliary_data")
+      .$type<Record<string, string>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
 
     createdAt: timestamp("created_at", { withTimezone: false })
       .notNull()
@@ -486,6 +496,12 @@ export const notificationTypeEnum = pgEnum("notification_type", [
   "BOOKING_REQUEST_APPROVED",
   "BOOKING_REQUEST_REJECTED",
   "BOOKING_REQUEST_CANCELLED",
+  "SLOT_CHANGE_REQUESTED",
+  "SLOT_CHANGE_APPROVED",
+  "SLOT_CHANGE_REJECTED",
+  "VENUE_CHANGE_REQUESTED",
+  "VENUE_CHANGE_APPROVED",
+  "VENUE_CHANGE_REJECTED",
 ]);
 
 export const notifications = pgTable(
@@ -720,6 +736,61 @@ export const userSessions = pgTable(
   (table) => ({
     expireIdx: index("IDX_session_expire").on(table.expire),
   })
+);
+
+// Venue Change Requests (REQ-4.3.8 to REQ-4.3.11)
+export const venueChangeRequestStatusEnum = pgEnum("venue_change_request_status", [
+  "PENDING",
+  "APPROVED",
+  "REJECTED",
+  "CANCELLED",
+]);
+
+export const venueChangeRequests = pgTable(
+  "venue_change_requests",
+  {
+    id: serial("id").primaryKey(),
+    requestedBy: integer("requested_by")
+      .notNull()
+      .references(() => users.id),
+    courseId: integer("course_id")
+      .notNull()
+      .references(() => courses.id, { onDelete: "cascade" }),
+    currentBookingId: integer("current_booking_id")
+      .notNull()
+      .references(() => bookings.id, { onDelete: "cascade" }),
+    proposedRoomId: integer("proposed_room_id")
+      .notNull()
+      .references(() => rooms.id, { onDelete: "cascade" }),
+    reason: text("reason").notNull(),
+    status: venueChangeRequestStatusEnum("status").notNull().default("PENDING"),
+    reviewedBy: integer("reviewed_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    reviewNote: text("review_note"),
+    createdAt: timestamp("created_at", { withTimezone: false })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: false })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    requestedByIdx: index("venue_change_requests_requested_by_idx").on(
+      table.requestedBy,
+    ),
+    courseIdIdx: index("venue_change_requests_course_id_idx").on(table.courseId),
+    currentBookingIdIdx: index("venue_change_requests_current_booking_id_idx").on(
+      table.currentBookingId,
+    ),
+    proposedRoomIdIdx: index("venue_change_requests_proposed_room_id_idx").on(
+      table.proposedRoomId,
+    ),
+    reviewedByIdx: index("venue_change_requests_reviewed_by_idx").on(
+      table.reviewedBy,
+    ),
+    statusIdx: index("venue_change_requests_status_idx").on(table.status),
+  }),
 );
 
 export * from "../modules/timetable/schema";

@@ -435,43 +435,24 @@ export function AvailabilityPage({
           {/* Date and Time Selection for Exact View */}
           <div className="card">
             <div className="card-header">
-              <h3>Select Date Range and Time</h3>
-              <p className="text-sm text-gray-600 mt-1">Choose dates to check exact room availability</p>
+              <h3>Select Date and Time</h3>
+              <p className="text-sm text-gray-600 mt-1">Choose a date to check exact room availability</p>
             </div>
             <div className="p-6 space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {/* Date Selection */}
+                {/* Date Selection - Single date only */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Select Dates
+                    Select Date
                   </label>
                   <input
                     type="date"
                     value={selectedDates[0] || new Date().toISOString().split('T')[0]}
                     onChange={(e) => {
-                      if (!selectedDates.includes(e.target.value)) {
-                        setSelectedDates([...selectedDates, e.target.value]);
-                      }
+                      setSelectedDates([e.target.value]);
                     }}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
-                  {selectedDates.length > 0 && (
-                    <div className="mt-3 space-y-2">
-                      {selectedDates.map((date, idx) => (
-                        <div key={date} className="flex items-center justify-between bg-gray-50 p-2 rounded">
-                          <span className="text-sm font-medium text-gray-700">{new Date(date).toLocaleDateString()}</span>
-                          {selectedDates.length > 1 && (
-                            <button
-                              onClick={() => setSelectedDates(selectedDates.filter((_, i) => i !== idx))}
-                              className="text-red-600 hover:text-red-800"
-                            >
-                              <X size={16} />
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
                 </div>
 
                 {/* Time Range From */}
@@ -503,14 +484,12 @@ export function AvailabilityPage({
             </div>
           </div>
 
-          {/* Exact Availability View Component */}
-          {selectedDates.length > 0 && (
-            <ExactAvailabilityView
-              selectedDates={selectedDates}
-              timeRangeStart={timeRangeStart}
-              timeRangeEnd={timeRangeEnd}
-            />
-          )}
+          {/* Exact Availability View Component - always show so user can select buildings */}
+          <ExactAvailabilityView
+            selectedDates={selectedDates}
+            timeRangeStart={timeRangeStart}
+            timeRangeEnd={timeRangeEnd}
+          />
         </div>
       )}
     </div>

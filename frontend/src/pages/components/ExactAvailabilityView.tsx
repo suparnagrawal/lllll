@@ -1,13 +1,13 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { AlertCircle, Loader } from "lucide-react";
 import { BuildingSelector } from "./BuildingSelector";
 import { RoomAvailabilityCard } from "./RoomAvailabilityCard";
 import { useBuildings } from "../../hooks/useBuildings";
-import { useRooms } from "../../hooks/useRooms";
+import { useAvailability } from "../../hooks/useAvailability";
 import { useAuth } from "../../auth/AuthContext";
-import { getUserBuildingAssignments, getRoomDayTimeline } from "../../lib/api";
-import type { Room, TimelineSegment } from "../../lib/api";
+import { getUserBuildingAssignments } from "../../lib/api";
+import type { AvailabilityRoom } from "../../lib/api";
 import type { BookingRequestPrefill } from "../bookingAvailabilityBridge";
 
 type ExactAvailabilityViewProps = {
@@ -16,15 +16,9 @@ type ExactAvailabilityViewProps = {
   timeRangeEnd: string;
 };
 
-interface RoomWithBuilding extends Room {
+interface RoomWithBuilding extends AvailabilityRoom {
+  buildingId: number;
   buildingName: string;
-}
-
-interface RoomAvailabilityStatus {
-  roomId: number;
-  isFullyAvailable: boolean;
-  availableFrom: string;
-  availableTo: string;
 }
 
 export function ExactAvailabilityView({
@@ -40,15 +34,22 @@ export function ExactAvailabilityView({
 
   const [selectedBuildingIds, setSelectedBuildingIds] = useState<number[]>([]);
   const [staffBuildingIds, setStaffBuildingIds] = useState<number[]>([]);
-  const [roomAvailabilityMap, setRoomAvailabilityMap] = useState<
-    Map<string, RoomAvailabilityStatus>
-  >(new Map());
-  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
 
   const { data: buildings = [] } = useBuildings();
-  const { data: allRooms = [] } = useRooms(undefined, true);
+
+  // Build the start and end datetime for the availability API
+  const selectedDate = selectedDates[0] || "";
+  const startAt = selectedDate && timeRangeStart ? `${selectedDate}T${timeRangeStart}:00` : "";
+  const endAt = selectedDate && timeRangeEnd ? `${selectedDate}T${timeRangeEnd}:00` : "";
+
+  // Use the availability API - it returns buildings with rooms and their availability status
+  const { 
+    data: availabilityData = [], 
+    isLoading, 
+    isError 
+  } = useAvailability(startAt, endAt, undefined, hasSearched && !!startAt && !!endAt);
 
   // Load staff's assigned buildings
   useEffect(() => {
@@ -72,105 +73,34 @@ export function ExactAvailabilityView({
     ? buildings.filter((b) => staffBuildingIds.includes(b.id))
     : buildings;
 
-  // Get rooms for selected buildings
-  const selectedRooms: RoomWithBuilding[] = allRooms
-    .filter((r) => selectedBuildingIds.includes(r.buildingId))
-    .map((r) => ({
-      ...r,
-      buildingName:
-        buildings.find((b) => b.id === r.buildingId)?.name || "Unknown Building",
-    }))
-    .sort((a, b) => {
-      // Sort by building name, then room name
-      const buildingCompare = a.buildingName.localeCompare(b.buildingName);
-      return buildingCompare === 0 ? a.name.localeCompare(b.name) : buildingCompare;
-    });
+  // Filter availability data to selected buildings and transform rooms
+  const selectedRooms: RoomWithBuilding[] = useMemo(() => {
+    if (!hasSearched || selectedBuildingIds.length === 0) return [];
 
-  // Fetch availability for all selected rooms across all selected dates
+    return availabilityData
+      .filter((building) => selectedBuildingIds.includes(building.buildingId))
+      .flatMap((building) =>
+        building.rooms.map((room) => ({
+          ...room,
+          buildingId: building.buildingId,
+          buildingName: building.buildingName,
+        }))
+      )
+      .sort((a, b) => {
+        // Sort by building name, then room name
+        const buildingCompare = a.buildingName.localeCompare(b.buildingName);
+        return buildingCompare === 0 ? a.name.localeCompare(b.name) : buildingCompare;
+      });
+  }, [availabilityData, selectedBuildingIds, hasSearched]);
+
+  // Set error when API fails
   useEffect(() => {
-    if (!hasSearched || selectedRooms.length === 0 || selectedDates.length === 0) {
-      setRoomAvailabilityMap(new Map());
-      return;
+    if (isError) {
+      setError("Failed to load room availability. Please try again.");
+    } else {
+      setError(null);
     }
-
-    setIsLoading(true);
-    setError(null);
-
-    const fetchAvailability = async () => {
-      try {
-        const availabilityMap = new Map<string, RoomAvailabilityStatus>();
-
-        // Fetch availability for each room and date combination
-        const queries = selectedRooms.flatMap((room) =>
-          selectedDates.map((date) => ({
-            roomId: room.id,
-            date,
-            room,
-          }))
-        );
-
-        // Process queries with batching to avoid overwhelming the API
-        const batchSize = 5;
-        for (let i = 0; i < queries.length; i += batchSize) {
-          const batch = queries.slice(i, i + batchSize);
-
-          await Promise.all(
-            batch.map(async ({ roomId, date, room }) => {
-              try {
-                const data = await getRoomDayTimeline(roomId, date);
-
-                // Check if room is fully available for the time range
-                const isFullyAvailable = isRoomFullyAvailableForRange(
-                  data.segments,
-                  timeRangeStart,
-                  timeRangeEnd,
-                  date
-                );
-
-                const key = `${roomId}`;
-
-                // Update map if this is the first date or if we found availability
-                if (!availabilityMap.has(key) || isFullyAvailable) {
-                  availabilityMap.set(key, {
-                    roomId,
-                    isFullyAvailable: availabilityMap.get(key)?.isFullyAvailable
-                      ? true
-                      : isFullyAvailable,
-                    availableFrom: timeRangeStart,
-                    availableTo: timeRangeEnd,
-                  });
-                }
-              } catch (err) {
-                console.error(`Error fetching availability for room ${room.name}:`, err);
-              }
-            })
-          );
-        }
-
-        // Set status for all rooms (even if not found in map, mark as unavailable)
-        selectedRooms.forEach((room) => {
-          const key = `${room.id}`;
-          if (!availabilityMap.has(key)) {
-            availabilityMap.set(key, {
-              roomId: room.id,
-              isFullyAvailable: false,
-              availableFrom: "",
-              availableTo: "",
-            });
-          }
-        });
-
-        setRoomAvailabilityMap(availabilityMap);
-      } catch (err) {
-        console.error("Error fetching availability:", err);
-        setError("Failed to load room availability. Please try again.");
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    void fetchAvailability();
-  }, [selectedRooms, selectedDates, timeRangeStart, timeRangeEnd, hasSearched]);
+  }, [isError]);
 
   const handleRoomClick = (room: RoomWithBuilding) => {
     const startTime = `${selectedDates[0]}T${timeRangeStart}:00`;
@@ -193,6 +123,10 @@ export function ExactAvailabilityView({
   };
 
   const handleProceedSearch = () => {
+    if (selectedDates.length === 0) {
+      setError("Please select a date");
+      return;
+    }
     if (selectedBuildingIds.length === 0) {
       setError("Please select at least one building");
       return;
@@ -232,7 +166,7 @@ export function ExactAvailabilityView({
           {/* Proceed Button */}
           <button
             onClick={handleProceedSearch}
-            disabled={selectedBuildingIds.length === 0}
+            disabled={selectedBuildingIds.length === 0 || selectedDates.length === 0}
             className="w-full mt-4 px-4 py-2 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
           >
             Search Availability
@@ -269,20 +203,17 @@ export function ExactAvailabilityView({
                 <p className="text-gray-500 text-sm">No rooms in this building</p>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {rooms.map((room) => {
-                    const availability = roomAvailabilityMap.get(`${room.id}`);
-                    return (
-                      <RoomAvailabilityCard
-                        key={room.id}
-                        room={room}
-                        buildingName={buildingName}
-                        isFullyAvailable={availability?.isFullyAvailable ?? false}
-                        availableFrom={availability?.availableFrom ?? ""}
-                        availableTo={availability?.availableTo ?? ""}
-                        onClick={() => handleRoomClick(room)}
-                      />
-                    );
-                  })}
+                  {rooms.map((room) => (
+                    <RoomAvailabilityCard
+                      key={room.id}
+                      room={room}
+                      buildingName={buildingName}
+                      isFullyAvailable={room.isAvailable}
+                      availableFrom={timeRangeStart}
+                      availableTo={timeRangeEnd}
+                      onClick={() => handleRoomClick(room)}
+                    />
+                  ))}
                 </div>
               )}
             </div>
@@ -291,43 +222,4 @@ export function ExactAvailabilityView({
       )}
     </div>
   );
-}
-
-// Utility function to check if a room is fully available for a time range
-function isRoomFullyAvailableForRange(
-  segments: TimelineSegment[],
-  timeRangeStart: string,
-  timeRangeEnd: string,
-  date: string
-): boolean {
-  // Parse time range (HH:MM format)
-  const [startHour, startMin] = timeRangeStart.split(":").map(Number);
-  const [endHour, endMin] = timeRangeEnd.split(":").map(Number);
-
-  const startMinutes = startHour * 60 + startMin;
-  const endMinutes = endHour * 60 + endMin;
-
-  // Convert date to a reference point
-  const dayStart = new Date(date);
-  dayStart.setUTCHours(0, 0, 0, 0);
-
-  // Check if all segments in the time range are free
-  for (const segment of segments) {
-    const segmentStart = new Date(segment.start);
-    const segmentEnd = new Date(segment.end);
-
-    const segmentStartMin =
-      (segmentStart.getTime() - dayStart.getTime()) / (1000 * 60);
-    const segmentEndMin = (segmentEnd.getTime() - dayStart.getTime()) / (1000 * 60);
-
-    // Check if this segment overlaps with our desired time range
-    if (segmentStartMin < endMinutes && segmentEndMin > startMinutes) {
-      // If it's not free, room is not fully available
-      if (segment.status !== "free") {
-        return false;
-      }
-    }
-  }
-
-  return true;
 }

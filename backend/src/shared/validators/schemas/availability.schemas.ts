@@ -1,10 +1,10 @@
 import { z } from 'zod';
 
 export const availabilitySchema = z.object({
-  startAt: z.string().datetime({
+  startAt: z.string().refine((val) => !isNaN(Date.parse(val)), {
     message: 'startAt must be a valid datetime string',
   }),
-  endAt: z.string().datetime({
+  endAt: z.string().refine((val) => !isNaN(Date.parse(val)), {
     message: 'endAt must be a valid datetime string',
   }),
   buildingId: z.string()

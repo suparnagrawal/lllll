@@ -2231,6 +2231,17 @@ export function TimetableBuilderPage() {
                         Slot: {row.slot || "-"} · Classroom: {row.classroom || "-"}
                       </div>
 
+                      {row.auxiliaryData && Object.keys(row.auxiliaryData).length > 0 && (
+                        <div className="data-item-subtitle mt-1">
+                          {Object.entries(row.auxiliaryData).map(([key, value], idx) => (
+                            <span key={key}>
+                              {idx > 0 && " · "}
+                              {key}: {value}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
                       {row.reasons.length > 0 && (
                         <div className="empty-text mt-2">
                           Reason: {row.reasons.join(" | ")}

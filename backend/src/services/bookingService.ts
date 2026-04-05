@@ -25,6 +25,7 @@ export type BookingSourceMetadata = {
   sourceRef?: string;
   approvedBy?: number;
   approvedAt?: string | Date;
+  auxiliaryData?: Record<string, string>;
 };
 
 export type CreateBookingInput = {

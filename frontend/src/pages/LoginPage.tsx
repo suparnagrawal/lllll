@@ -159,27 +159,10 @@ export default function LoginPage() {
     try {
       setGoogleLoading(true);
       await loginWithGoogle();
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Failed to initiate Google sign-in. Please try again.";
-      const retryMatch = errorMessage.match(/Try again in (\d+) second/);
-      const retryCountdownSeconds = retryMatch ? parseInt(retryMatch[1], 10) : undefined;
-      
-      let nextLoginTime: string | undefined;
-      if (retryCountdownSeconds) {
-        const now = new Date();
-        const nextLoginDate = new Date(now.getTime() + retryCountdownSeconds * 1000);
-        nextLoginTime = nextLoginDate.toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-        });
-      }
-      
+    } catch {
       setToast({
         type: "error",
-        message: errorMessage,
-        retryCountdownSeconds,
-        nextLoginTime,
+        message: "Failed to initiate Google sign-in. Please try again.",
       });
       setGoogleLoading(false);
     }

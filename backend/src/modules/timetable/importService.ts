@@ -94,6 +94,7 @@ type PreviewRowBuildResult = {
   resolvedSlotLabel: string | null;
   resolvedRoomId: number | null;
   rowHash: string | null;
+  auxiliaryData: Record<string, string>;
 };
 
 type PreviewResponseRow = {
@@ -109,6 +110,7 @@ type PreviewResponseRow = {
   parsedRoom: string | null;
   resolvedSlotLabel: string | null;
   resolvedRoomId: number | null;
+  auxiliaryData: Record<string, string>;
 };
 
 type PreviewReport = {
@@ -124,6 +126,7 @@ type PreviewReport = {
   warnings: string[];
   savedDecisions: SavedDecisionSnapshot[];
   rows: PreviewResponseRow[];
+  auxiliaryHeaders: string[];
 };
 
 type SavedDecisionSnapshot = {
@@ -1509,6 +1512,7 @@ function toPreviewRowResponse(row: {
   parsedRoom: string | null;
   resolvedSlotLabel: string | null;
   resolvedRoomId: number | null;
+  auxiliaryData: Record<string, string>;
 }): PreviewResponseRow {
   return {
     rowId: row.id,
@@ -1523,6 +1527,7 @@ function toPreviewRowResponse(row: {
     parsedRoom: row.parsedRoom,
     resolvedSlotLabel: row.resolvedSlotLabel,
     resolvedRoomId: row.resolvedRoomId,
+    auxiliaryData: row.auxiliaryData,
   };
 }
 
@@ -1535,6 +1540,7 @@ function buildPreviewReportFromRows(input: {
   termEndDate: Date;
   warnings: string[];
   savedDecisions: SavedDecisionSnapshot[];
+  auxiliaryHeaders: string[];
   rows: Array<{
     id: number;
     rowIndex: number;
@@ -1548,6 +1554,7 @@ function buildPreviewReportFromRows(input: {
     parsedRoom: string | null;
     resolvedSlotLabel: string | null;
     resolvedRoomId: number | null;
+    auxiliaryData: Record<string, string>;
   }>;
 }): PreviewReport {
   const responseRows = input.rows.map(toPreviewRowResponse);
@@ -1569,6 +1576,7 @@ function buildPreviewReportFromRows(input: {
     warnings: input.warnings,
     savedDecisions: input.savedDecisions,
     rows: responseRows,
+    auxiliaryHeaders: input.auxiliaryHeaders,
   };
 }
 
@@ -1610,6 +1618,7 @@ async function fetchBatchPreviewReport(batchId: number, reused: boolean): Promis
         termEndDate: timetableImportBatches.termEndDate,
         status: timetableImportBatches.status,
         warnings: timetableImportBatches.warnings,
+        auxiliaryHeaders: timetableImportBatches.auxiliaryHeaders,
       })
       .from(timetableImportBatches)
       .where(eq(timetableImportBatches.id, batchId))
@@ -1637,6 +1646,7 @@ async function fetchBatchPreviewReport(batchId: number, reused: boolean): Promis
       parsedRoom: timetableImportRows.parsedRoom,
       resolvedSlotLabel: timetableImportRows.resolvedSlotLabel,
       resolvedRoomId: timetableImportRows.resolvedRoomId,
+      auxiliaryData: timetableImportRows.auxiliaryData,
     })
     .from(timetableImportRows)
     .where(eq(timetableImportRows.batchId, batch.id))
@@ -1651,6 +1661,7 @@ async function fetchBatchPreviewReport(batchId: number, reused: boolean): Promis
     termEndDate: batch.termEndDate,
     warnings: Array.isArray(batch.warnings) ? (batch.warnings as string[]) : [],
     savedDecisions,
+    auxiliaryHeaders: Array.isArray(batch.auxiliaryHeaders) ? (batch.auxiliaryHeaders as string[]) : [],
     rows,
   });
 }
@@ -1723,6 +1734,18 @@ export async function previewTimetableImport(input: PreviewImportInput): Promise
   const hasHeader = rows.length > 0 && looksLikeHeaderRow(rows[0] ?? []);
   const startIndex = hasHeader ? 1 : 0;
 
+  // Extract auxiliary headers (columns 3+) from header row
+  const auxiliaryHeaders: string[] = [];
+  if (hasHeader) {
+    const headerRow = rows[0] ?? [];
+    for (let i = 3; i < headerRow.length; i++) {
+      const headerValue = normalizeSpace(String(headerRow[i] ?? ""));
+      if (headerValue) {
+        auxiliaryHeaders.push(headerValue);
+      }
+    }
+  }
+
   const seenRowHash = new Map<string, number>();
 
   const preparedRows: PreviewRowBuildResult[] = [];
@@ -1734,6 +1757,16 @@ export async function previewTimetableImport(input: PreviewImportInput): Promise
     const rawCourseCode = normalizeSpace(String(row[0] ?? ""));
     const rawSlot = normalizeSpace(String(row[1] ?? ""));
     const rawClassroom = normalizeSpace(String(row[2] ?? ""));
+
+    // Build auxiliary data by mapping headers to values (columns 3+)
+    const auxiliaryData: Record<string, string> = {};
+    for (let i = 0; i < auxiliaryHeaders.length; i++) {
+      const headerName = auxiliaryHeaders[i];
+      const cellValue = normalizeSpace(String(row[i + 3] ?? ""));
+      if (headerName && cellValue) {
+        auxiliaryData[headerName] = cellValue;
+      }
+    }
 
     const isBlankRow = !rawCourseCode && !rawSlot && !rawClassroom;
     if (isBlankRow) {
@@ -1862,6 +1895,7 @@ export async function previewTimetableImport(input: PreviewImportInput): Promise
         resolvedSlotLabel,
         resolvedRoomId,
         rowHash,
+        auxiliaryData,
       });
 
       continue;
@@ -1884,6 +1918,7 @@ export async function previewTimetableImport(input: PreviewImportInput): Promise
       resolvedSlotLabel,
       resolvedRoomId,
       rowHash: null,
+      auxiliaryData,
     });
   }
 
@@ -1903,6 +1938,7 @@ export async function previewTimetableImport(input: PreviewImportInput): Promise
       fingerprint,
       aliasMap: aliasObj,
       warnings,
+      auxiliaryHeaders,
       status: "PREVIEWED",
       createdBy: input.createdBy ?? null,
     })
@@ -1933,6 +1969,7 @@ export async function previewTimetableImport(input: PreviewImportInput): Promise
         resolvedSlotLabel: row.resolvedSlotLabel,
         resolvedRoomId: row.resolvedRoomId,
         rowHash: row.rowHash,
+        auxiliaryData: row.auxiliaryData,
       })),
     )
     .returning({
@@ -1948,6 +1985,7 @@ export async function previewTimetableImport(input: PreviewImportInput): Promise
       parsedRoom: timetableImportRows.parsedRoom,
       resolvedSlotLabel: timetableImportRows.resolvedSlotLabel,
       resolvedRoomId: timetableImportRows.resolvedRoomId,
+      auxiliaryData: timetableImportRows.auxiliaryData,
     });
 
   return buildPreviewReportFromRows({
@@ -1959,6 +1997,7 @@ export async function previewTimetableImport(input: PreviewImportInput): Promise
     termEndDate,
     warnings,
     savedDecisions: [],
+    auxiliaryHeaders,
     rows: insertedRows,
   });
 }
@@ -2815,6 +2854,7 @@ async function getBatchRows(batchId: number) {
       rawClassroom: timetableImportRows.rawClassroom,
       resolvedSlotLabel: timetableImportRows.resolvedSlotLabel,
       resolvedRoomId: timetableImportRows.resolvedRoomId,
+      auxiliaryData: timetableImportRows.auxiliaryData,
     })
     .from(timetableImportRows)
     .where(eq(timetableImportRows.batchId, batchId))
@@ -3101,6 +3141,7 @@ export async function commitTimetableImport(
     startAt: Date;
     endAt: Date;
     sourceRef: string;
+    auxiliaryData: Record<string, string>;
   }> = [];
 
   const warnings: string[] = [];
@@ -3286,6 +3327,7 @@ export async function commitTimetableImport(
           startAt: interval.startAt,
           endAt: interval.endAt,
           sourceRef: `batch:${batch.id}:row:${row.id}:block:${descriptor.blockId}`,
+          auxiliaryData: row.auxiliaryData,
         });
       }
     }
@@ -3306,6 +3348,9 @@ export async function commitTimetableImport(
         metadata: {
           source: "TIMETABLE_ALLOCATION",
           sourceRef: item.sourceRef,
+          ...(Object.keys(item.auxiliaryData).length > 0
+            ? { auxiliaryData: item.auxiliaryData }
+            : {}),
         },
       })),
     );

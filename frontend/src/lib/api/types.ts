@@ -288,6 +288,7 @@ export type TimetableImportPreviewRow = {
   parsedRoom: string | null;
   resolvedSlotLabel: string | null;
   resolvedRoomId: number | null;
+  auxiliaryData: Record<string, string>;
 };
 
 export type TimetableImportPreviewReport = {
@@ -303,6 +304,7 @@ export type TimetableImportPreviewReport = {
   warnings: string[];
   savedDecisions: TimetableImportSavedDecision[];
   rows: TimetableImportPreviewRow[];
+  auxiliaryHeaders: string[];
 };
 
 export type TimetableImportSavedDecision = {

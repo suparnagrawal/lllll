@@ -1,8 +1,14 @@
 import { ChevronRight } from "lucide-react";
-import type { Room } from "../../lib/api";
+
+type RoomAvailabilityCardRoom = {
+  id: number;
+  name: string;
+  capacity?: number | null;
+  roomType?: string | null;
+};
 
 type RoomAvailabilityCardProps = {
-  room: Room;
+  room: RoomAvailabilityCardRoom;
   buildingName: string;
   isFullyAvailable: boolean;
   availableFrom: string;
