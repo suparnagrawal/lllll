@@ -45,6 +45,7 @@ export function ExactAvailabilityView({
   >(new Map());
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hasSearched, setHasSearched] = useState(false);
 
   const { data: buildings = [] } = useBuildings();
   const { data: allRooms = [] } = useRooms(undefined, true);
@@ -87,7 +88,7 @@ export function ExactAvailabilityView({
 
   // Fetch availability for all selected rooms across all selected dates
   useEffect(() => {
-    if (selectedRooms.length === 0 || selectedDates.length === 0) {
+    if (!hasSearched || selectedRooms.length === 0 || selectedDates.length === 0) {
       setRoomAvailabilityMap(new Map());
       return;
     }
@@ -169,7 +170,7 @@ export function ExactAvailabilityView({
     };
 
     void fetchAvailability();
-  }, [selectedRooms, selectedDates, timeRangeStart, timeRangeEnd]);
+  }, [selectedRooms, selectedDates, timeRangeStart, timeRangeEnd, hasSearched]);
 
   const handleRoomClick = (room: RoomWithBuilding) => {
     const startTime = `${selectedDates[0]}T${timeRangeStart}:00`;
@@ -189,6 +190,14 @@ export function ExactAvailabilityView({
       // Student and Faculty go to Booking Requests page
       navigate("/requests", { state: { prefill } });
     }
+  };
+
+  const handleProceedSearch = () => {
+    if (selectedBuildingIds.length === 0) {
+      setError("Please select at least one building");
+      return;
+    }
+    setHasSearched(true);
   };
 
   // Group rooms by building
@@ -213,12 +222,21 @@ export function ExactAvailabilityView({
             Choose buildings to see room availability
           </p>
         </div>
-        <div className="p-6">
+        <div className="p-6 space-y-4">
           <BuildingSelector
             buildings={visibleBuildings}
             selectedBuildingIds={selectedBuildingIds}
             onSelectionChange={setSelectedBuildingIds}
           />
+          
+          {/* Proceed Button */}
+          <button
+            onClick={handleProceedSearch}
+            disabled={selectedBuildingIds.length === 0}
+            className="w-full mt-4 px-4 py-2 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+          >
+            Search Availability
+          </button>
         </div>
       </div>
 
@@ -233,25 +251,16 @@ export function ExactAvailabilityView({
         </div>
       )}
 
-      {/* Empty State */}
-      {selectedBuildingIds.length === 0 && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-8 text-center">
-          <p className="text-gray-600">
-            Select one or more buildings to view room availability
-          </p>
-        </div>
-      )}
-
       {/* Loading State */}
-      {isLoading && (
+      {isLoading && hasSearched && (
         <div className="flex items-center justify-center py-12">
           <Loader className="animate-spin text-blue-500 mr-3" size={24} />
           <span className="text-gray-600">Loading room availability...</span>
         </div>
       )}
 
-      {/* Rooms by Building */}
-      {selectedBuildingIds.length > 0 && !isLoading && (
+      {/* Rooms by Building - Only show after search */}
+      {hasSearched && !isLoading && selectedBuildingIds.length > 0 && (
         <div className="space-y-6">
           {Object.entries(groupedRooms).map(([buildingName, rooms]) => (
             <div key={buildingName}>
