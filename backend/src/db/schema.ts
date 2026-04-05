@@ -2,6 +2,7 @@ import {
   pgTable,
   pgEnum,
   serial,
+  AnyPgColumn,
   text,
   boolean,
   uniqueIndex,
@@ -89,7 +90,7 @@ export const bookings = pgTable("bookings", {
 
   endAt: timestamp("end_at", { withTimezone: false }).notNull(),
 
-  requestId: integer("request_id").references(() => bookingRequests.id, {
+  requestId: integer("request_id").references((): AnyPgColumn => bookingRequests.id, {
     onDelete: "set null",
   }),
 
@@ -281,7 +282,7 @@ export const timetableImportOccurrences = pgTable(
 
     dedupeKey: text("dedupe_key").notNull(),
 
-    bookingId: integer("booking_id").references(() => bookings.id, {
+    bookingId: integer("booking_id").references((): AnyPgColumn => bookings.id, {
       onDelete: "set null",
     }),
 

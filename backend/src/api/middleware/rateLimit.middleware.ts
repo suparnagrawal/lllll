@@ -25,8 +25,8 @@ export const authLimiter = rateLimit({
     }) as any,
     prefix: 'rl:auth:',
   }),
-  windowMs: 5 * 60 * 1000, // 5 minutes
-  max: 10,
+  windowMs: 3 * 60 * 1000, // 3 minutes
+  max: 5,
   standardHeaders: true,
   legacyHeaders: false,
 });

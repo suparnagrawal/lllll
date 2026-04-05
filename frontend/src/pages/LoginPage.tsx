@@ -12,9 +12,10 @@ interface ToastProps {
   message: string;
   onDismiss: () => void;
   retryCountdownSeconds?: number;
+  nextLoginTime?: string;
 }
 
-function Toast({ type, message, onDismiss, retryCountdownSeconds }: ToastProps) {
+function Toast({ type, message, onDismiss, retryCountdownSeconds, nextLoginTime }: ToastProps) {
   const [countdown, setCountdown] = useState(retryCountdownSeconds ?? 0);
 
   useEffect(() => {
@@ -46,7 +47,12 @@ function Toast({ type, message, onDismiss, retryCountdownSeconds }: ToastProps) 
     <div
       className={`fixed bottom-4 right-4 px-4 py-3 rounded-lg ${bgColor} ${textColor} shadow-lg animate-in fade-in slide-in-from-bottom-4 z-50`}
     >
-      {displayMessage}
+      <div>{displayMessage}</div>
+      {nextLoginTime && (
+        <div className="text-sm mt-2 opacity-90">
+          Next login available: {nextLoginTime}
+        </div>
+      )}
     </div>
   );
 }
@@ -63,6 +69,7 @@ export default function LoginPage() {
     type: "error" | "success";
     message: string;
     retryCountdownSeconds?: number;
+    nextLoginTime?: string;
   } | null>(null);
 
   // Check for OAuth error in URL
@@ -127,10 +134,22 @@ export default function LoginPage() {
       const retryMatch = errorMessage.match(/Try again in (\d+) second/);
       const retryCountdownSeconds = retryMatch ? parseInt(retryMatch[1], 10) : undefined;
       
+      let nextLoginTime: string | undefined;
+      if (retryCountdownSeconds) {
+        const now = new Date();
+        const nextLoginDate = new Date(now.getTime() + retryCountdownSeconds * 1000);
+        nextLoginTime = nextLoginDate.toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        });
+      }
+      
       setToast({
         type: "error",
         message: errorMessage,
         retryCountdownSeconds,
+        nextLoginTime,
       });
       setEmailLoading(false);
     }
@@ -318,12 +337,12 @@ export default function LoginPage() {
         </div>
       </div>
 
-      {/* Toast Notifications */}
       {toast && (
         <Toast
           type={toast.type}
           message={toast.message}
           retryCountdownSeconds={toast.retryCountdownSeconds}
+          nextLoginTime={toast.nextLoginTime}
           onDismiss={() => setToast(null)}
         />
       )}
