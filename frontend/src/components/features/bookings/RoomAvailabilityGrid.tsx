@@ -8,6 +8,7 @@ interface RoomAvailabilityGridProps {
   roomAvailabilityData: Map<number, any>;
   isLoading: boolean;
   error?: Error | null;
+  selectedDate: string;
 }
 
 export function RoomAvailabilityGrid({
@@ -15,6 +16,7 @@ export function RoomAvailabilityGrid({
   roomAvailabilityData,
   isLoading,
   error,
+  selectedDate,
 }: RoomAvailabilityGridProps) {
   const { user } = useAuth();
   const [expandedBookings, setExpandedBookings] = useState<Set<number>>(new Set());
@@ -82,8 +84,7 @@ export function RoomAvailabilityGrid({
     );
   }
 
-  // Get the current date for slot calculations
-  const today = new Date().toISOString().split('T')[0];
+
 
   return (
     <div className="card">
@@ -128,7 +129,7 @@ export function RoomAvailabilityGrid({
                 const roomData = roomAvailabilityData.get(room.id);
                 const bookingsInSlot = roomData?.bookings
                   ? (roomData.bookings as BookingDetail[]).filter((b) =>
-                      isBookingInSlot(b, timeSlot, today)
+                      isBookingInSlot(b, timeSlot, selectedDate)
                     )
                   : [];
 

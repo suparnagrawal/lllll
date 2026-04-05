@@ -397,3 +397,164 @@ export async function invalidateAvailabilityCache(
     console.warn('Cache invalidation error:', error);
   }
 }
+
+export interface HourlySlot {
+  hour: number;
+  bookings: BookingDetail[];
+  isAvailable: boolean;
+}
+
+export interface RoomDayAvailability {
+  room: {
+    id: number;
+    name: string;
+    buildingId: number;
+    buildingName: string;
+  };
+  date: string;
+  bookings: BookingDetail[];
+  hourlySlots: HourlySlot[];
+}
+
+/**
+ * Get full-day availability for a specific room with hourly breakdown.
+ * Optimized for single room + single day queries.
+ * Includes RBAC filtering for booking details.
+ */
+export async function getRoomDayAvailabilityQuery(
+  roomId: number,
+  dateStr: string,
+  user: {
+    id: number;
+    role: 'ADMIN' | 'STAFF' | 'FACULTY' | 'STUDENT' | 'PENDING_ROLE';
+    staffBuildingIds?: number[];
+  }
+): Promise<RoomDayAvailability> {
+  // Parse the date and construct full day range
+  const dayStart = new Date(`${dateStr}T00:00:00.000Z`);
+  const dayEnd = new Date(dayStart);
+  dayEnd.setDate(dayEnd.getDate() + 1);
+
+  // Get room details
+  const roomData = await db
+    .select({
+      id: rooms.id,
+      name: rooms.name,
+      buildingId: rooms.buildingId,
+      buildingName: buildings.name,
+    })
+    .from(rooms)
+    .innerJoin(buildings, eq(rooms.buildingId, buildings.id))
+    .where(eq(rooms.id, roomId))
+    .limit(1);
+
+  if (roomData.length === 0) {
+    throw new Error(`Room with id ${roomId} not found`);
+  }
+
+  const roomInfo = roomData[0]!;
+
+  // Get all bookings for this room on this day
+  const bookingData = await db
+    .select({
+      bookingId: bookings.id,
+      startAt: bookings.startAt,
+      endAt: bookings.endAt,
+      requestId: bookings.requestId,
+      userId: bookingRequests.userId,
+      facultyId: bookingRequests.facultyId,
+      eventType: bookingRequests.eventType,
+      purpose: bookingRequests.purpose,
+      userName: users.name,
+      userEmail: users.email,
+    })
+    .from(bookings)
+    .leftJoin(bookingRequests, eq(bookings.requestId, bookingRequests.id))
+    .leftJoin(
+      users,
+      or(
+        eq(bookingRequests.userId, users.id),
+        eq(bookingRequests.facultyId, users.id)
+      )
+    )
+    .where(
+      and(
+        eq(bookings.roomId, roomId),
+        lt(bookings.startAt, dayEnd),
+        gt(bookings.endAt, dayStart)
+      )
+    )
+    .orderBy(asc(bookings.startAt));
+
+  // Process bookings with visibility filtering
+  const bookingDetails: BookingDetail[] = [];
+  const bookingsByHour: Map<number, BookingDetail[]> = new Map();
+
+  for (const row of bookingData) {
+    const bookingUserId = row.userId || row.facultyId;
+    const visibilityLevel = getBookingVisibilityLevel(
+      user.role,
+      user.id,
+      bookingUserId,
+      roomInfo.buildingId,
+      user.staffBuildingIds || []
+    );
+
+    const detail: BookingDetail = {
+      id: row.bookingId,
+      startAt: row.startAt.toISOString(),
+      endAt: row.endAt.toISOString(),
+      hasAccess: visibilityLevel === 'full',
+      visibilityLevel,
+    };
+
+    if (visibilityLevel === 'full') {
+      if (row.eventType) {
+        detail.activityName = row.eventType;
+      }
+      detail.bookedBy = row.userName || 'Unknown';
+      detail.contactInfo = row.userEmail || '';
+      detail.purpose = row.purpose || '';
+    }
+
+    bookingDetails.push(detail);
+
+    // Map booking to hourly slots
+    const startHour = Math.floor(
+      (row.startAt.getTime() - dayStart.getTime()) / (60 * 60 * 1000)
+    );
+    const endHour = Math.ceil(
+      (row.endAt.getTime() - dayStart.getTime()) / (60 * 60 * 1000)
+    );
+
+    for (let hour = Math.max(0, startHour); hour < Math.min(24, endHour); hour++) {
+      if (!bookingsByHour.has(hour)) {
+        bookingsByHour.set(hour, []);
+      }
+      bookingsByHour.get(hour)!.push(detail);
+    }
+  }
+
+  // Create hourly slots
+  const hourlySlots: HourlySlot[] = [];
+  for (let hour = 0; hour < 24; hour++) {
+    const hourBookings = bookingsByHour.get(hour) || [];
+    hourlySlots.push({
+      hour,
+      bookings: hourBookings,
+      isAvailable: hourBookings.length === 0,
+    });
+  }
+
+  return {
+    room: {
+      id: roomInfo.id,
+      name: roomInfo.name,
+      buildingId: roomInfo.buildingId,
+      buildingName: roomInfo.buildingName,
+    },
+    date: dateStr,
+    bookings: bookingDetails,
+    hourlySlots,
+  };
+}

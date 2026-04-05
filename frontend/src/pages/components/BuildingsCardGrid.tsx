@@ -4,22 +4,32 @@ import { useRooms } from "../../hooks/useRooms";
 import { BuildingCard } from "./BuildingCard";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
-import type { Building } from "../../lib/api/types";
+import type { Building, UserRole } from "../../lib/api/types";
 
 interface BuildingsCardGridProps {
   onBuildingClick: (building: Building) => void;
   onBuildingEdit: (building: Building) => void;
   onAddClick: () => void;
+  userRole?: UserRole;
+  buildings?: Building[];
 }
 
 export function BuildingsCardGrid({
   onBuildingClick,
   onBuildingEdit,
   onAddClick,
+  userRole,
+  buildings: propBuildings,
 }: BuildingsCardGridProps) {
   const [search, setSearch] = useState("");
-  const { data: buildings = [], isLoading, error, refetch } = useBuildings();
+  
+  // Use provided buildings (from parent for scoped view) or fetch all
+  const { data: fetchedBuildings = [], isLoading, error, refetch } = useBuildings();
+  const buildings = propBuildings || fetchedBuildings;
+  
   const { data: allRooms = [] } = useRooms();
+
+  const canAddBuilding = userRole === "ADMIN";
 
   const filteredBuildings = useMemo(() => {
     return buildings.filter(
@@ -52,7 +62,7 @@ export function BuildingsCardGrid({
           onChange={(e) => setSearch(e.target.value)}
           className="max-w-sm"
         />
-        <Button onClick={onAddClick}>+ Add Building</Button>
+        {canAddBuilding && <Button onClick={onAddClick}>+ Add Building</Button>}
       </div>
 
       {isLoading ? (
@@ -72,6 +82,7 @@ export function BuildingsCardGrid({
               roomCount={getRoomCount(building.id)}
               onClick={() => onBuildingClick(building)}
               onEdit={() => onBuildingEdit(building)}
+              userRole={userRole}
             />
           ))}
         </div>

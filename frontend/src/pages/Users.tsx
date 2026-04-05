@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Input } from "../components/ui/input";
 import { Badge } from "../components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
+import { BuildingAssignmentDialog } from "./components/BuildingAssignmentDialog";
 
 type RoleFilter = "ALL" | UserRole;
 const PAGE_SIZES = [10, 20, 50];
@@ -42,6 +43,7 @@ export function UsersPage() {
   const [deletingUser, setDeletingUser] = useState<ManagedUser | null>(null);
   const [bulkActionMode, setBulkActionMode] = useState<"activate" | "deactivate" | "role" | null>(null);
   const [bulkRole, setBulkRole] = useState<AssignableUserRole>("FACULTY");
+  const [managingBuildingsUser, setManagingBuildingsUser] = useState<ManagedUser | null>(null);
 
   const loadUsers = async (targetPage = 1) => {
     setLoading(true);
@@ -317,15 +319,16 @@ export function UsersPage() {
               <TableHead>Email</TableHead>
               <TableHead>Role</TableHead>
               <TableHead>Department</TableHead>
+              <TableHead>Buildings</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading && users.length === 0 ? (
-              <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">Loading...</TableCell></TableRow>
+              <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">Loading...</TableCell></TableRow>
             ) : users.length === 0 ? (
-              <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No users found</TableCell></TableRow>
+              <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">No users found</TableCell></TableRow>
             ) : (
               users.map(u => (
                 <TableRow key={u.id}>
@@ -334,9 +337,30 @@ export function UsersPage() {
                   <TableCell className="text-sm">{u.email}</TableCell>
                   <TableCell><Badge variant={roleBadgeVariant(u.role)}>{ROLE_LABELS[u.role]}</Badge></TableCell>
                   <TableCell className="text-sm">{u.department || "—"}</TableCell>
+                  <TableCell className="text-sm">
+                    {u.role === "STAFF" ? (
+                      u.assignedBuildings?.length > 0 ? (
+                        <div className="flex gap-1 flex-wrap">
+                          {u.assignedBuildings.slice(0, 2).map(b => (
+                            <Badge key={b.id} variant="secondary" className="text-xs">{b.name}</Badge>
+                          ))}
+                          {u.assignedBuildings.length > 2 && (
+                            <Badge variant="secondary" className="text-xs">+{u.assignedBuildings.length - 2}</Badge>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">None</span>
+                      )
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
                   <TableCell><Badge variant={u.isActive ? "outline" : "secondary"}>{u.isActive ? "Active" : "Inactive"}</Badge></TableCell>
                   <TableCell className="text-right space-x-1">
                     <Button size="sm" variant="outline" onClick={() => setEditingUser(u)}>Edit</Button>
+                    {u.role === "STAFF" && (
+                      <Button size="sm" variant="outline" onClick={() => setManagingBuildingsUser(u)}>Buildings</Button>
+                    )}
                     <Button size="sm" variant="outline" onClick={() => setDeactivatingUser(u)}>{u.isActive ? "Deactivate" : "Activate"}</Button>
                     <Button size="sm" variant="destructive" onClick={() => setDeletingUser(u)}>Delete</Button>
                   </TableCell>
@@ -463,6 +487,16 @@ export function UsersPage() {
           </div>
         </AlertDialogContent>
       </AlertDialog>
+
+      <BuildingAssignmentDialog
+        user={managingBuildingsUser}
+        open={!!managingBuildingsUser}
+        onOpenChange={(open) => !open && setManagingBuildingsUser(null)}
+        onSuccess={() => {
+          setNotice(`Building assignments updated successfully`);
+          void loadUsers(page);
+        }}
+      />
     </section>
   );
 }

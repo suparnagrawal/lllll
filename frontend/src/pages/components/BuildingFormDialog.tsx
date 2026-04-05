@@ -28,17 +28,23 @@ interface BuildingFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   building?: Building | null;
+  canView?: boolean;
 }
 
 export function BuildingFormDialog({
   open,
   onOpenChange,
   building,
+  canView = true,
 }: BuildingFormDialogProps) {
   const [error, setError] = useState<string | null>(null);
   const createMutation = useCreateBuilding();
   const updateMutation = useUpdateBuilding();
   const isLoading = createMutation.isPending || updateMutation.isPending;
+
+  if (!canView) {
+    return null;
+  }
 
   const {
     register,

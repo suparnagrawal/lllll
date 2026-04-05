@@ -8,6 +8,7 @@ import {
   updateRoomSchema,
   listRoomsSchema,
   roomAvailabilitySchema,
+  roomDayAvailabilitySchema,
 } from '../shared/validators/schemas/room.schemas';
 import { idParamSchema } from '../shared/validators/schemas/common.schemas';
 
@@ -20,6 +21,15 @@ router.get(
   validate({ query: listRoomsSchema }),
   (req, res, next) => {
     controller.list(req, res).catch(next);
+  }
+);
+
+router.get(
+  '/:id/availability/day',
+  authMiddleware,
+  validate({ params: idParamSchema, query: roomDayAvailabilitySchema }),
+  (req, res, next) => {
+    controller.getRoomDayAvailability(req, res).catch(next);
   }
 );
 

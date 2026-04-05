@@ -5,7 +5,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../components/ui/dialog";
-import type { Building, Room } from "../../lib/api/types";
+import type { Building, Room, UserRole } from "../../lib/api/types";
 import { RoomsCardGrid } from "./RoomsCardGrid";
 
 interface BuildingRoomsModalProps {
@@ -16,6 +16,7 @@ interface BuildingRoomsModalProps {
   onRoomEdit: (room: Room) => void;
   onAddRoom: (buildingId: number) => void;
   isLoading?: boolean;
+  userRole?: UserRole;
 }
 
 export function BuildingRoomsModal({
@@ -26,6 +27,7 @@ export function BuildingRoomsModal({
   onRoomEdit,
   onAddRoom,
   isLoading = false,
+  userRole,
 }: BuildingRoomsModalProps) {
   if (!building) return null;
 
@@ -48,6 +50,7 @@ export function BuildingRoomsModal({
             onEditClick={onRoomEdit}
             onAddClick={() => onAddRoom(building.id)}
             isLoading={isLoading}
+            userRole={userRole}
           />
         </div>
       </DialogContent>

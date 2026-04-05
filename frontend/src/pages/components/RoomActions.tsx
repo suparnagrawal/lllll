@@ -7,16 +7,22 @@ import {
 } from "../../components/ui/dropdown-menu";
 import { Button } from "../../components/ui/button";
 import { useDeleteRoom } from "../../hooks/useRooms";
-import type { Room } from "../../lib/api/types";
+import type { Room, UserRole } from "../../lib/api/types";
 
 interface RoomActionsProps {
   room: Room;
   onEdit: () => void;
+  userRole?: UserRole;
 }
 
-export function RoomActions({ room, onEdit }: RoomActionsProps) {
+export function RoomActions({ room, onEdit, userRole }: RoomActionsProps) {
   const [isDeleting, setIsDeleting] = useState(false);
   const deleteRoom = useDeleteRoom();
+  const isAdmin = userRole === "ADMIN";
+
+  if (!isAdmin) {
+    return null;
+  }
 
   const handleDelete = async () => {
     if (!window.confirm(`Delete room "${room.name}"?`)) {

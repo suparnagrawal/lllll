@@ -30,7 +30,13 @@ export const roomAvailabilitySchema = z.object({
   path: ['startAt'],
 });
 
+export const roomDayAvailabilitySchema = z.object({
+  date: z.string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be in YYYY-MM-DD format')
+});
+
 export type CreateRoom = z.infer<typeof createRoomSchema>;
 export type UpdateRoom = z.infer<typeof updateRoomSchema>;
 export type ListRoomsQuery = z.infer<typeof listRoomsSchema>;
 export type RoomAvailabilityQuery = z.infer<typeof roomAvailabilitySchema>;
+export type RoomDayAvailabilityQuery = z.infer<typeof roomDayAvailabilitySchema>;

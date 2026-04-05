@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Plus, X } from "lucide-react";
 import { useAvailability } from "../hooks/useAvailability";
 import { useBuildings } from "../hooks/useBuildings";
 import { useRooms } from "../hooks/useRooms";
+import { useAuth } from "../auth/AuthContext";
+import { getUserBuildingAssignments } from "../lib/api";
 import type { AvailabilityBuilding, Room } from "../lib/api";
 import { RoomAvailabilityGrid } from "../components/features/bookings/RoomAvailabilityGrid";
 import { DateInput } from "../components/DateInput";
@@ -20,17 +22,42 @@ export function AvailabilityPage({
   onPrefillApplied: _onPrefillApplied,
   onRequestBooking: _onRequestBooking,
 }: AvailabilityPageProps) {
+  const { user } = useAuth();
+  const isStaff = user?.role === "STAFF";
+
   const [selectedDate, setSelectedDate] = useState<string>(
     new Date().toISOString().split('T')[0]
   );
   const [selectedRoomIds, setSelectedRoomIds] = useState<number[]>([]);
+  const [staffBuildingIds, setStaffBuildingIds] = useState<number[]>([]);
 
   const { data: buildings = [] } = useBuildings();
   const { data: allRooms = [] } = useRooms();
 
-  // Create time range for the day: 00:00 to 23:59
-  const startAt = `${selectedDate}T00:00`;
-  const endAt = `${selectedDate}T23:59`;
+  // Load staff's assigned buildings
+  useEffect(() => {
+    if (!isStaff || !user) return;
+
+    const loadStaffBuildings = async () => {
+      try {
+        const response = await getUserBuildingAssignments(user.id);
+        setStaffBuildingIds(response.buildingIds);
+      } catch (error) {
+        console.error("Failed to load staff building assignments:", error);
+        setStaffBuildingIds([]);
+      }
+    };
+
+    void loadStaffBuildings();
+  }, [isStaff, user]);
+
+  // Create time range for the day: 00:00 to next day 00:00 (to capture full 24 hours)
+  const startAt = `${selectedDate}T00:00:00.000Z`;
+  
+  // End at beginning of NEXT day to capture all bookings through 23:59:59
+  const nextDay = new Date(selectedDate);
+  nextDay.setDate(nextDay.getDate() + 1);
+  const endAt = `${nextDay.toISOString().split('T')[0]}T00:00:00.000Z`;
 
   const { data: availabilityData = [], isLoading, error } = useAvailability(
     startAt,
@@ -66,9 +93,14 @@ export function AvailabilityPage({
     setSelectedRoomIds((prev) => prev.filter((id) => id !== roomId));
   };
 
-  // Rooms not yet selected
+  // Filter buildings and rooms based on user role
+  const visibleBuildings = isStaff
+    ? buildings.filter((b) => staffBuildingIds.includes(b.id))
+    : buildings;
+
+  // Rooms not yet selected and visible to the user
   const availableRooms = allRooms.filter(
-    (r) => !selectedRoomIds.includes(r.id)
+    (r) => !selectedRoomIds.includes(r.id) && visibleBuildings.some((b) => b.id === r.buildingId)
   );
 
   // Build a map of room ID to availability data
@@ -117,7 +149,7 @@ export function AvailabilityPage({
                 </button>
                 <div className="absolute right-0 mt-1 w-64 bg-white border border-gray-300 rounded-lg shadow-lg hidden group-hover:block z-10 max-h-96 overflow-y-auto">
                   {availableRooms.map((room) => {
-                    const building = buildings.find((b) => b.id === room.buildingId);
+                    const building = visibleBuildings.find((b) => b.id === room.buildingId);
                     return (
                       <button
                         key={room.id}
@@ -168,6 +200,7 @@ export function AvailabilityPage({
           roomAvailabilityData={roomAvailabilityMap}
           isLoading={isLoading}
           error={error}
+          selectedDate={selectedDate}
         />
       )}
     </div>

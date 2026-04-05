@@ -15,6 +15,20 @@ export function BookingsPage() {
   const isAdmin = user?.role === "ADMIN";
   const canMutate = user?.role === "ADMIN" || user?.role === "STAFF";
 
+  if (!canMutate) {
+    return (
+      <section>
+        <div className="page-header">
+          <h2>Bookings</h2>
+          <p>View and manage confirmed room bookings</p>
+        </div>
+        <div className="alert alert-warning">
+          <p>This page is only available to Admin and Staff users. Please contact your administrator if you need access.</p>
+        </div>
+      </section>
+    );
+  }
+
   // Filters
   const [filterRoomId, setFilterRoomId] = useState<number | "">("");
   const [filterBuildingId, setFilterBuildingId] = useState<number | "">("");

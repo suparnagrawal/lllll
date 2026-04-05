@@ -11,22 +11,42 @@ interface ToastProps {
   type: "error" | "success";
   message: string;
   onDismiss: () => void;
+  retryCountdownSeconds?: number;
 }
 
-function Toast({ type, message, onDismiss }: ToastProps) {
+function Toast({ type, message, onDismiss, retryCountdownSeconds }: ToastProps) {
+  const [countdown, setCountdown] = useState(retryCountdownSeconds ?? 0);
+
   useEffect(() => {
     const timer = setTimeout(onDismiss, 4000);
     return () => clearTimeout(timer);
   }, [onDismiss]);
 
+  useEffect(() => {
+    if (countdown <= 0) return;
+    
+    const interval = setInterval(() => {
+      setCountdown(prev => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [countdown]);
+
   const bgColor = type === "error" ? "bg-destructive/90" : "bg-green-600/90";
   const textColor = "text-white";
+  const displayMessage = countdown > 0 ? `${message} (${countdown}s)` : message;
 
   return (
     <div
       className={`fixed bottom-4 right-4 px-4 py-3 rounded-lg ${bgColor} ${textColor} shadow-lg animate-in fade-in slide-in-from-bottom-4 z-50`}
     >
-      {message}
+      {displayMessage}
     </div>
   );
 }
@@ -42,6 +62,7 @@ export default function LoginPage() {
   const [toast, setToast] = useState<{
     type: "error" | "success";
     message: string;
+    retryCountdownSeconds?: number;
   } | null>(null);
 
   // Check for OAuth error in URL
@@ -102,9 +123,14 @@ export default function LoginPage() {
       await login(email.trim(), password, "email");
       // Navigation will happen via useEffect when user state updates
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Login failed. Please check your credentials.";
+      const retryMatch = errorMessage.match(/Try again in (\d+) second/);
+      const retryCountdownSeconds = retryMatch ? parseInt(retryMatch[1], 10) : undefined;
+      
       setToast({
         type: "error",
-        message: error instanceof Error ? error.message : "Login failed. Please check your credentials.",
+        message: errorMessage,
+        retryCountdownSeconds,
       });
       setEmailLoading(false);
     }
@@ -297,6 +323,7 @@ export default function LoginPage() {
         <Toast
           type={toast.type}
           message={toast.message}
+          retryCountdownSeconds={toast.retryCountdownSeconds}
           onDismiss={() => setToast(null)}
         />
       )}

@@ -170,10 +170,11 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
 
     const apiPayload = payload as ApiErrorPayload | null;
+    const retryAfterSeconds = getRetryAfterSeconds(response);
     const message =
       apiPayload?.error ??
       apiPayload?.message ??
-      httpErrorMessage(response.status);
+      httpErrorMessage(response.status, retryAfterSeconds);
     throw new Error(message);
   }
 
@@ -214,10 +215,11 @@ export async function requestFormData<T>(
     }
 
     const apiPayload = payload as ApiErrorPayload | null;
+    const retryAfterSeconds = getRetryAfterSeconds(response);
     const message =
       apiPayload?.error ??
       apiPayload?.message ??
-      httpErrorMessage(response.status);
+      httpErrorMessage(response.status, retryAfterSeconds);
 
     throw new Error(message);
   }
@@ -225,13 +227,27 @@ export async function requestFormData<T>(
   return payload as T;
 }
 
-export function httpErrorMessage(status: number): string {
+export function getRetryAfterSeconds(response: Response): number | null {
+  const retryAfter = response.headers.get("Retry-After");
+  if (!retryAfter) return null;
+  
+  const seconds = parseInt(retryAfter, 10);
+  return isNaN(seconds) ? null : seconds;
+}
+
+export function httpErrorMessage(status: number, retryAfterSeconds?: number | null): string {
   switch (status) {
     case 400: return "Invalid request";
     case 401: return "Session expired. Please log in again.";
     case 403: return "You don't have permission to perform this action";
     case 404: return "Resource not found";
     case 409: return "Conflict with existing data";
+    case 429: {
+      if (retryAfterSeconds) {
+        return `Too many login attempts. Try again in ${retryAfterSeconds} second${retryAfterSeconds !== 1 ? 's' : ''}.`;
+      }
+      return "Too many login attempts. Please try again later.";
+    }
     default:  return `Request failed (${status})`;
   }
 }

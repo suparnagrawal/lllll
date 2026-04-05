@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { Room } from "../../lib/api/types";
+import type { Room, UserRole } from "../../lib/api/types";
 import { RoomCard } from "./RoomCard";
 import { Button } from "../../components/ui/button";
 import { Plus } from "lucide-react";
@@ -10,6 +10,7 @@ interface RoomsCardGridProps {
   onEditClick: (room: Room) => void;
   onAddClick: () => void;
   isLoading?: boolean;
+  userRole?: UserRole;
 }
 
 export function RoomsCardGrid({
@@ -18,7 +19,10 @@ export function RoomsCardGrid({
   onEditClick,
   onAddClick,
   isLoading = false,
+  userRole,
 }: RoomsCardGridProps) {
+  const canAddRoom = userRole === "ADMIN" || userRole === "STAFF";
+
   const filteredRooms = useMemo(() => {
     return rooms.filter((room) => room.buildingId === buildingId);
   }, [rooms, buildingId]);
@@ -32,10 +36,12 @@ export function RoomsCardGrid({
             {filteredRooms.length} {filteredRooms.length === 1 ? "room" : "rooms"} total
           </p>
         </div>
-        <Button onClick={onAddClick} size="sm" className="gap-2">
-          <Plus className="h-4 w-4" />
-          Add Room
-        </Button>
+        {canAddRoom && (
+          <Button onClick={onAddClick} size="sm" className="gap-2">
+            <Plus className="h-4 w-4" />
+            Add Room
+          </Button>
+        )}
       </div>
 
       {isLoading ? (
@@ -52,6 +58,7 @@ export function RoomsCardGrid({
               key={room.id}
               room={room}
               onEditClick={() => onEditClick(room)}
+              userRole={userRole}
             />
           ))}
         </div>
