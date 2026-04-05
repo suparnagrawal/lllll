@@ -1,11 +1,13 @@
 import { useState, useEffect } from "react";
 import { X, AlertCircle } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { useRoomDayTimeline } from "../hooks/useAvailability";
 import { useBuildings } from "../hooks/useBuildings";
 import { useRooms } from "../hooks/useRooms";
 import { useAuth } from "../auth/AuthContext";
 import { getUserBuildingAssignments } from "../lib/api";
 import type { Room } from "../lib/api";
+import type { BookingRequestPrefill } from "./bookingAvailabilityBridge";
 
 type AvailabilityPageProps = {
   canRequestBooking?: boolean;
@@ -21,7 +23,10 @@ export function AvailabilityPage({
   onRequestBooking: _onRequestBooking,
 }: AvailabilityPageProps) {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const isStaff = user?.role === "STAFF";
+  const isAdmin = user?.role === "ADMIN";
+  const canViewBookingsPage = isStaff || isAdmin;
 
   const [viewMode, setViewMode] = useState<"time" | "room">("time");
   const [selectedBuildingId, setSelectedBuildingId] = useState<number | null>(null);
@@ -78,6 +83,24 @@ export function AvailabilityPage({
   const handleRemoveDate = (index: number) => {
     if (selectedDates.length > 1) {
       setSelectedDates(selectedDates.filter((_, i) => i !== index));
+    }
+  };
+
+  // Handle clicking on an available slot and navigate with prefill
+  const handleSlotClick = (roomId: number, buildingId: number, startTime: string, endTime: string) => {
+    const prefill: BookingRequestPrefill = {
+      roomId,
+      startAt: startTime,
+      endAt: endTime,
+      buildingId,
+    };
+
+    if (canViewBookingsPage) {
+      // Staff and Admin go to Bookings page
+      navigate("/bookings", { state: { prefill } });
+    } else {
+      // Student and Faculty go to Booking Requests page
+      navigate("/requests", { state: { prefill } });
     }
   };
 
@@ -215,6 +238,8 @@ export function AvailabilityPage({
                 }}
                 timeRangeStart={timeRangeStart}
                 timeRangeEnd={timeRangeEnd}
+                onSlotClick={handleSlotClick}
+                buildingId={selectedBuildingId}
               />
             </div>
 
@@ -369,6 +394,7 @@ export function AvailabilityPage({
                 }}
                 timeRangeStart={timeRangeStart}
                 timeRangeEnd={timeRangeEnd}
+                onSlotClick={handleSlotClick}
               />
             </div>
 
@@ -403,6 +429,7 @@ function RoomAvailabilityGrid({
   onToggleRoom,
   timeRangeStart,
   timeRangeEnd,
+  onSlotClick,
 }: {
   date: string;
   rooms: Room[];
@@ -410,6 +437,7 @@ function RoomAvailabilityGrid({
   onToggleRoom: (roomId: number) => void;
   timeRangeStart: string;
   timeRangeEnd: string;
+  onSlotClick?: (roomId: number, buildingId: number, startTime: string, endTime: string) => void;
 }) {
 
   // Convert time range to minutes for calculations
@@ -492,6 +520,7 @@ function RoomAvailabilityGrid({
           onToggle={() => onToggleRoom(room.id)}
           timeRangeStart={timeRangeStart}
           timeRangeEnd={timeRangeEnd}
+          onSlotClick={onSlotClick}
         />
       ))}
 
@@ -508,6 +537,7 @@ function RoomRow({
   onToggle,
   timeRangeStart,
   timeRangeEnd,
+  onSlotClick,
 }: {
   room: Room;
   date: string;
@@ -516,6 +546,7 @@ function RoomRow({
   onToggle: () => void;
   timeRangeStart: string;
   timeRangeEnd: string;
+  onSlotClick?: (roomId: number, buildingId: number, startTime: string, endTime: string) => void;
 }) {
   const { data: timelineData, isLoading, error } = useRoomDayTimeline(room.id, date, true);
 
@@ -584,11 +615,12 @@ function RoomRow({
 
       const isAvailable = segment.status === 'free';
       const bgColor = isAvailable ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-red-500 hover:bg-red-600';
+      const cursor = isAvailable ? 'cursor-pointer' : 'cursor-default';
 
       return (
         <div
           key={`segment-${idx}`}
-          className={`absolute transition-colors ${bgColor} overflow-hidden flex items-center justify-center`}
+          className={`absolute transition-colors ${bgColor} ${cursor} overflow-hidden flex items-center justify-center`}
           style={{
             left: `${left}%`,
             width: `${width}%`,
@@ -602,6 +634,11 @@ function RoomRow({
               ? `Available: ${formatTime(segment.start)} - ${formatTime(segment.end)}`
               : `Booked: ${formatTime(segment.start)} - ${formatTime(segment.end)}`
           }
+          onClick={() => {
+            if (isAvailable && onSlotClick) {
+              onSlotClick(room.id, room.buildingId, segment.start, segment.end);
+            }
+          }}
         />
       );
     });
@@ -653,6 +690,8 @@ function AvailabilityGrid({
   onSelectDate,
   timeRangeStart,
   timeRangeEnd,
+  onSlotClick,
+  buildingId,
 }: {
   roomId: number;
   dates: string[];
@@ -660,6 +699,8 @@ function AvailabilityGrid({
   onSelectDate: (date: string) => void;
   timeRangeStart: string;
   timeRangeEnd: string;
+  onSlotClick?: (roomId: number, buildingId: number, startTime: string, endTime: string) => void;
+  buildingId?: number | null;
 }) {
   // Convert time range to minutes for calculations
   const [startHour, startMin] = timeRangeStart.split(':').map(Number);
@@ -746,6 +787,8 @@ function AvailabilityGrid({
           onRemove={() => onRemoveDate(dateIdx)}
           timeRangeStart={timeRangeStart}
           timeRangeEnd={timeRangeEnd}
+          onSlotClick={onSlotClick}
+          buildingId={buildingId}
         />
       ))}
 
@@ -786,6 +829,8 @@ function DateRow({
   onRemove,
   timeRangeStart,
   timeRangeEnd,
+  onSlotClick,
+  buildingId,
 }: {
   date: string;
   dateIndex: number;
@@ -794,6 +839,8 @@ function DateRow({
   onRemove: () => void;
   timeRangeStart: string;
   timeRangeEnd: string;
+  onSlotClick?: (roomId: number, buildingId: number, startTime: string, endTime: string) => void;
+  buildingId?: number | null;
 }) {
   const { data: timelineData, isLoading, error } = useRoomDayTimeline(roomId, date, true);
 
@@ -894,6 +941,7 @@ function DateRow({
       const bgColor = isAvailable ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-red-500 hover:bg-red-600';
       const cursor = isAvailable ? 'cursor-pointer' : 'cursor-default';
 
+
       return (
         <div
           key={`segment-${idx}`}
@@ -911,6 +959,11 @@ function DateRow({
               ? `Available: ${formatTime(segment.start)} - ${formatTime(segment.end)}`
               : `Booked: ${formatTime(segment.start)} - ${formatTime(segment.end)}`
           }
+          onClick={() => {
+            if (isAvailable && onSlotClick && buildingId) {
+              onSlotClick(roomId, buildingId, segment.start, segment.end);
+            }
+          }}
         >
           {width > 5 && (
             <span className="text-xs text-white font-semibold px-1 truncate">

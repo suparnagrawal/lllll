@@ -1,5 +1,6 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, useEffect } from "react";
 import type { FormEvent } from "react";
+import { useLocation } from "react-router-dom";
 import { useBookings, useCreateBooking, useDeleteBooking } from "../hooks/useBookings";
 import { useBuildings } from "../hooks/useBuildings";
 import { useRooms } from "../hooks/useRooms";
@@ -9,11 +10,16 @@ import { useAuth } from "../auth/AuthContext";
 import { DateInput } from "../components/DateInput";
 import { formatDateTimeDDMMYYYY } from "../utils/datetime";
 import { formatRoomDisplayWithBuildingsArray } from "../utils/room";
+import type { BookingRequestPrefill } from "./bookingAvailabilityBridge";
 
 export function BookingsPage() {
   const { user } = useAuth();
+  const location = useLocation();
   const isAdmin = user?.role === "ADMIN";
   const canMutate = user?.role === "ADMIN" || user?.role === "STAFF";
+
+  // Get prefill from location state if available
+  const locationPrefill = (location.state as any)?.prefill as BookingRequestPrefill | undefined;
 
   if (!canMutate) {
     return (
@@ -83,6 +89,18 @@ export function BookingsPage() {
   // Mutations
   const createBookingMutation = useCreateBooking();
   const deleteBookingMutation = useDeleteBooking();
+
+  // Apply prefill from location state if available
+  useEffect(() => {
+    if (!locationPrefill) {
+      return;
+    }
+
+    setNewRoomId(locationPrefill.roomId);
+    setNewStartAt(locationPrefill.startAt);
+    setNewEndAt(locationPrefill.endAt);
+    setCreateError(null);
+  }, [locationPrefill]);
 
   const handleCreate = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();

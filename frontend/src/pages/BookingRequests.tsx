@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
+import { useLocation } from "react-router-dom";
 import {
   approveBookingRequest,
   cancelBookingRequest,
@@ -94,10 +95,14 @@ export function BookingRequestsPage({
   onOpenAvailability,
 }: BookingRequestsPageProps) {
   const { user } = useAuth();
+  const location = useLocation();
   const currentRole = user?.role ?? null;
   const isAdmin = currentRole === "ADMIN";
   const isStudent = currentRole === "STUDENT";
   const canCreate = currentRole === "STUDENT" || currentRole === "FACULTY";
+
+  // Get prefill from location state if available
+  const locationPrefill = (location.state as any)?.prefill as BookingRequestPrefill | undefined;
 
   const [requests, setRequests] = useState<BookingRequest[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -193,18 +198,21 @@ export function BookingRequestsPage({
   }, [isAdmin]);
 
   useEffect(() => {
-    if (!prefill) {
+    // Use locationPrefill if available, otherwise use prop prefill
+    const effectivePrefill = locationPrefill || prefill;
+    
+    if (!effectivePrefill) {
       return;
     }
 
-    setRoomId(prefill.roomId);
-    setStartAt(prefill.startAt);
-    setEndAt(prefill.endAt);
-    setPurpose(prefill.purpose ?? "");
+    setRoomId(effectivePrefill.roomId);
+    setStartAt(effectivePrefill.startAt);
+    setEndAt(effectivePrefill.endAt);
+    setPurpose(effectivePrefill.purpose ?? "");
     setError(null);
     setPrefillMessage("Form prefilled from availability results.");
     onPrefillApplied?.();
-  }, [onPrefillApplied, prefill]);
+  }, [onPrefillApplied, prefill, locationPrefill]);
 
   const handleFilterChange = (value: StatusFilter) => {
     setStatusFilter(value);
