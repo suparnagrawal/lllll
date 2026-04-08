@@ -6,7 +6,7 @@ import session from "express-session";
 import passport from "./auth/passport";
 import { env } from "./config/env";
 import { pool } from "./db";
-import { generalLimiter, authLimiter, uploadLimiter } from "./api/middleware/rateLimit.middleware";
+import { generalLimiter, authLimiter } from "./api/middleware/rateLimit.middleware";
 import { markInternalOperation } from "./api/middleware/internalOperation.middleware";
 import { requestLogger } from "./api/middleware/requestLogger.middleware";
 import { performanceMiddleware } from "./api/middleware/performance.middleware";
@@ -69,7 +69,6 @@ app.use(markInternalOperation);
 // Apply rate limiters
 app.use("/api", generalLimiter);
 app.use("/api/auth", authLimiter);
-app.use("/api/timetable/imports", uploadLimiter);
 
 // routes
 app.use("/api/buildings", buildingsRouter);

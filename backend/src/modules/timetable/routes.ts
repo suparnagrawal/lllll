@@ -32,6 +32,12 @@ import {
 import { authMiddleware } from "../../middleware/auth";
 import { requireRole } from "../../middleware/rbac";
 import multer from "multer";
+import {
+	timetableImportCommitLimiter,
+	timetableImportMutationLimiter,
+	timetableImportPreviewLimiter,
+	timetableImportReadLimiter,
+} from "../../api/middleware/rateLimit.middleware";
 
 const router = Router();
 const upload = multer({
@@ -63,20 +69,41 @@ router.delete("/time-bands/:id", handleDeleteTimeBand);
 router.post("/blocks", handleCreateBlock);
 router.delete("/blocks/:id", handleDeleteBlock);
 
-router.get("/imports", handleListImportBatches);
-router.post("/imports/preview", upload.single("file"), handlePreviewImport);
-router.get("/imports/:id", handleGetImportBatch);
-router.put("/imports/:id/decisions", handleSaveImportDecisions);
-router.post("/imports/:id/rows/:rowId/transfer", handleTransferImportRow);
-router.post("/imports/:id/reallocate", handleReallocateImport);
-router.post("/imports/:id/commit", handleCommitImport);
-router.delete("/imports/:id", handleDeleteImportBatch);
-router.get("/imports/:id/processed-rows", handleGetProcessedImportRows);
+router.get("/imports", timetableImportReadLimiter, handleListImportBatches);
+router.post(
+	"/imports/preview",
+	timetableImportPreviewLimiter,
+	upload.single("file"),
+	handlePreviewImport,
+);
+router.get("/imports/:id", timetableImportReadLimiter, handleGetImportBatch);
+router.put("/imports/:id/decisions", timetableImportMutationLimiter, handleSaveImportDecisions);
+router.post(
+	"/imports/:id/rows/:rowId/transfer",
+	timetableImportMutationLimiter,
+	handleTransferImportRow,
+);
+router.post("/imports/:id/reallocate", timetableImportCommitLimiter, handleReallocateImport);
+router.post("/imports/:id/commit", timetableImportCommitLimiter, handleCommitImport);
+router.delete("/imports/:id", timetableImportMutationLimiter, handleDeleteImportBatch);
+router.get(
+	"/imports/:id/processed-rows",
+	timetableImportReadLimiter,
+	handleGetProcessedImportRows,
+);
 
 // Conflict detection and resolution endpoints
-router.post("/imports/:id/detect-conflicts", handleDetectCommitConflicts);
-router.post("/imports/:id/commit-with-resolutions", handleCommitWithResolutions);
-router.post("/imports/:id/cancel-commit", handleCancelCommit);
-router.get("/imports/:id/freeze-status", handleGetFreezeStatus);
+router.post(
+	"/imports/:id/detect-conflicts",
+	timetableImportCommitLimiter,
+	handleDetectCommitConflicts,
+);
+router.post(
+	"/imports/:id/commit-with-resolutions",
+	timetableImportCommitLimiter,
+	handleCommitWithResolutions,
+);
+router.post("/imports/:id/cancel-commit", timetableImportCommitLimiter, handleCancelCommit);
+router.get("/imports/:id/freeze-status", timetableImportReadLimiter, handleGetFreezeStatus);
 
 export default router;
