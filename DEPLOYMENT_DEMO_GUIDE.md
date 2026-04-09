@@ -26,7 +26,7 @@ postgresql://postgres.your_ref:YOUR_PASSWORD@aws-0-region.pooler.supabase.com:65
 ## 3. Run Migrations (And Optional Seed)
 
 Run this once against Supabase before first demo.
-
+2026-04-10 00:00:36 [error]: [GET /health/ready] Query:{} - 503 (32ms) 
 1. In a local terminal, set DATABASE_URL to your Supabase URL.
 2. Run migrations:
 
