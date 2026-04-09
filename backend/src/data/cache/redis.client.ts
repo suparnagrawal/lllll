@@ -23,7 +23,7 @@ export const redis = new Redis(redisUrl, {
   lazyConnect: true,
 });
 
-redis.on('error', (error) => {
+redis.on('error', (error: NodeJS.ErrnoException) => {
   // Only log once when Redis becomes unavailable
   if (isRedisAvailable || error.code !== 'ECONNREFUSED') {
     logger.error('Redis connection error:', error);
