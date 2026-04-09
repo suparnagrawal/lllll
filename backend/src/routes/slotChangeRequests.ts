@@ -527,6 +527,10 @@ router.post(
       }
 
       const req0 = request[0];
+      if (!req0) {
+        return res.status(404).json({ error: "Request not found" });
+      }
+
       if (req0.requestedBy !== req.user!.id) {
         return res.status(403).json({ error: "Forbidden" });
       }
