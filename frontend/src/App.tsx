@@ -41,7 +41,7 @@ type ToastMessage = {
   message: string;
 };
 
-const NOTIFICATION_POLL_INTERVAL_MS = 30_000;
+const NOTIFICATION_POLL_INTERVAL_MS = 60_000; // 1 minute - reduced from 30s to avoid rate limiting
 const MAX_VISIBLE_TOASTS = 4;
 
 const NAV_ITEMS: NavEntry[] = [

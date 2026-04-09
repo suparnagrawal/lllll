@@ -203,14 +203,26 @@ This is a **full-stack web application** for managing university room bookings a
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
 | POST | `/slot-systems` | Create slot system |
-| GET | `/slot-systems` | List slot systems |
+| GET | `/slot-systems` | List slot systems (includes `isLocked`) |
+| DELETE | `/slot-systems/:id` | Delete slot system |
 | GET | `/slot-systems/:id/full` | Full grid view |
-| POST | `/days` | Create day |
-| POST | `/time-bands` | Create time band |
-| POST | `/blocks` | Create block |
+| POST | `/slot-systems/:id/preview-changes` | Preview structural changes |
+| POST | `/slot-systems/:id/apply-changes` | Apply changes (freeze + mutate) |
+| POST | `/days` | Create day (blocked if locked) |
+| GET | `/days` | List days |
+| DELETE | `/days/:id` | Delete day (blocked if locked) |
+| POST | `/time-bands` | Create time band (blocked if locked) |
+| GET | `/time-bands` | List time bands |
+| PATCH | `/time-bands/:id` | Update time band (blocked if locked) |
+| DELETE | `/time-bands/:id` | Delete time band (blocked if locked) |
+| POST | `/blocks` | Create block (blocked if locked) |
+| DELETE | `/blocks/:id` | Delete block (blocked if locked) |
 | POST | `/imports/preview` | Preview Excel import |
 | POST | `/imports/:id/commit` | Commit import |
-| GET | `/freeze-status` | Check booking freeze state |
+| POST | `/imports/:id/detect-conflicts` | Detect booking conflicts |
+| POST | `/imports/:id/commit-with-resolutions` | Commit with conflict resolutions |
+| POST | `/imports/:id/cancel-commit` | Cancel commit, release freeze |
+| GET | `/imports/:id/freeze-status` | Check booking freeze state |
 
 ### Users (`/api/users`)
 | Method | Endpoint | Purpose | Roles |
@@ -585,6 +597,105 @@ SlotSystem (e.g., "IIT Jodhpur 2024-25")
 ├── TimeBands (08:00-09:00, 09:00-10:00, ...)
 └── Blocks (labeled slots like "A1", "B2", etc.)
 ```
+
+### Slot System Lifecycle
+
+```
+Created (isLocked=false) → First Import Committed → Locked (isLocked=true)
+                                                         │
+                                                         ▼
+                                              Direct mutations blocked (403)
+                                              Edits via Change Workspace only
+```
+
+- **Unlocked**: Days, time bands, and blocks can be freely added/removed.
+- **Locked** (after first commit): Direct mutation endpoints return **HTTP 403**. Structural changes require the **Change Workspace** flow (`POST /api/timetable/slot-systems/:id/apply-changes`), which acquires a booking freeze, applies mutations, cleans up orphaned bookings, and releases the freeze.
+
+### One-Batch-Per-System Rule
+
+| Constraint | Behavior |
+|------------|----------|
+| Only one **PREVIEWED** batch per slot system | Enforced by partial unique DB index |
+| New preview replaces existing | Upsert semantics: old PREVIEWED batch is deleted before creating new |
+| Committed batches are preserved | Their bookings remain; the batch serves as an audit record |
+| Slot system is locked after commit | `isLocked = true` set atomically on commit |
+
+### Conflict-Aware Commit Flow
+
+```
+Admin clicks "Commit"
+        │
+        ▼
+  detectCommitConflicts()
+        │
+   ┌────┴────┐
+   │         │
+No Conflicts  Conflicts Found
+   │         │
+   ▼         ▼
+commitWith   Show Resolution Dialog
+Resolutions  │
+(empty [])   Admin chooses per-occurrence:
+             │ ├─ FORCE_OVERWRITE (delete conflicting booking)
+             │ ├─ SKIP (skip this occurrence)
+             │ └─ ALTERNATIVE_ROOM (book in different room)
+             │
+             ▼
+         commitWithResolutions(resolutions[])
+             │
+             ▼
+         System locked, freeze released
+```
+
+#### Conflict Resolution Endpoints
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| POST | `/imports/:id/detect-conflicts` | Freeze bookings, detect overlapping bookings |
+| POST | `/imports/:id/commit-with-resolutions` | Apply user resolutions and create bookings |
+| POST | `/imports/:id/cancel-commit` | Release freeze without changes |
+| GET | `/imports/:id/freeze-status` | Check freeze state for a batch |
+
+#### Resolution Strategies
+
+| Strategy | Behavior |
+|----------|----------|
+| `FORCE_OVERWRITE` | Deletes the conflicting existing booking, creates the new one |
+| `SKIP` | Marks this occurrence as skipped, no booking created |
+| `ALTERNATIVE_ROOM` | Attempts to book in a different room (requires `alternativeRoomId`) |
+
+### Booking Freeze Behavior
+
+- **Acquire**: `detectCommitConflicts` freezes booking mutations system-wide
+- **Scope**: Blocks booking approvals, creates, updates, and deletes (requests still allowed)
+- **Release**: Automatically on `commitWithResolutions` or `cancelCommit`
+- **Error recovery**: All error paths call `unfreezeBookings` to ensure no dangling freeze
+- **Idempotent**: Re-calling with same batchId succeeds; different batchId returns 409
+- **UI indicator**: Red banner shown when freeze is active, with holder info
+
+### Change Workspace
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| POST | `/slot-systems/:id/preview-changes` | Preview impact of proposed changes |
+| POST | `/slot-systems/:id/apply-changes` | Apply changes under booking freeze |
+
+The Change Workspace supports:
+- Adding/removing days, time bands, blocks, and lanes
+- All mutations bypass the lock guard (`bypassLock = true`)
+- Orphaned occurrences (referencing deleted blocks) are marked FAILED
+- Associated bookings for orphaned occurrences are deleted
+- Results include a recomputation summary with affected counts and warnings
+
+### Backend Hardening
+
+| Feature | Implementation |
+|---------|---------------|
+| **Idempotent commit** | `commitWithResolutions` skips occurrences already in CREATED/SKIPPED/FAILED status |
+| **Transaction safety** | FORCE_OVERWRITE delete+create wrapped in transaction |
+| **Dedup guard** | Occurrences with existing bookingId are skipped |
+| **Lock on commit** | `lockSlotSystem()` called after both `commitTimetableImport` and `commitWithResolutions` |
+| **Error freeze recovery** | All catch blocks call `unfreezeBookings` to prevent dangling freeze |
 
 ---
 

@@ -1,7 +1,7 @@
 import { and, asc, eq, gt, inArray, lt, sql, or } from 'drizzle-orm';
 import { db } from '../../db';
 import { buildings, rooms, bookings, bookingRequests, users } from '../../db/schema';
-import { redis, SHORT_TTL } from '../../data/cache/redis.client';
+import { redis, isRedisAvailable, SHORT_TTL } from '../../data/cache/redis.client';
 
 export type BookingDetail = {
   id: number;

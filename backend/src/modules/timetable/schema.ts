@@ -7,6 +7,7 @@ import {
   time,
   pgEnum,
   uniqueIndex,
+  boolean,
 } from "drizzle-orm/pg-core";
 
 export const DAY_OF_WEEK_VALUES = [
@@ -22,6 +23,7 @@ export const DAY_OF_WEEK_VALUES = [
 export const slotSystems = pgTable("slot_systems", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
+  isLocked: boolean("is_locked").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

@@ -15,6 +15,14 @@ import type {
   TimetableImportBatchDeleteReport,
   TimetableImportProcessedRowsReport,
   TimetableImportBatchListResponse,
+  ConflictDetectionReport,
+  ConflictResolutionDecision,
+  CommitWithResolutionsReport,
+  CancelCommitResponse,
+  FreezeStatusResponse,
+  SlotSystemChanges,
+  ChangePreviewResult,
+  ChangeApplyResult,
 } from "./types";
 
 // Slot Systems
@@ -239,5 +247,80 @@ export async function getTimetableImportProcessedRows(
 ): Promise<TimetableImportProcessedRowsReport> {
   return request<TimetableImportProcessedRowsReport>(
     `/timetable/imports/${batchId}/processed-rows`,
+  );
+}
+
+// Conflict Detection and Resolution
+
+export async function detectCommitConflicts(
+  batchId: number,
+  decisions: TimetableImportCommitDecision[],
+): Promise<ConflictDetectionReport> {
+  return request<ConflictDetectionReport>(
+    `/timetable/imports/${batchId}/detect-conflicts`,
+    {
+      method: "POST",
+      body: JSON.stringify({ decisions }),
+    },
+  );
+}
+
+export async function commitWithResolutions(
+  batchId: number,
+  resolutions: ConflictResolutionDecision[],
+): Promise<CommitWithResolutionsReport> {
+  return request<CommitWithResolutionsReport>(
+    `/timetable/imports/${batchId}/commit-with-resolutions`,
+    {
+      method: "POST",
+      body: JSON.stringify({ resolutions }),
+    },
+  );
+}
+
+export async function cancelCommit(
+  batchId: number,
+): Promise<CancelCommitResponse> {
+  return request<CancelCommitResponse>(
+    `/timetable/imports/${batchId}/cancel-commit`,
+    {
+      method: "POST",
+    },
+  );
+}
+
+export async function getFreezeStatus(
+  batchId: number,
+): Promise<FreezeStatusResponse> {
+  return request<FreezeStatusResponse>(
+    `/timetable/imports/${batchId}/freeze-status`,
+  );
+}
+
+// Slot System Change Workspace
+
+export async function previewSlotSystemChanges(
+  slotSystemId: number,
+  changes: SlotSystemChanges,
+): Promise<ChangePreviewResult> {
+  return request<ChangePreviewResult>(
+    `/timetable/slot-systems/${slotSystemId}/preview-changes`,
+    {
+      method: "POST",
+      body: JSON.stringify({ changes }),
+    },
+  );
+}
+
+export async function applySlotSystemChanges(
+  slotSystemId: number,
+  changes: SlotSystemChanges,
+): Promise<ChangeApplyResult> {
+  return request<ChangeApplyResult>(
+    `/timetable/slot-systems/${slotSystemId}/apply-changes`,
+    {
+      method: "POST",
+      body: JSON.stringify({ changes }),
+    },
   );
 }

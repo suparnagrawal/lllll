@@ -16,6 +16,8 @@ export type NotificationDraft = {
   subject: string;
   message: string;
   type: NotificationType;
+  /** If true, skip email even if recipient role normally receives email */
+  skipEmail?: boolean;
 };
 
 type ActiveRecipient = {
@@ -116,6 +118,10 @@ async function sendEmailNotification(
   recipient: ActiveRecipient,
   draft: NotificationDraft,
 ): Promise<boolean> {
+  if (draft.skipEmail) {
+    return false;
+  }
+
   if (!shouldSendEmailForRole(recipient.role)) {
     return false;
   }

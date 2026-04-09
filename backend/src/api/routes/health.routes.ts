@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { pool } from '../../db';
-import { redis } from '../../data/cache/redis.client';
+import { redis, isRedisAvailable } from '../../data/cache/redis.client';
 import logger from '../../shared/utils/logger';
 
 const router = Router();
@@ -19,16 +19,16 @@ router.get('/', (req: Request, res: Response) => {
 /**
  * GET /health/ready
  * Readiness check - verifies critical dependencies (DB, Redis)
- * Returns 503 if any check fails
+ * Redis is optional in development - only DB is required
  */
 router.get('/ready', async (req: Request, res: Response) => {
   const checks: { db: string; redis: string } = {
     db: 'failed',
-    redis: 'failed',
+    redis: 'skipped',
   };
   let statusCode = 200;
 
-  // Check database connection
+  // Check database connection (required)
   try {
     await pool.query('SELECT 1');
     checks.db = 'ok';
@@ -38,14 +38,18 @@ router.get('/ready', async (req: Request, res: Response) => {
     statusCode = 503;
   }
 
-  // Check Redis connection
-  try {
-    await redis.ping();
-    checks.redis = 'ok';
-  } catch (error) {
-    logger.error('Redis health check failed:', error);
-    checks.redis = 'failed';
-    statusCode = 503;
+  // Check Redis connection (optional)
+  if (isRedisAvailable) {
+    try {
+      await redis.ping();
+      checks.redis = 'ok';
+    } catch (error) {
+      logger.warn('Redis health check failed:', error);
+      checks.redis = 'unavailable';
+      // Don't fail the health check for Redis in development
+    }
+  } else {
+    checks.redis = 'unavailable';
   }
 
   res.status(statusCode).json({

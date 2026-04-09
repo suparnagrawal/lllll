@@ -32,6 +32,10 @@ import {
   cancelCommit,
   getCommitFreezeStatus,
 } from "./importService";
+import {
+  previewSlotSystemChanges,
+  applySlotSystemChanges,
+} from "./changeService";
 import logger from "../../shared/utils/logger";
 
 function parsePositiveInteger(value: unknown): number | null {
@@ -719,5 +723,67 @@ export async function handleGetFreezeStatus(req: Request, res: Response) {
     return res.json(status);
   } catch (error) {
     return sendError(res, error, "Failed to get freeze status");
+  }
+}
+
+/**
+ * Preview structural changes to a slot system.
+ */
+export async function handlePreviewSlotSystemChanges(req: Request, res: Response) {
+  try {
+    const slotSystemId = parsePositiveInteger(req.params.id);
+
+    if (!slotSystemId) {
+      return res.status(400).json({ error: "Invalid slot system id" });
+    }
+
+    const changes = req.body?.changes;
+
+    if (!changes || typeof changes !== "object") {
+      return res.status(400).json({ error: "changes object is required" });
+    }
+
+    const result = await previewSlotSystemChanges({ slotSystemId, changes });
+
+    return res.json(result);
+  } catch (error) {
+    return sendError(res, error, "Failed to preview slot system changes");
+  }
+}
+
+/**
+ * Apply structural changes to a slot system.
+ */
+export async function handleApplySlotSystemChanges(req: Request, res: Response) {
+  try {
+    const slotSystemId = parsePositiveInteger(req.params.id);
+
+    if (!slotSystemId) {
+      return res.status(400).json({ error: "Invalid slot system id" });
+    }
+
+    const userId = (req as Request & { user?: { id: number } }).user?.id;
+    const userName = (req as Request & { user?: { name: string } }).user?.name ?? "Admin";
+
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const changes = req.body?.changes;
+
+    if (!changes || typeof changes !== "object") {
+      return res.status(400).json({ error: "changes object is required" });
+    }
+
+    logger.info("Handling apply slot system changes request", {
+      slotSystemId,
+      userId,
+    });
+
+    const result = await applySlotSystemChanges({ slotSystemId, changes }, userId, userName);
+
+    return res.json(result);
+  } catch (error) {
+    return sendError(res, error, "Failed to apply slot system changes");
   }
 }

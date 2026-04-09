@@ -228,6 +228,7 @@ export type DayOfWeek = "MON" | "TUE" | "WED" | "THU" | "FRI" | "SAT" | "SUN";
 export type SlotSystem = {
   id: number;
   name: string;
+  isLocked: boolean;
   createdAt: string;
 };
 
@@ -566,6 +567,75 @@ export type BookingFreezeErrorResponse = {
     batchId: number;
     frozenBy: string;
     startedAt: string;
+  };
+};
+
+// ============================================================================
+// Change Workspace Types
+// ============================================================================
+
+export type SlotSystemChanges = {
+  addDays?: Array<{ dayOfWeek: string; orderIndex?: number }>;
+  removeDayIds?: number[];
+  addTimeBands?: Array<{ startTime: string; endTime: string; orderIndex?: number }>;
+  removeTimeBandIds?: number[];
+  updateTimeBands?: Array<{
+    timeBandId: number;
+    startTime?: string;
+    endTime?: string;
+    orderIndex?: number;
+  }>;
+  addBlocks?: Array<{
+    dayId: number;
+    startBandId: number;
+    laneIndex: number;
+    rowSpan: number;
+    label: string;
+  }>;
+  removeBlockIds?: number[];
+  addLaneDayIds?: number[];
+  removeLaneDayIds?: number[];
+};
+
+export type ChangePreviewResult = {
+  slotSystemId: number;
+  isLocked: boolean;
+  summary: {
+    daysToAdd: number;
+    daysToRemove: number;
+    timeBandsToAdd: number;
+    timeBandsToRemove: number;
+    timeBandsToUpdate: number;
+    blocksToAdd: number;
+    blocksToRemove: number;
+    lanesToAdd: number;
+    lanesToRemove: number;
+  };
+  affectedBatches: Array<{
+    batchId: number;
+    status: string;
+    affectedOccurrences: number;
+  }>;
+  warnings: string[];
+};
+
+export type ChangeApplyResult = {
+  slotSystemId: number;
+  applied: {
+    daysAdded: number;
+    daysRemoved: number;
+    timeBandsAdded: number;
+    timeBandsRemoved: number;
+    timeBandsUpdated: number;
+    blocksAdded: number;
+    blocksRemoved: number;
+    lanesAdded: number;
+    lanesRemoved: number;
+  };
+  recomputation: {
+    affectedOccurrences: number;
+    deletedBookings: number;
+    warnings: string[];
   };
 };
 

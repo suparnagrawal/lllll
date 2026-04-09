@@ -21,7 +21,7 @@ import {
 } from "../../services/bookingFreezeService";
 import logger from "../../shared/utils/logger";
 import { DAY_OF_WEEK_VALUES, slotBlocks, slotDays, slotSystems, slotTimeBands } from "./schema";
-import { createBlock } from "./service";
+import { createBlock, lockSlotSystem } from "./service";
 
 type DayOfWeek = (typeof DAY_OF_WEEK_VALUES)[number];
 
@@ -3454,6 +3454,17 @@ export async function commitTimetableImport(
     })
     .where(eq(timetableImportBatches.id, batch.id));
 
+  // Lock the slot system after first commit
+  try {
+    await lockSlotSystem(batch.slotSystemId);
+  } catch (lockError) {
+    logger.warn("Failed to lock slot system after commit", {
+      batchId: batch.id,
+      slotSystemId: batch.slotSystemId,
+      error: lockError,
+    });
+  }
+
   const autoCreatedBookings = rowResults.reduce((sum, row) => sum + row.created, 0);
   const alreadyProcessedBookings = rowResults.reduce((sum, row) => sum + row.alreadyProcessed, 0);
   const failedOccurrences = rowResults.reduce((sum, row) => sum + row.failed, 0);
@@ -4068,7 +4079,12 @@ export async function commitWithResolutions(
 
     for (const occurrence of pendingOccurrences) {
       if (occurrence.bookingId) {
-        // Already processed
+        // Already processed — idempotency guard
+        continue;
+      }
+
+      // Also skip non-PENDING occurrences for idempotency
+      if (occurrence.status !== "PENDING") {
         continue;
       }
 
@@ -4252,6 +4268,17 @@ export async function commitWithResolutions(
       .update(timetableImportBatches)
       .set({ status: "COMMITTED", committedAt: new Date() })
       .where(eq(timetableImportBatches.id, batchId));
+
+    // Lock the slot system after commit
+    try {
+      await lockSlotSystem(batch.slotSystemId);
+    } catch (lockError) {
+      logger.warn("Failed to lock slot system after commit with resolutions", {
+        batchId,
+        slotSystemId: batch.slotSystemId,
+        error: lockError,
+      });
+    }
 
     // Unfreeze
     unfreezeBookings(batchId);

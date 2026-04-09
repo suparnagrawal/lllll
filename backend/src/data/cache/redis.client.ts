@@ -3,10 +3,47 @@ import logger from '../../shared/utils/logger';
 
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 
-export const redis = new Redis(redisUrl);
+// Track Redis connection state
+export let isRedisAvailable = false;
+
+// Create Redis client with connection failure handling
+// In development, Redis is optional - the server will work without it
+export const redis = new Redis(redisUrl, {
+  maxRetriesPerRequest: 3,
+  retryStrategy(times) {
+    if (times > 3) {
+      logger.warn('Redis connection failed after 3 retries, disabling Redis features');
+      isRedisAvailable = false;
+      // Return null to stop retrying
+      return null;
+    }
+    // Retry with exponential backoff
+    return Math.min(times * 200, 2000);
+  },
+  lazyConnect: true,
+});
 
 redis.on('error', (error) => {
-  logger.error('Redis connection error:', error);
+  // Only log once when Redis becomes unavailable
+  if (isRedisAvailable || error.code !== 'ECONNREFUSED') {
+    logger.error('Redis connection error:', error);
+  }
+  isRedisAvailable = false;
+});
+
+redis.on('connect', () => {
+  logger.info('Redis connected');
+  isRedisAvailable = true;
+});
+
+redis.on('ready', () => {
+  isRedisAvailable = true;
+});
+
+// Attempt initial connection (non-blocking)
+redis.connect().catch(() => {
+  logger.warn('Redis unavailable - rate limiting and caching will use fallback behavior');
+  isRedisAvailable = false;
 });
 
 export const cacheKeys = {

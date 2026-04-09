@@ -342,6 +342,7 @@ router.post("/:id/reject", authMiddleware, requireRole(["FACULTY", "STAFF"]), re
           type: "BOOKING_REQUEST_REJECTED",
           subject: `Booking request #${request.id} rejected`,
           message: `Booking request #${request.id} for room #${request.roomId} (${windowText}) has been rejected.`,
+          skipEmail: true, // Staff/Admin get in-app notification only
         })),
       ],
     );
@@ -467,6 +468,7 @@ router.post("/:id/approve", authMiddleware, requireRole("STAFF"), requireBooking
           type: "BOOKING_REQUEST_APPROVED",
           subject: `Booking request #${approvalResult.request.id} approved`,
           message: `Booking request #${approvalResult.request.id} for room #${approvalResult.request.roomId} (${approvalWindowText}) was approved and converted to a booking.`,
+          skipEmail: true, // Staff/Admin get in-app notification only
         })),
       ],
     );
@@ -562,6 +564,7 @@ router.post("/:id/forward", authMiddleware, requireRole("FACULTY"), async (req, 
         type: "BOOKING_REQUEST_FORWARDED",
         subject: `Booking request #${request.id} awaiting staff approval`,
         message: `Booking request #${request.id} for room #${request.roomId} (${windowText}) is awaiting staff/admin review.`,
+        skipEmail: true, // Staff/Admin get in-app notification only
       })),
       ...notifyRequesterRecipients.map<NotificationDraft>((recipientId) => ({
         recipientId,
@@ -619,6 +622,12 @@ router.post("/:id/cancel",authMiddleware, async (req, res) => {
       .where(eq(bookingRequests.id, id))
       .returning();
 
+    // Determine email recipients based on who cancelled:
+    // - Student cancels their own request: no email (student is excluded as actor)
+    // - Admin cancels: student + faculty get email
+    const actorRole = req.user!.role;
+    const skipEmailForParticipants = actorRole === "STUDENT";
+
     const participantRecipients = uniqueRecipientIds(
       [existing.userId, existing.facultyId],
       [req.user!.id],
@@ -637,12 +646,14 @@ router.post("/:id/cancel",authMiddleware, async (req, res) => {
         type: "BOOKING_REQUEST_CANCELLED",
         subject: `Booking request #${existing.id} cancelled`,
         message: `Booking request #${existing.id} for room #${existing.roomId} (${windowText}) was cancelled.`,
+        skipEmail: skipEmailForParticipants,
       })),
       ...reviewerRecipients.map<NotificationDraft>((recipientId) => ({
         recipientId,
         type: "BOOKING_REQUEST_CANCELLED",
         subject: `Booking request #${existing.id} cancelled`,
         message: `Booking request #${existing.id} for room #${existing.roomId} (${windowText}) was cancelled by the requester/admin.`,
+        skipEmail: true, // Staff/Admin never get emails for cancellations
       })),
     ];
 
@@ -869,6 +880,7 @@ router.post("/", authMiddleware, requireRole(["STUDENT", "FACULTY"]), async (req
             type: "BOOKING_REQUEST_CREATED",
             subject: `Booking request #${created.id} awaiting staff approval`,
             message: `Booking request #${created.id} for room #${created.roomId} (${windowText}) is awaiting staff/admin review.`,
+            skipEmail: true, // Staff/Admin get in-app notification only
           })),
           ...requesterRecipients.map<NotificationDraft>((recipientId) => ({
             recipientId,

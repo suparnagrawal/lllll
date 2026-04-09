@@ -3,7 +3,7 @@ import type { FormEvent } from "react";
 import {
   addDayLane as apiAddDayLane,
   createBooking as apiCreateBooking,
-  commitTimetableImport as apiCommitTimetableImport,
+
   deleteTimetableImportBatch as apiDeleteTimetableImportBatch,
   getTimetableImportBatch as apiGetTimetableImportBatch,
   getTimetableImportBatches as apiGetTimetableImportBatches,
@@ -30,6 +30,12 @@ import {
   transferTimetableImportRow as apiTransferTimetableImportRow,
   updateBooking as apiUpdateBooking,
   updateTimeBand as apiUpdateTimeBand,
+  detectCommitConflicts as apiDetectCommitConflicts,
+  commitWithResolutions as apiCommitWithResolutions,
+  cancelCommit as apiCancelCommit,
+  getFreezeStatus as apiGetFreezeStatus,
+  previewSlotSystemChanges as apiPreviewSlotSystemChanges,
+
 } from "../lib/api";
 import type {
   Building,
@@ -47,6 +53,13 @@ import type {
   TimetableImportPreviewRow,
   TimetableImportPreviewReport,
   TimetableImportSavedDecision,
+  ConflictDetectionReport,
+
+  ConflictResolutionDecision,
+  ConflictResolutionAction,
+  FreezeStatusResponse,
+  ChangePreviewResult,
+
 } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { formatDateDDMMYYYY } from "../utils/datetime";
@@ -412,6 +425,22 @@ export function TimetableBuilderPage() {
 
   const [dragSelection, setDragSelection] = useState<DragSelection | null>(null);
 
+  // Conflict-aware commit state
+  const [conflictReport, setConflictReport] = useState<ConflictDetectionReport | null>(null);
+  const [conflictResolutions, setConflictResolutions] = useState<
+    Record<number, { action: ConflictResolutionAction; alternativeRoomId?: number }>
+  >({});
+  const [conflictLoading, setConflictLoading] = useState(false);
+  const [showConflictDialog, setShowConflictDialog] = useState(false);
+  const [freezeInfo, setFreezeInfo] = useState<FreezeStatusResponse | null>(null);
+
+  // Change workspace state
+  const [showChangeWorkspace, setShowChangeWorkspace] = useState(false);
+  const [changePreview, setChangePreview] = useState<ChangePreviewResult | null>(null);
+  const [changeLoading, setChangeLoading] = useState(false);
+  const [changeError, setChangeError] = useState<string | null>(null);
+  const [changeSuccess, setChangeSuccess] = useState<string | null>(null);
+
   const days: SlotDay[] = grid?.days ?? [];
   const timeBands: SlotTimeBand[] = grid?.timeBands ?? [];
   const blocks: SlotBlock[] = grid?.blocks ?? [];
@@ -593,6 +622,8 @@ export function TimetableBuilderPage() {
     }
     return slotSystems.find((system) => system.id === selectedSystemId) ?? null;
   }, [selectedSystemId, slotSystems]);
+
+  const isSystemLocked = selectedSystem?.isLocked ?? false;
 
   const previewRowById = useMemo(() => {
     return new Map<number, TimetableImportPreviewRow>(
@@ -1830,9 +1861,89 @@ export function TimetableBuilderPage() {
     try {
       const decisions = buildImportDecisionsPayload();
 
-      const report = await apiCommitTimetableImport(previewReport.batchId, decisions);
-      setCommitReport(report);
-  showConflictingBookingsPopup(report, "Commit");
+      // Step 1: Detect conflicts first
+      const conflictResult = await apiDetectCommitConflicts(previewReport.batchId, decisions);
+
+      if (conflictResult.status === "NO_CONFLICTS" || conflictResult.conflicts.length === 0) {
+        // No conflicts — commit directly with empty resolutions
+        const report = await apiCommitWithResolutions(previewReport.batchId, []);
+        setCommitReport(report as unknown as TimetableImportCommitReport);
+
+        const refreshedReport = await apiGetTimetableImportBatch(previewReport.batchId);
+        hydratePreviewFromBatch(refreshedReport);
+
+        await loadGrid(refreshedReport.slotSystemId);
+        await loadProcessedRows(previewReport.batchId);
+        await loadImportBatches(refreshedReport.slotSystemId);
+        await loadSlotSystems(); // Refresh to pick up isLocked change
+      } else {
+        // Conflicts found — show resolution dialog
+        setConflictReport(conflictResult);
+        setConflictResolutions({});
+        setShowConflictDialog(true);
+
+        // Load freeze status
+        try {
+          const freeze = await apiGetFreezeStatus(previewReport.batchId);
+          setFreezeInfo(freeze);
+        } catch {
+          // Freeze status is informational, don't block
+        }
+      }
+    } catch (e) {
+      setImportError(e instanceof Error ? e.message : "Failed to detect conflicts");
+    } finally {
+      setCommitLoading(false);
+    }
+  };
+
+  const handleResolveConflicts = async () => {
+    if (!previewReport || !conflictReport) {
+      return;
+    }
+
+    // Validate that all conflicts have resolutions
+    const unresolved = conflictReport.conflicts.filter(
+      (c) => !conflictResolutions[c.occurrenceId],
+    );
+
+    if (unresolved.length > 0) {
+      setImportError(`Please resolve all ${unresolved.length} conflict(s) before committing`);
+      return;
+    }
+
+    // Validate ALTERNATIVE_ROOM has room selected
+    const missingRoom = conflictReport.conflicts.filter((c) => {
+      const resolution = conflictResolutions[c.occurrenceId];
+      return resolution?.action === "ALTERNATIVE_ROOM" && !resolution.alternativeRoomId;
+    });
+
+    if (missingRoom.length > 0) {
+      setImportError("Please select a room for all ALTERNATIVE_ROOM resolutions");
+      return;
+    }
+
+    setConflictLoading(true);
+    setImportError(null);
+
+    try {
+      const resolutions: ConflictResolutionDecision[] = conflictReport.conflicts.map((c) => {
+        const res = conflictResolutions[c.occurrenceId]!;
+        return {
+          occurrenceId: c.occurrenceId,
+          action: res.action,
+          ...(res.action === "ALTERNATIVE_ROOM" && res.alternativeRoomId
+            ? { alternativeRoomId: res.alternativeRoomId }
+            : {}),
+        };
+      });
+
+      const report = await apiCommitWithResolutions(previewReport.batchId, resolutions);
+      setCommitReport(report as unknown as TimetableImportCommitReport);
+      setShowConflictDialog(false);
+      setConflictReport(null);
+      setConflictResolutions({});
+      setFreezeInfo(null);
 
       const refreshedReport = await apiGetTimetableImportBatch(previewReport.batchId);
       hydratePreviewFromBatch(refreshedReport);
@@ -1840,10 +1951,46 @@ export function TimetableBuilderPage() {
       await loadGrid(refreshedReport.slotSystemId);
       await loadProcessedRows(previewReport.batchId);
       await loadImportBatches(refreshedReport.slotSystemId);
+      await loadSlotSystems(); // Refresh to pick up isLocked change
     } catch (e) {
-      setImportError(e instanceof Error ? e.message : "Failed to commit import");
+      setImportError(e instanceof Error ? e.message : "Failed to commit with resolutions");
     } finally {
-      setCommitLoading(false);
+      setConflictLoading(false);
+    }
+  };
+
+  const handleCancelCommit = async () => {
+    if (!previewReport) {
+      return;
+    }
+
+    try {
+      await apiCancelCommit(previewReport.batchId);
+      setShowConflictDialog(false);
+      setConflictReport(null);
+      setConflictResolutions({});
+      setFreezeInfo(null);
+      setImportInfo("Commit cancelled. Booking operations resumed.");
+    } catch (e) {
+      setImportError(e instanceof Error ? e.message : "Failed to cancel commit");
+    }
+  };
+
+  // Change workspace handlers
+  const handlePreviewChanges = async () => {
+    if (selectedSystemId === "") return;
+
+    setChangeLoading(true);
+    setChangeError(null);
+
+    try {
+      const preview = await apiPreviewSlotSystemChanges(Number(selectedSystemId), {});
+      setChangePreview(preview);
+      setShowChangeWorkspace(true);
+    } catch (e) {
+      setChangeError(e instanceof Error ? e.message : "Failed to preview changes");
+    } finally {
+      setChangeLoading(false);
     }
   };
 
@@ -1875,7 +2022,7 @@ export function TimetableBuilderPage() {
               <option value="">Select a slot system</option>
               {slotSystems.map((system) => (
                 <option key={system.id} value={system.id}>
-                  {system.name}
+                  {system.isLocked ? "🔒 " : ""}{system.name}
                 </option>
               ))}
             </select>
@@ -1914,7 +2061,25 @@ export function TimetableBuilderPage() {
           >
             {loadingSystems ? "Refreshing..." : "Refresh"}
           </button>
+          {isSystemLocked && (
+            <button
+              type="button"
+              className="btn"
+              style={{ backgroundColor: "#7c3aed", color: "white" }}
+              onClick={() => void handlePreviewChanges()}
+              disabled={changeLoading || actionLoading}
+            >
+              {changeLoading ? "Loading..." : "✏️ Edit Structure"}
+            </button>
+          )}
         </div>
+
+        {isSystemLocked && (
+          <div className="mt-3 p-3 rounded" style={{ backgroundColor: "#fef3cd", border: "1px solid #ffc107" }}>
+            <strong>🔒 Locked System:</strong> This slot system has been committed and is locked.
+            Direct day/band/block edits are disabled. Use <strong>"Edit Structure"</strong> to make changes through the change workspace.
+          </div>
+        )}
 
         <div className="form-row mt-6">
           <div className="form-field">
@@ -3197,6 +3362,223 @@ export function TimetableBuilderPage() {
           </div>
         )}
       </div>
+
+      {/* Freeze Status Banner */}
+      {freezeInfo && freezeInfo.isFrozen && (
+        <div
+          className="fixed top-0 left-0 right-0 z-40 p-3 text-center text-white"
+          style={{ backgroundColor: "#dc3545" }}
+        >
+          ⚠️ <strong>Booking Freeze Active:</strong> Held by {freezeInfo.freezeInfo?.userName ?? "unknown"} since{" "}
+          {freezeInfo.freezeInfo?.startedAt ? new Date(freezeInfo.freezeInfo.startedAt).toLocaleString() : "unknown"}.
+          New booking operations are blocked.
+        </div>
+      )}
+
+      {/* Conflict Resolution Dialog */}
+      {showConflictDialog && conflictReport && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl p-6 w-full max-w-3xl max-h-[80vh] overflow-y-auto"
+            id="conflictResolutionDialog"
+          >
+            <h3 className="text-xl font-bold mb-4">
+              ⚠️ Booking Conflicts Detected ({conflictReport.conflicts.length})
+            </h3>
+            <p className="text-gray-600 mb-4">
+              The following occurrences conflict with existing bookings. Choose a resolution strategy for each.
+            </p>
+
+            <div className="space-y-4">
+              {conflictReport.conflicts.map((conflict) => {
+                const resolution = conflictResolutions[conflict.occurrenceId];
+                return (
+                  <div
+                    key={conflict.occurrenceId}
+                    className="border rounded p-4"
+                    style={{ borderColor: resolution ? "#28a745" : "#ffc107" }}
+                  >
+                    <div className="font-medium mb-2">
+                      Occurrence #{conflict.occurrenceId} — Room: {conflict.roomName ?? conflict.roomId},{" "}
+                      {new Date(conflict.startAt).toLocaleString()} → {new Date(conflict.endAt).toLocaleString()}
+                    </div>
+                    <div className="text-sm text-gray-500 mb-2">
+                      Conflicts with: Booking #{conflict.conflictingBooking.id} ({new Date(conflict.conflictingBooking.startAt).toLocaleString()} → {new Date(conflict.conflictingBooking.endAt).toLocaleString()})
+                    </div>
+
+                    <div className="flex gap-3 flex-wrap items-center">
+                      <label className="flex items-center gap-1 cursor-pointer">
+                        <input
+                          type="radio"
+                          name={`resolution-${conflict.occurrenceId}`}
+                          checked={resolution?.action === "FORCE_OVERWRITE"}
+                          onChange={() =>
+                            setConflictResolutions((prev) => ({
+                              ...prev,
+                              [conflict.occurrenceId]: { action: "FORCE_OVERWRITE" },
+                            }))
+                          }
+                        />
+                        <span className="text-sm font-medium">Force Overwrite</span>
+                      </label>
+
+                      <label className="flex items-center gap-1 cursor-pointer">
+                        <input
+                          type="radio"
+                          name={`resolution-${conflict.occurrenceId}`}
+                          checked={resolution?.action === "SKIP"}
+                          onChange={() =>
+                            setConflictResolutions((prev) => ({
+                              ...prev,
+                              [conflict.occurrenceId]: { action: "SKIP" },
+                            }))
+                          }
+                        />
+                        <span className="text-sm font-medium">Skip</span>
+                      </label>
+
+                      <label className="flex items-center gap-1 cursor-pointer">
+                        <input
+                          type="radio"
+                          name={`resolution-${conflict.occurrenceId}`}
+                          checked={resolution?.action === "ALTERNATIVE_ROOM"}
+                          onChange={() =>
+                            setConflictResolutions((prev) => ({
+                              ...prev,
+                              [conflict.occurrenceId]: { action: "ALTERNATIVE_ROOM" },
+                            }))
+                          }
+                        />
+                        <span className="text-sm font-medium">Alternative Room</span>
+                      </label>
+
+                      {resolution?.action === "ALTERNATIVE_ROOM" && (
+                        <select
+                          className="input"
+                          style={{ maxWidth: "200px" }}
+                          value={resolution.alternativeRoomId ?? ""}
+                          onChange={(e) =>
+                            setConflictResolutions((prev) => ({
+                              ...prev,
+                              [conflict.occurrenceId]: {
+                                action: "ALTERNATIVE_ROOM",
+                                alternativeRoomId: Number(e.target.value) || undefined,
+                              },
+                            }))
+                          }
+                        >
+                          <option value="">Select room...</option>
+                          {rooms.map((room: Room) => (
+                            <option key={room.id} value={room.id}>
+                              {room.name}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex gap-3 mt-6 justify-end">
+              <button
+                className="btn btn-ghost"
+                onClick={() => void handleCancelCommit()}
+                disabled={conflictLoading}
+              >
+                Cancel Commit
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={() => void handleResolveConflicts()}
+                disabled={conflictLoading}
+              >
+                {conflictLoading ? "Committing..." : "Commit with Resolutions"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Change Workspace Panel */}
+      {showChangeWorkspace && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl p-6 w-full max-w-2xl max-h-[80vh] overflow-y-auto"
+            id="changeWorkspacePanel"
+          >
+            <h3 className="text-xl font-bold mb-4">✏️ Slot System Change Workspace</h3>
+            <p className="text-gray-600 mb-4">
+              Preview and apply structural changes to the locked slot system.
+              Changes will acquire a booking freeze during application.
+            </p>
+
+            {changeError && (
+              <div className="p-3 rounded mb-4 text-sm" style={{ backgroundColor: "#f8d7da", color: "#721c24" }}>
+                {changeError}
+              </div>
+            )}
+
+            {changeSuccess && (
+              <div className="p-3 rounded mb-4 text-sm" style={{ backgroundColor: "#d4edda", color: "#155724" }}>
+                {changeSuccess}
+              </div>
+            )}
+
+            {changePreview && (
+              <div className="border rounded p-4 mb-4">
+                <h4 className="font-medium mb-2">Current System Status</h4>
+                <p className="text-sm text-gray-600">
+                  System ID: {changePreview.slotSystemId} | Locked: {changePreview.isLocked ? "Yes" : "No"}
+                </p>
+                {changePreview.affectedBatches.length > 0 && (
+                  <div className="mt-2">
+                    <p className="text-sm font-medium">Committed Batches:</p>
+                    {changePreview.affectedBatches.map((batch) => (
+                      <p key={batch.batchId} className="text-sm text-gray-500">
+                        Batch #{batch.batchId} — {batch.status} ({batch.affectedOccurrences} affected occurrences)
+                      </p>
+                    ))}
+                  </div>
+                )}
+                {changePreview.warnings.length > 0 && (
+                  <div className="mt-2">
+                    {changePreview.warnings.map((w, i) => (
+                      <p key={i} className="text-sm text-amber-600">⚠️ {w}</p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="text-sm text-gray-500 mb-4">
+              To make structural changes (add/remove days, time bands, blocks), use the standard controls in the main builder.
+              The change workspace will apply them under a booking freeze.
+            </div>
+
+            <div className="flex gap-3 justify-end">
+              <button
+                className="btn btn-ghost"
+                onClick={() => {
+                  setShowChangeWorkspace(false);
+                  setChangePreview(null);
+                  setChangeError(null);
+                  setChangeSuccess(null);
+                }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

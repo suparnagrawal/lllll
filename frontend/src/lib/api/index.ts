@@ -60,6 +60,17 @@ export type {
   UpcomingBooking,
   ActivityItem,
   DashboardData,
+  ConflictResolutionAction,
+  DetectedConflict,
+  ConflictResolutionDecision,
+  ConflictDetectionReport,
+  CommitWithResolutionsReport,
+  CancelCommitResponse,
+  FreezeStatusResponse,
+  BookingFreezeErrorResponse,
+  SlotSystemChanges,
+  ChangePreviewResult,
+  ChangeApplyResult,
 } from "./types";
 
 // Client utilities
@@ -202,4 +213,10 @@ export {
   reallocateTimetableImport,
   deleteTimetableImportBatch,
   getTimetableImportProcessedRows,
+  detectCommitConflicts,
+  commitWithResolutions,
+  cancelCommit,
+  getFreezeStatus,
+  previewSlotSystemChanges,
+  applySlotSystemChanges,
 } from "./slots";

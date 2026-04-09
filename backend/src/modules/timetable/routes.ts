@@ -28,6 +28,8 @@ import {
 	handleCommitWithResolutions,
 	handleCancelCommit,
 	handleGetFreezeStatus,
+	handlePreviewSlotSystemChanges,
+	handleApplySlotSystemChanges,
 } from "./controller";
 import { authMiddleware } from "../../middleware/auth";
 import { requireRole } from "../../middleware/rbac";
@@ -105,5 +107,17 @@ router.post(
 );
 router.post("/imports/:id/cancel-commit", timetableImportCommitLimiter, handleCancelCommit);
 router.get("/imports/:id/freeze-status", timetableImportReadLimiter, handleGetFreezeStatus);
+
+// Slot system change workspace
+router.post(
+	"/slot-systems/:id/preview-changes",
+	timetableImportMutationLimiter,
+	handlePreviewSlotSystemChanges,
+);
+router.post(
+	"/slot-systems/:id/apply-changes",
+	timetableImportCommitLimiter,
+	handleApplySlotSystemChanges,
+);
 
 export default router;
