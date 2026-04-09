@@ -1,6 +1,6 @@
 import { and, eq, gt, lt, ne } from "drizzle-orm";
 import { db } from "../db";
-import { bookings, rooms } from "../db/schema";
+import { bookingCourseLink, bookings, courses, rooms } from "../db/schema";
 
 type DbExecutor = typeof db | any;
 
@@ -26,6 +26,7 @@ export type BookingSourceMetadata = {
   approvedBy?: number;
   approvedAt?: string | Date;
   auxiliaryData?: Record<string, string>;
+  courseId?: number;
 };
 
 export type CreateBookingInput = {
@@ -33,6 +34,7 @@ export type CreateBookingInput = {
   startAt: string | Date;
   endAt: string | Date;
   requestId?: number | null;
+  courseId?: number | null;
   metadata?: BookingSourceMetadata;
 };
 
@@ -238,6 +240,22 @@ function normalizeCreateInput(raw: CreateBookingInput | BulkBookingItemInput) {
 
   const approvedAt = approvedBy !== null ? approvedAtCandidate ?? new Date() : null;
 
+  const courseIdRaw: unknown =
+    (raw as { metadata?: { courseId?: unknown }; courseId?: unknown }).metadata
+      ?.courseId ??
+    (raw as { courseId?: unknown }).courseId;
+
+  const courseId =
+    courseIdRaw === undefined ||
+    courseIdRaw === null ||
+    courseIdRaw === ""
+      ? null
+      : Number(courseIdRaw);
+
+  if (courseId !== null && (!Number.isInteger(courseId) || courseId <= 0)) {
+    throw createBookingServiceError(400, "INVALID_COURSE_ID", "Invalid courseId");
+  }
+
   return {
     roomId: parsedRoomId,
     startAt,
@@ -247,6 +265,7 @@ function normalizeCreateInput(raw: CreateBookingInput | BulkBookingItemInput) {
     approvedAt,
     source,
     sourceRef,
+    courseId,
   };
 }
 
@@ -259,6 +278,18 @@ async function ensureRoomExists(roomId: number, executor: DbExecutor) {
 
   if (row.length === 0) {
     throw createBookingServiceError(404, "ROOM_NOT_FOUND", "Room not found");
+  }
+}
+
+async function ensureCourseExists(courseId: number, executor: DbExecutor) {
+  const row = await executor
+    .select({ id: courses.id })
+    .from(courses)
+    .where(eq(courses.id, courseId))
+    .limit(1);
+
+  if (row.length === 0) {
+    throw createBookingServiceError(404, "COURSE_NOT_FOUND", "Course not found");
   }
 }
 
@@ -296,6 +327,10 @@ export async function createBooking(
     const input = normalizeCreateInput(raw);
 
     await ensureRoomExists(input.roomId, executor);
+
+    if (input.courseId !== null) {
+      await ensureCourseExists(input.courseId, executor);
+    }
 
     const overlap = await hasBookingOverlap(
       input.roomId,
@@ -336,13 +371,25 @@ export async function createBooking(
       };
     }
 
+    if (input.courseId !== null) {
+      await executor
+        .insert(bookingCourseLink)
+        .values({
+          bookingId: inserted[0].id,
+          courseId: input.courseId,
+        })
+        .onConflictDoNothing({
+          target: [bookingCourseLink.bookingId, bookingCourseLink.courseId],
+        });
+    }
+
     return {
       ok: true,
       booking: inserted[0],
     };
   } catch (error: unknown) {
     const typedError = error as Partial<BookingServiceError> & {
-      cause?: { code?: string };
+      cause?: { code?: string; constraint?: string };
     };
 
     if (typeof typedError.status === "number" && typeof typedError.code === "string") {
@@ -355,6 +402,18 @@ export async function createBooking(
     }
 
     if (typedError?.cause?.code === "23503") {
+      if (
+        typeof typedError?.cause?.constraint === "string" &&
+        typedError.cause.constraint.includes("booking_course_link_course_id")
+      ) {
+        return {
+          ok: false,
+          status: 404,
+          code: "COURSE_NOT_FOUND",
+          message: "Course not found",
+        };
+      }
+
       return {
         ok: false,
         status: 404,

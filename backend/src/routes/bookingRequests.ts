@@ -357,9 +357,20 @@ router.post("/:id/reject", authMiddleware, requireRole(["FACULTY", "STAFF"]), re
 
 router.post("/:id/approve", authMiddleware, requireRole("STAFF"), requireBookingsUnfrozen(), async (req, res) => {
   const id = Number(req.params.id);
+  const courseIdRaw = req.body?.courseId;
+  const hasCourseId =
+    courseIdRaw !== undefined &&
+    courseIdRaw !== null &&
+    String(courseIdRaw).trim() !== "";
+
+  const courseId = hasCourseId ? Number(courseIdRaw) : undefined;
 
   if (isNaN(id)) {
     return res.status(400).json({ error: "Invalid id" });
+  }
+
+  if (hasCourseId && (!Number.isInteger(courseId) || (courseId ?? 0) <= 0)) {
+    return res.status(400).json({ error: "Invalid courseId" });
   }
 
   try {
@@ -403,6 +414,7 @@ router.post("/:id/approve", authMiddleware, requireRole("STAFF"), requireBooking
           metadata: {
             source: "MANUAL_REQUEST",
             sourceRef: `request:${request.id}`,
+            ...(courseId !== undefined ? { courseId } : {}),
             ...(req.user?.id !== undefined
               ? {
                   approvedBy: req.user.id,
@@ -421,6 +433,10 @@ router.post("/:id/approve", authMiddleware, requireRole("STAFF"), requireBooking
 
         if (inserted.code === "ROOM_NOT_FOUND") {
           throw { type: "ROOM_NOT_FOUND" };
+        }
+
+        if (inserted.code === "COURSE_NOT_FOUND") {
+          throw { type: "COURSE_NOT_FOUND" };
         }
 
         throw {
@@ -486,6 +502,10 @@ router.post("/:id/approve", authMiddleware, requireRole("STAFF"), requireBooking
 
     if (error?.type === "ROOM_NOT_FOUND") {
       return res.status(404).json({ error: "Room not found" });
+    }
+
+    if (error?.type === "COURSE_NOT_FOUND") {
+      return res.status(404).json({ error: "Course not found" });
     }
 
     if (error?.type === "ROOM_OVERLAP") {
