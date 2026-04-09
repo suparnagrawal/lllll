@@ -37,7 +37,7 @@ export async function deleteUserAccount(): Promise<void> {
 
 export type ActivityLog = {
   id: string;
-  type: "LOGIN" | "BOOKING" | "ACTION";
+  type: "LOGIN" | "BOOKING" | "ACTION" | "REQUEST";
   title: string;
   description: string;
   timestamp: string;
@@ -45,36 +45,38 @@ export type ActivityLog = {
     ipAddress?: string;
     device?: string;
     bookingId?: number;
+    requestId?: number;
+    status?: string;
+    source?: string;
   };
 };
 
 export async function getUserActivityLog(
   _userId: number,
-  _limit: number = 10,
+  limit: number = 15,
 ): Promise<ActivityLog[]> {
-  // This endpoint doesn't exist yet on the backend
-  // For now, return mock data
-  return Promise.resolve([]);
+  const safeLimit = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 20) : 15;
+
+  return request<ActivityLog[]>(`/users/profile/activity?limit=${safeLimit}`);
 }
 
 export type Session = {
   id: string;
   deviceName: string;
-  lastAccessedAt: string;
-  ipAddress: string;
-  isCurrent: boolean;
+  ipAddress: string | null;
+  createdAt: string;
+  expiresAt: string;
+  isCurrentSession: boolean;
 };
 
 export async function getUserSessions(_userId: number): Promise<Session[]> {
-  // This endpoint doesn't exist yet on the backend
-  // For now, return mock data
-  return Promise.resolve([]);
+  return request<Session[]>('/users/profile/sessions');
 }
 
 export async function signOutOtherSessions(_userId: number): Promise<void> {
-  // This endpoint doesn't exist yet on the backend
-  // For now, return success
-  return Promise.resolve();
+  await request<{ ok: boolean; terminatedSessions: number }>('/users/profile/sessions/logout-others', {
+    method: 'POST',
+  });
 }
 
 export type UserData = {

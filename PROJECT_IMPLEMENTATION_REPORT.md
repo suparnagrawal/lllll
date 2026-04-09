@@ -246,6 +246,9 @@ This is a **full-stack web application** for managing university room bookings a
 | PATCH | `/profile` | Update current user profile | All authenticated |
 | DELETE | `/profile` | Delete own account (anonymize + deactivate) | All authenticated |
 | GET | `/profile/export` | Export own user data | All authenticated |
+| GET | `/profile/sessions` | List current and other active sessions for current user | All authenticated |
+| POST | `/profile/sessions/logout-others` | Revoke all active sessions except current session | All authenticated |
+| GET | `/profile/activity` | Profile activity feed (bookings/requests/sessions) | All authenticated |
 | GET | `/:id/building-assignments` | View staff building assignments | ADMIN, STAFF (self for STAFF) |
 | GET | `/` | List users (paginated + filters) | ADMIN |
 | POST | `/` | Create user | ADMIN |
@@ -467,7 +470,7 @@ Additional modules under `/frontend/src/pages/timetable/` exist but are not moun
 | `useAvailability`, `useRoomDayTimeline` | Availability search + per-room timeline |
 | `useManagedUsers`, `useFacultyUsers`, `useUserBuildingAssignments` + mutations | User admin and staff-building assignment |
 | `useSlotSystems` + slot-system mutation hooks | Slot-system list/create/delete |
-| `useUserProfile`, `useUpdateProfile`, `useDeleteAccount`, `useExportUserData` | Profile and account actions |
+| `useUserProfile`, `useUpdateProfile`, `useDeleteAccount`, `useExportUserData`, `useUserSessions`, `useSignOutOtherSessions`, `useUserActivityLog` | Profile, account, and session/activity actions |
 
 ### API Client
 
@@ -483,7 +486,7 @@ Additional modules under `/frontend/src/pages/timetable/` exist but are not moun
 | `slots.ts` | Slot system and timetable import/conflict/change-workspace clients |
 | `dashboard.ts` | Dashboard aggregate/stat/activity endpoints |
 | `notifications.ts` | Notification list/read/read-all endpoints |
-| `profile.ts` | Self-profile update/delete/export helpers |
+| `profile.ts` | Self-profile update/delete/export plus live sessions/activity helpers |
 | `types.ts` | Frontend API contract types |
 | `constants.ts`, `jwt-utils.ts`, `storage-utils.ts`, `index.ts` | Client constants/utilities and barrel exports |
 
@@ -836,9 +839,10 @@ This system provides a complete solution for university room allocation with rob
 
 ### Current Working Tree Notes
 
-- `HOW_TO_RUN.md` is aligned to backend default port `5000`.
-- `backend/package-lock.json` contains dependency lockfile updates from local install.
-- `frontend/src/auth/AuthContext.tsx` contains the active timeout countdown UI/logic update.
+- `HOW_TO_RUN.md` is aligned to backend default port `5000` and frontend `5173`.
+- Frontend API base URL supports `VITE_API_BASE_URL` override with `/api` fallback for local proxying.
+- Profile page security/activity views now use live backend data instead of placeholders.
+- A single pre-existing TypeScript issue remains in `/backend/src/services/slotChangeService.ts:186`.
 
 ### Task Group 2 Stabilization (Refactor Branch)
 
@@ -857,3 +861,20 @@ This system provides a complete solution for university room allocation with rob
 | Frontend build (`npm run build`) | Pass |
 | Backend runtime smoke (`/health`, `/health/ready`) | Pass |
 | Frontend runtime smoke (dev server HTTP 200) | Pass |
+
+### Task Group 3 Integration (Refactor Branch)
+
+| Area | File(s) | Status |
+|------|---------|--------|
+| Env and local integration consistency | `/backend/src/config/env.ts`, `/frontend/src/lib/api/constants.ts`, `/HOW_TO_RUN.md` | Port parsing/defaults and docs were aligned around backend `5000`, frontend `5173`, and explicit OAuth callback/frontend URLs. |
+| Profile backend APIs | `/backend/src/routes/users.ts` | Added authenticated profile endpoints for active sessions, sign-out-other-sessions, and profile activity feed without schema changes. |
+| Profile frontend integration | `/frontend/src/lib/api/profile.ts`, `/frontend/src/pages/Profile.tsx` | Removed mock behavior and wired security/activity tabs to real API hooks with loading/error/empty/live states. |
+
+### Task Group 3 Validation Snapshot
+
+| Check | Result |
+|------|--------|
+| Backend tests (`npm test`) | Pass (22/22) |
+| Frontend build (`npm run build`) | Pass |
+| Profile route smoke (`/api/users/profile/sessions`, `/api/users/profile/activity`, `/api/users/profile/sessions/logout-others` without auth) | Pass (`401` as expected for unauthenticated requests) |
+| Backend TypeScript (`npx tsc --noEmit -p backend/tsconfig.json`) | One pre-existing error remains in `/backend/src/services/slotChangeService.ts:186` |
