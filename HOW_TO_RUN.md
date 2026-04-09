@@ -48,6 +48,8 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5433/classroom_booking
 REDIS_URL=redis://localhost:6379
 JWT_SECRET=your_jwt_secret_here
 SESSION_SECRET=your_session_secret_here
+FRONTEND_URL=http://localhost:5173
+GOOGLE_CALLBACK_URL=http://localhost:5000/api/auth/google/callback
 ```
 
 Install dependencies:
@@ -76,6 +78,9 @@ npm run dev
 
 Backend base URL:
 - http://localhost:5000
+
+Frontend API base URL in development:
+- `/api` (proxied by Vite to `http://localhost:5000`)
 
 ## 4. Frontend Setup
 
