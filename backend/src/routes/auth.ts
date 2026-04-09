@@ -11,7 +11,7 @@ import logger from "../shared/utils/logger";
 
 const router = Router();
 
-type SetupRole = "STUDENT" | "FACULTY";
+type SetupRole = "STUDENT" | "FACULTY" | "STAFF" | "ADMIN";
 
 function buildFrontendUrl(pathname: string, params?: Record<string, string>): string {
   const normalizedBase = env.FRONTEND_URL.endsWith("/")
@@ -385,9 +385,9 @@ router.post("/complete-setup", async (req, res) => {
       });
     }
 
-    // Role validation based on auth provider
-    const allowedRoles = user.registeredVia === "google" 
-      ? ["STUDENT", "FACULTY", "ADMIN"] 
+    // Google OAuth first-time setup is student-only.
+    const allowedRoles = user.registeredVia === "google"
+      ? ["STUDENT"]
       : ["STUDENT", "STAFF", "ADMIN"];
 
     if (!role || !allowedRoles.includes(role)) {
@@ -410,7 +410,7 @@ router.post("/complete-setup", async (req, res) => {
     const [updated] = await db
       .update(users)
       .set({
-        role: role as SetupRole | "ADMIN",
+        role: role as SetupRole,
         department,
         firstLogin: false,
       })

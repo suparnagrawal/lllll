@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { useToast } from "../context/ToastContext";
 import {
@@ -39,7 +39,7 @@ import {
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { useUpdateProfile, useDeleteAccount } from "../hooks/useProfile";
+import { useUpdateProfile, useDeleteAccount, useUserProfile } from "../hooks/useProfile";
 import { request } from "../lib/api/client";
 import { LogOut, Lock, Download, Trash2 } from "lucide-react";
 
@@ -116,6 +116,7 @@ interface EditProfileModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   userRole: string;
+  initialDepartment?: string | null;
   onSubmit: (data: UpdateProfileFormData) => Promise<void>;
   isLoading: boolean;
 }
@@ -124,12 +125,27 @@ function EditProfileModal({
   open,
   onOpenChange,
   userRole,
+  initialDepartment,
   onSubmit,
   isLoading,
 }: EditProfileModalProps) {
-  const { register, handleSubmit, formState: { errors } } = useForm<UpdateProfileFormData>({
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors },
+  } = useForm<UpdateProfileFormData>({
     resolver: zodResolver(updateProfileSchema),
+    defaultValues: {
+      department: initialDepartment ?? "",
+    },
   });
+
+  useEffect(() => {
+    if (open) {
+      reset({ department: initialDepartment ?? "" });
+    }
+  }, [open, initialDepartment, reset]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -222,9 +238,15 @@ function DeleteAccountModal({
 function ProfileSection() {
   const { user } = useAuth();
   const [editModalOpen, setEditModalOpen] = useState(false);
+  const { data: profile, isLoading: profileLoading } = useUserProfile(user?.id);
   const updateMutation = useUpdateProfile();
 
   if (!user) return null;
+
+  const profileName = profile?.name ?? user.name;
+  const profileEmail = profile?.email ?? user.email ?? "N/A";
+  const profileRole = profile?.role ?? user.role;
+  const profileDepartment = profile?.department ?? user.department ?? null;
 
   const handleEditSubmit = async (data: UpdateProfileFormData) => {
     try {
@@ -243,28 +265,32 @@ function ProfileSection() {
           <CardDescription>Your basic profile details</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {profileLoading && !profile ? (
+            <p className="text-sm text-gray-500">Loading profile details...</p>
+          ) : null}
+
           <div className="grid gap-4 md:grid-cols-2">
             <div>
               <Label className="text-xs font-semibold text-gray-600">Full Name</Label>
-              <p className="text-sm font-medium mt-1">{user.name}</p>
+              <p className="text-sm font-medium mt-1">{profileName}</p>
               <p className="text-xs text-gray-500">Read-only</p>
             </div>
             <div>
               <Label className="text-xs font-semibold text-gray-600">Email</Label>
-              <p className="text-sm font-medium mt-1">{user.email || "N/A"}</p>
+              <p className="text-sm font-medium mt-1">{profileEmail}</p>
               <p className="text-xs text-gray-500">Read-only</p>
             </div>
             <div>
               <Label className="text-xs font-semibold text-gray-600">Role</Label>
               <div className="mt-1">
-                <Badge className={getRoleBadgeColor(user.role)}>{user.role}</Badge>
+                <Badge className={getRoleBadgeColor(profileRole)}>{profileRole}</Badge>
               </div>
               <p className="text-xs text-gray-500 mt-1">System role</p>
             </div>
-            {user.department && (
+            {profileDepartment && (
               <div>
                 <Label className="text-xs font-semibold text-gray-600">Department</Label>
-                <p className="text-sm font-medium mt-1">{user.department}</p>
+                <p className="text-sm font-medium mt-1">{profileDepartment}</p>
               </div>
             )}
           </div>
@@ -282,7 +308,8 @@ function ProfileSection() {
       <EditProfileModal
         open={editModalOpen}
         onOpenChange={setEditModalOpen}
-        userRole={user.role}
+        userRole={profileRole}
+        initialDepartment={profileDepartment}
         onSubmit={handleEditSubmit}
         isLoading={updateMutation.isPending}
       />
@@ -291,8 +318,15 @@ function ProfileSection() {
 }
 
 function SettingsSection() {
+  const { user } = useAuth();
   const [emailNotifications, setEmailNotifications] = useState(true);
   const [theme, setTheme] = useState<"light" | "dark">("light");
+
+  if (!user) {
+    return null;
+  }
+
+  const connectedLabel = user.registeredVia === "google" ? "Google Account" : "Email / Password";
 
   return (
     <div className="space-y-6">
@@ -358,7 +392,7 @@ function SettingsSection() {
         <CardContent>
           <div className="flex items-center justify-between p-3 bg-blue-50 rounded-lg border border-blue-200">
             <div>
-              <p className="font-medium text-sm">Google Account</p>
+              <p className="font-medium text-sm">{connectedLabel}</p>
               <p className="text-xs text-gray-600">Connected</p>
             </div>
             <Badge className="bg-blue-100 text-blue-800">Connected</Badge>

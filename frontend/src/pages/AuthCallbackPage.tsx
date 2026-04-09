@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { Loader2, AlertCircle } from "lucide-react";
+import { getAuthUser } from "../lib/api";
+import { markProfileSetupRequired } from "../auth/profileSetup";
 
 type CallbackState = "loading" | "error" | "success";
 
@@ -10,10 +12,11 @@ export default function AuthCallbackPage() {
   const { loginWithToken, user } = useAuth();
   const [state, setState] = useState<CallbackState>("loading");
   const [errorMessage, setErrorMessage] = useState<string>("");
+  const [isFirstLoginFlow, setIsFirstLoginFlow] = useState(false);
+  const hasProcessedRef = useRef(false);
 
   useEffect(() => {
-    if (user) {
-      navigate("/");
+    if (hasProcessedRef.current) {
       return;
     }
 
@@ -21,22 +24,29 @@ export default function AuthCallbackPage() {
     const accessToken = searchParams.get("accessToken");
     const refreshToken = searchParams.get("refreshToken");
     const error = searchParams.get("error");
-    const authProvider = searchParams.get("authProvider");
-    const setupToken = searchParams.get("token");
+    const isFirstLogin = searchParams.get("firstLogin") === "true";
+
+    if (user && !accessToken && !error) {
+      navigate("/");
+      return;
+    }
 
     if (error === "oauth_failed") {
+      hasProcessedRef.current = true;
       setState("error");
       setErrorMessage("Google sign-in failed. Please try again.");
       return;
     }
 
     if (!accessToken) {
+      hasProcessedRef.current = true;
       setState("error");
       setErrorMessage("Missing OAuth token. Please try signing in again.");
       return;
     }
 
     let isCancelled = false;
+    hasProcessedRef.current = true;
 
     (async () => {
       try {
@@ -56,21 +66,18 @@ export default function AuthCallbackPage() {
           return;
         }
 
+        const authUser = getAuthUser();
+        if (isFirstLogin && authUser?.id) {
+          markProfileSetupRequired(authUser.id);
+        }
+
+        setIsFirstLoginFlow(isFirstLogin);
         setState("success");
+
         // Small delay to show success state before redirect
         setTimeout(() => {
           if (!isCancelled) {
-            // Redirect to setup only when backend explicitly provides a setup token.
-            if (setupToken) {
-              const encodedToken = encodeURIComponent(setupToken);
-              const setupUrl = authProvider
-                ? `/auth/setup?token=${encodedToken}&authProvider=${encodeURIComponent(authProvider)}`
-                : `/auth/setup?token=${encodedToken}`;
-              navigate(setupUrl);
-              return;
-            }
-
-            navigate("/");
+            navigate(isFirstLogin ? "/profile/setup" : "/");
           }
         }, 500);
       } catch (err) {
@@ -140,7 +147,11 @@ export default function AuthCallbackPage() {
             Sign In Successful
           </h1>
 
-          <p className="text-slate-600">Redirecting you to your dashboard...</p>
+          <p className="text-slate-600">
+            {isFirstLoginFlow
+              ? "Redirecting you to profile setup..."
+              : "Redirecting you to your dashboard..."}
+          </p>
         </div>
       </div>
     );

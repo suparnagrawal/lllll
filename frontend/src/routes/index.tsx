@@ -28,6 +28,8 @@ const LoginPage = lazy(() => import('../pages/LoginPage'));
 // eslint-disable-next-line react-refresh/only-export-components
 const ProfilePage = lazy(() => import('../pages/ProfilePage'));
 // eslint-disable-next-line react-refresh/only-export-components
+const ProfileSetupPage = lazy(() => import('../pages/ProfileSetupPage'));
+// eslint-disable-next-line react-refresh/only-export-components
 const PageLoader = () => (
   <div className="flex items-center justify-center w-full h-screen">
     <div className="text-lg text-gray-500">Loading...</div>
@@ -39,6 +41,10 @@ export const router = createBrowserRouter([
   {
     element: <ProtectedRoute />,
     children: [
+      {
+        path: 'profile/setup',
+        element: <Suspense fallback={<PageLoader />}><ProfileSetupPage /></Suspense>,
+      },
       {
         path: '/',
         element: <AppShell />,

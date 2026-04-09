@@ -85,9 +85,23 @@ function normalizeDrafts(drafts: NotificationDraft[]): NotificationDraft[] {
       subject,
       message,
       type: draft.type,
+      ...(draft.skipEmail ? { skipEmail: true } : {}),
     };
 
     const dedupeKey = `${normalizedDraft.recipientId}|${normalizedDraft.type}|${normalizedDraft.subject}|${normalizedDraft.message}`;
+
+    const existingDraft = deduped.get(dedupeKey);
+
+    if (existingDraft) {
+      deduped.set(dedupeKey, {
+        ...normalizedDraft,
+        ...(existingDraft.skipEmail || normalizedDraft.skipEmail
+          ? { skipEmail: true }
+          : {}),
+      });
+      continue;
+    }
+
     deduped.set(dedupeKey, normalizedDraft);
   }
 

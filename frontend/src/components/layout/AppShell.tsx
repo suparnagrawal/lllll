@@ -1,5 +1,6 @@
 import { Outlet } from 'react-router-dom';
 import { Header } from './Header';
+import { GlobalToastViewport } from './GlobalToastViewport';
 import { Sidebar, MobileSidebarToggle } from './Sidebar';
 
 export function AppShell() {
@@ -28,6 +29,8 @@ export function AppShell() {
           </div>
         </main>
       </div>
+
+      <GlobalToastViewport />
     </div>
   );
 }

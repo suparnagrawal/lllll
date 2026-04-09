@@ -6,7 +6,8 @@
   "scripts": {
     "test": "vitest run",
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
-    "seed:classrooms": "node scripts/seedClassrooms.mjs"
+    "seed:classrooms": "node scripts/seedClassrooms.mjs",
+    "seed:dev": "node scripts/seedDevData.mjs"
   },
   "keywords": [],
   "author": "",

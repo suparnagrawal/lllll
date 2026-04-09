@@ -376,77 +376,98 @@ This is a **full-stack web application** for managing university room bookings a
 
 ## 7. FRONTEND ARCHITECTURE
 
-### Page Components
+### Frontend Entry and Providers
 
-**Location**: `/frontend/src/pages/`
+**Entry Point**: `/frontend/src/main.tsx`
 
-| Page | Route | Purpose | Access |
-|------|-------|---------|--------|
-| `DashboardPage` | `/` | Overview stats & recent activity | All authenticated |
-| `AvailabilityPage` | `/availability` | Room availability calendar | All authenticated |
-| `RoomsPage` | `/rooms` | Room management CRUD | All authenticated |
-| `BookingsPage` | `/bookings` | Direct booking management | ADMIN, STAFF |
-| `BookingRequestsPage` | `/requests` | Booking request workflow | All authenticated |
-| `UsersPage` | `/users` | User management | ADMIN |
-| `TimetableBuilderPage` | `/timetable` | Slot system & import | ADMIN |
-| `ProfilePage` | `/profile` | User profile | All authenticated |
-| `LoginPage` | `/login` | Authentication | Public |
-| `AuthCallbackPage` | `/auth/callback` | OAuth redirect handler | Public |
-| `AuthSetupPage` | `/auth/setup` | First-time role setup | PENDING_ROLE |
+The active provider stack is:
+1. `QueryClientProvider` (TanStack React Query)
+2. `AuthProvider` (JWT/OAuth session state + refresh/session timeout handling)
+3. `ToastProvider` (in-app toast messages)
+4. `RouterProvider` (React Router)
 
-### Component Library (shadcn/ui)
+`ReactQueryDevtools` is enabled only in development.
 
-**Location**: `/frontend/src/components/ui/`
+### Route Pages and Page Modules
+
+**Router Location**: `/frontend/src/routes/index.tsx`  
+**Pages Location**: `/frontend/src/pages/`
+
+The router lazy-loads `*Page.tsx` route modules. Several route modules are thin wrappers around feature pages (`Rooms.tsx`, `Bookings.tsx`, etc.).
+
+| Route Module | Route | Backing Feature Module | Purpose | Access |
+|-------------|-------|------------------------|---------|--------|
+| `DashboardPage.tsx` | `/` | (direct) | Dashboard stats, upcoming bookings, activity feed, quick actions | All authenticated |
+| `AvailabilityPage.tsx` | `/availability` | `Availability.tsx` | Multi-mode room availability (`time`, `room`, `exact`) with role-based action routing | All authenticated |
+| `RoomsPage.tsx` | `/rooms` | `Rooms.tsx` | Building/room browsing for all users; edit controls scoped by role + staff building assignment | All authenticated |
+| `BookingsPage.tsx` | `/bookings` | `Bookings.tsx` | Confirmed bookings list/filter/create/delete, with prefill from availability | ADMIN, STAFF |
+| `BookingRequestsPage.tsx` | `/requests` | `BookingRequests.tsx` | Request creation + workflow actions (forward/approve/reject/cancel), availability prefill bridge | All authenticated (actions role-filtered) |
+| `UsersPage.tsx` | `/users` | `Users.tsx` | Admin user management, role/status filters, bulk actions, staff-building assignment dialog | ADMIN |
+| `TimetableBuilderPage.tsx` | `/timetable` | `TimetableBuilder.tsx` | Slot-system editing, import preview/commit, conflict resolution, freeze visibility, processed-row booking CRUD | ADMIN |
+| `ProfilePage.tsx` | `/profile` | `Profile.tsx` | Profile/settings tabs, data export, account deletion flow | All authenticated |
+| `LoginPage.tsx` | `/login` | (direct) | Email/password + Google OAuth login | Public |
+| `AuthCallbackPage.tsx` | `/auth/callback` | (direct) | OAuth callback token handling and redirect | Public |
+| `AuthSetupPage.tsx` | `/auth/setup` | (direct) | Role setup flow for pending-role users | PENDING_ROLE |
+
+Additional modules under `/frontend/src/pages/timetable/` exist but are not mounted by the current router.
+
+### UI Component Layer
+
+**Reusable UI Components**: `/frontend/src/components/ui/`
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| Button | `button.tsx` | Action buttons with variants |
-| Card | `card.tsx` | Content containers |
-| Dialog | `dialog.tsx` | Modal dialogs |
-| Form | `form.tsx` | React Hook Form integration |
-| Input | `input.tsx` | Text inputs |
-| Select | `select.tsx` | Dropdown selects |
-| Table | `table.tsx` | Data tables |
-| Toast | `toast.tsx` | Notifications |
-| Tabs | `tabs.tsx` | Tabbed interfaces |
-| Badge | `badge.tsx` | Status indicators |
-| Calendar | `calendar.tsx` | Date picker |
-| Skeleton | `skeleton.tsx` | Loading states |
-| Popover | `popover.tsx` | Floating content |
-| DropdownMenu | `dropdown-menu.tsx` | Action menus |
+| AlertDialog | `alert-dialog.tsx` | Destructive confirmation dialogs |
+| Badge | `badge.tsx` | Status/role labels |
+| Button | `button.tsx` | Variant-based action buttons |
+| Card | `card.tsx` | Structured content containers |
+| Checkbox | `checkbox.tsx` | Boolean field control |
+| Dialog | `dialog.tsx` | Modal container for forms/details |
+| DropdownMenu | `dropdown-menu.tsx` | Header/profile/notification menus |
+| Input | `input.tsx` | Text input control |
+| Label | `label.tsx` | Form labeling |
+| Select | `select.tsx` | Controlled dropdown selection |
+| Table | `table.tsx` | Tabular data rendering |
+| Tabs | `tabs.tsx` | Sectioned content switching |
+| Textarea | `textarea.tsx` | Multi-line text input |
+
+**Other Shared Frontend Components**:
+- `DateInput` (`/frontend/src/components/DateInput.tsx`) wraps `react-datepicker` with strict `dd/MM/yyyy` and `HH:mm` formatting.
+- Layout shell is composed of `AppShell`, `Header`, and `Sidebar` under `/frontend/src/components/layout/`.
+- Page-level reusable modules for rooms/availability live under `/frontend/src/pages/components/`.
 
 ### State Management
 
 | Layer | Technology | Purpose |
 |-------|------------|---------|
-| Server State | TanStack React Query | Data fetching, caching, mutations |
-| Auth State | React Context | User, login, logout, tokens |
-| UI State | React useState | Local component state |
-| Notifications | Toast Context | User feedback |
+| Server State | TanStack React Query | Query/mutation caching, invalidation, retry strategy |
+| Auth State | React Context (`AuthContext`) | User session, token refresh, unauthorized handling, inactivity timeout |
+| UI/Form State | React `useState` + React Hook Form + Zod | Local component state and validated forms |
+| Notifications | API-backed header dropdown + Toast Context | Poll unread notifications and surface user feedback |
 
 ### Query Configuration
 
 | Data Type | Stale Time | GC Time | Examples |
 |-----------|------------|---------|----------|
-| Very Volatile | 1 min | 3 min | Availability |
-| Volatile | 5 min | 10 min | Bookings, requests |
-| Stable | 10 min | 20 min | Buildings, users |
-| Static | 30 min | 1 hour | Slot systems |
+| Very Volatile | 1 min | 3 min | Availability, room day timeline |
+| Volatile | 5 min | 10 min | Bookings, booking requests, rooms |
+| Stable | 10 min | 20 min | Buildings, users, profile, staff assignments |
+| Static | 30 min | 1 hour | Slot systems, event-type metadata |
 
 ### Custom Hooks
 
 **Location**: `/frontend/src/hooks/`
 
-| Hook | Purpose |
-|------|---------|
-| `useBookings` | Fetch & mutate bookings |
-| `useBookingRequests` | Fetch & mutate requests |
-| `useRooms` | Fetch & mutate rooms |
-| `useBuildings` | Fetch & mutate buildings |
-| `useUsers` | Fetch & mutate users |
-| `useAvailability` | Fetch room availability |
-| `useSlotSystems` | Fetch & mutate slot systems |
-| `useProfile` | Fetch & update profile |
+| Hook Group | Purpose |
+|------------|---------|
+| `useBookings`, `useCreateBooking`, `useUpdateBooking`, `useDeleteBooking` | Booking query + mutations |
+| `useBookingRequests` + request action hooks | Request list and workflow mutations |
+| `useRooms`, `useCreateRoom`, `useUpdateRoom`, `useDeleteRoom`, `useRoomAvailability` | Room CRUD and room-level availability |
+| `useBuildings` + building mutation hooks | Building CRUD |
+| `useAvailability`, `useRoomDayTimeline` | Availability search + per-room timeline |
+| `useManagedUsers`, `useFacultyUsers`, `useUserBuildingAssignments` + mutations | User admin and staff-building assignment |
+| `useSlotSystems` + slot-system mutation hooks | Slot-system list/create/delete |
+| `useUserProfile`, `useUpdateProfile`, `useDeleteAccount`, `useExportUserData` | Profile and account actions |
 
 ### API Client
 
@@ -454,23 +475,32 @@ This is a **full-stack web application** for managing university room bookings a
 
 | File | Purpose |
 |------|---------|
-| `client.ts` | HTTP client with auth injection |
-| `auth.ts` | Login, OAuth, setup |
-| `bookings.ts` | Booking CRUD |
-| `booking-requests.ts` | Request CRUD |
-| `availability.ts` | Availability queries |
-| `rooms.ts` | Room CRUD |
-| `buildings.ts` | Building CRUD |
-| `users.ts` | User management |
-| `slots.ts` | Slot system & timetable import |
-| `dashboard.ts` | Dashboard data |
-| `notifications.ts` | Notification management |
+| `client.ts` | Core request wrapper, auth header injection, 401 handling, refresh helpers |
+| `auth.ts` | Email login, Google OAuth start/callback token login, setup completion |
+| `buildings.ts`, `rooms.ts`, `users.ts` | Building/room/user management clients |
+| `bookings.ts`, `booking-requests.ts` | Booking and request workflow clients |
+| `availability.ts` | Availability search + room day timeline client |
+| `slots.ts` | Slot system and timetable import/conflict/change-workspace clients |
+| `dashboard.ts` | Dashboard aggregate/stat/activity endpoints |
+| `notifications.ts` | Notification list/read/read-all endpoints |
+| `profile.ts` | Self-profile update/delete/export helpers |
+| `types.ts` | Frontend API contract types |
+| `constants.ts`, `jwt-utils.ts`, `storage-utils.ts`, `index.ts` | Client constants/utilities and barrel exports |
 
 ---
 
 ## 8. ROUTING & NAVIGATION
 
 **Location**: `/frontend/src/routes/index.tsx`
+
+### Router Composition
+
+The active frontend router uses `createBrowserRouter` with lazy-loaded route elements and a shared `AppShell` layout (`Header` + `Sidebar` + `Outlet`).
+
+- Protected app routes are nested under `ProtectedRoute`.
+- Role-gated segments are nested under `RequireRole`.
+- Public routes (`/login`, `/auth/callback`, `/auth/setup`) are outside the protected tree.
+- Unknown routes redirect to `/`.
 
 ### Route Protection Levels
 
@@ -502,6 +532,12 @@ Level 3: Page-level filtering
 /auth/callback       # OAuth callback (public)
 /auth/setup          # First-time setup (PENDING_ROLE)
 ```
+
+### Navigation Behavior
+
+- Sidebar navigation is role-aware (`/bookings` hidden for non ADMIN/STAFF; `/users` and `/timetable` hidden for non-ADMIN).
+- Header includes API-backed notification polling (30s), mark-as-read actions, and user/profile menu actions.
+- Availability and request pages exchange prefill state via `bookingAvailabilityBridge.ts` and route `location.state`.
 
 ---
 
@@ -769,9 +805,9 @@ PENDING_FACULTY or PENDING_STAFF
 |--------|-------|
 | Database Tables | 24 |
 | API Endpoints | ~50 |
-| Frontend Pages | 10 |
-| UI Components | 20+ |
-| Custom Hooks | 10+ |
+| Frontend Route Pages | 11 |
+| UI Components (shared + feature) | 30+ |
+| Custom Hooks | 15+ |
 | Zod Schemas | 15+ |
 | Migration Files | 24 |
 

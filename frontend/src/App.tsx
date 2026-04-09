@@ -126,6 +126,20 @@ function toNotificationTypeLabel(type: AppNotification["type"]): string {
       return "Request Rejected";
     case "BOOKING_REQUEST_CANCELLED":
       return "Request Cancelled";
+    case "SLOT_CHANGE_REQUESTED":
+      return "Slot Change Requested";
+    case "SLOT_CHANGE_APPROVED":
+      return "Slot Change Approved";
+    case "SLOT_CHANGE_REJECTED":
+      return "Slot Change Rejected";
+    case "VENUE_CHANGE_REQUESTED":
+      return "Venue Change Requested";
+    case "VENUE_CHANGE_APPROVED":
+      return "Venue Change Approved";
+    case "VENUE_CHANGE_REJECTED":
+      return "Venue Change Rejected";
+    default:
+      return "Notification";
   }
 }
 

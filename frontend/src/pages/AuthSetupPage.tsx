@@ -20,7 +20,7 @@ type SetupStep = 1 | 2 | 3;
 // Get available roles based on auth provider
 function getAvailableRoles(authProvider: string | null): string[] {
   if (authProvider === "google") {
-    return ["STUDENT", "FACULTY", "ADMIN"];
+    return ["STUDENT"];
   }
   // Email auth only allows STUDENT in setup (STAFF/ADMIN need manual assignment)
   return ["STUDENT"];
@@ -105,6 +105,13 @@ export default function AuthSetupPage() {
   });
 
   const selectedRole = watch("role");
+
+  useEffect(() => {
+    if (authProvider === "google") {
+      setValue("role", "STUDENT");
+      setValue("department", undefined);
+    }
+  }, [authProvider, setValue]);
 
   // Extract setup token from URL
   const setupToken = new URLSearchParams(window.location.search).get("token");
@@ -215,7 +222,9 @@ export default function AuthSetupPage() {
           <p className="text-sm font-medium text-slate-600">
             Step {step} of 3:{" "}
             {step === 1
-              ? "Select Your Role"
+              ? authProvider === "google"
+                ? "Continue as Student"
+                : "Select Your Role"
               : step === 2
                 ? "Choose Department"
                 : "Review & Complete"}
@@ -237,55 +246,86 @@ export default function AuthSetupPage() {
             {step === 1 && (
               <div className="space-y-6">
                 <div>
-                  <Label className="text-base font-semibold mb-4 block">
-                    What is your role?
-                  </Label>
+                  {authProvider === "google" ? (
+                    <div className="space-y-4">
+                      <Label className="text-base font-semibold block">
+                        Continue as Student
+                      </Label>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {availableRoles.map((role) => {
-                      const Icon = ROLE_ICONS[role];
-                      const colors = ROLE_COLORS[role];
-                      const description = ROLE_DESCRIPTIONS[role];
+                      <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+                        <p className="text-sm text-slate-800">
+                          Your Google account will be activated with STUDENT access.
+                        </p>
+                        <p className="mt-2 text-sm text-slate-700">
+                          Need FACULTY, STAFF, or ADMIN access? Contact admin after signing in.
+                        </p>
+                      </div>
 
-                      return (
-                        <button
-                          key={role}
-                          type="button"
-                          onClick={() => {
-                            setValue("role", role);
-                            setValue("department", undefined);
-                            if (role !== "FACULTY") {
-                              setStep(3);
-                            } else {
-                              setStep(2);
-                            }
-                          }}
-                          className={`p-6 rounded-lg border-2 transition-all text-left ${
-                            selectedRole === role
-                              ? `border-current ${colors.bg}`
-                              : "border-slate-200 bg-white hover:border-slate-300"
-                          }`}
-                        >
-                          <div className="flex items-start gap-4">
-                            <div className={`rounded-lg ${colors.icon} p-3 flex-shrink-0`}>
-                              <Icon className="w-6 h-6" />
-                            </div>
-                            <div>
-                              <h3 className="font-semibold text-slate-900 mb-1">
-                                {role}
-                              </h3>
-                              <p className="text-sm text-slate-600">
-                                {description}
-                              </p>
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setValue("role", "STUDENT", { shouldValidate: true });
+                          setValue("department", undefined);
+                          setStep(3);
+                        }}
+                        className="w-full px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                      >
+                        Continue as Student
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <Label className="text-base font-semibold mb-4 block">
+                        What is your role?
+                      </Label>
 
-                  {errors.role && (
-                    <p className="text-sm text-red-600 mt-2">{errors.role.message}</p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {availableRoles.map((role) => {
+                          const Icon = ROLE_ICONS[role];
+                          const colors = ROLE_COLORS[role];
+                          const description = ROLE_DESCRIPTIONS[role];
+
+                          return (
+                            <button
+                              key={role}
+                              type="button"
+                              onClick={() => {
+                                setValue("role", role);
+                                setValue("department", undefined);
+                                if (role !== "FACULTY") {
+                                  setStep(3);
+                                } else {
+                                  setStep(2);
+                                }
+                              }}
+                              className={`p-6 rounded-lg border-2 transition-all text-left ${
+                                selectedRole === role
+                                  ? `border-current ${colors.bg}`
+                                  : "border-slate-200 bg-white hover:border-slate-300"
+                              }`}
+                            >
+                              <div className="flex items-start gap-4">
+                                <div className={`rounded-lg ${colors.icon} p-3 flex-shrink-0`}>
+                                  <Icon className="w-6 h-6" />
+                                </div>
+                                <div>
+                                  <h3 className="font-semibold text-slate-900 mb-1">
+                                    {role}
+                                  </h3>
+                                  <p className="text-sm text-slate-600">
+                                    {description}
+                                  </p>
+                                </div>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {errors.role && (
+                        <p className="text-sm text-red-600 mt-2">{errors.role.message}</p>
+                      )}
+                    </>
                   )}
                 </div>
 
