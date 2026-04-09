@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
 import pg from "pg";
 import bcrypt from "bcrypt";
+import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -18,7 +19,38 @@ if (!connectionString) {
 
 const pool = new Pool({ connectionString });
 
-const DEFAULT_PASSWORD = process.env.SEED_DEFAULT_PASSWORD || "password123";
+const SEEDED_LOGIN_DATA_PATH = path.join(__dirname, "seededLoginUsers.json");
+const seededLoginData = JSON.parse(
+  fs.readFileSync(SEEDED_LOGIN_DATA_PATH, "utf8"),
+);
+
+const SEEDED_LOGIN_USERS = Array.isArray(seededLoginData.users)
+  ? seededLoginData.users
+  : [];
+
+const SEEDED_STAFF_BUILDING_ASSIGNMENTS = SEEDED_LOGIN_USERS.flatMap((user) => {
+  if (user.role !== "STAFF") {
+    return [];
+  }
+
+  const assignedBuildings = Array.isArray(user.assignedBuildings)
+    ? user.assignedBuildings
+    : [];
+
+  return assignedBuildings.map((buildingName) => ({
+    staffKey: user.key,
+    buildingName,
+  }));
+});
+
+if (SEEDED_LOGIN_USERS.length === 0) {
+  throw new Error(
+    "No users found in backend/scripts/seededLoginUsers.json. Add at least one seeded login user.",
+  );
+}
+
+const DEFAULT_PASSWORD =
+  process.env.SEED_DEFAULT_PASSWORD || seededLoginData.defaultPassword || "password123";
 
 const counters = {
   usersCreated: 0,
@@ -43,6 +75,15 @@ const counters = {
 
 function fixedDate(day, hour, minute) {
   return new Date(Date.UTC(2030, 0, day, hour, minute, 0, 0));
+}
+
+function getSeededUserId(userIdsByKey, key) {
+  const id = userIdsByKey[key];
+  if (!id) {
+    throw new Error(`Missing seeded user id for key: ${key}`);
+  }
+
+  return id;
 }
 
 async function upsertUser(client, passwordHash, input) {
@@ -528,61 +569,35 @@ async function seedDevData() {
     const passwordHash = await bcrypt.hash(DEFAULT_PASSWORD, 10);
 
     // Users (email/password only)
-    const adminId = await upsertUser(client, passwordHash, {
-      name: "Admin User",
-      email: "admin@iitj.ac.in",
-      role: "ADMIN",
-      department: "Administration",
-    });
+    const userIdsByKey = {};
+    for (const seededUser of SEEDED_LOGIN_USERS) {
+      if (
+        !seededUser.key ||
+        !seededUser.name ||
+        !seededUser.email ||
+        !seededUser.role
+      ) {
+        throw new Error(
+          "Each entry in backend/scripts/seededLoginUsers.json must include key, name, email, and role.",
+        );
+      }
 
-    const staffOpsId = await upsertUser(client, passwordHash, {
-      name: "Operations Staff",
-      email: "staff.ops@iitj.ac.in",
-      role: "STAFF",
-      department: "Campus Operations",
-    });
+      userIdsByKey[seededUser.key] = await upsertUser(client, passwordHash, {
+        name: seededUser.name,
+        email: seededUser.email,
+        role: seededUser.role,
+        department: seededUser.department ?? null,
+      });
+    }
 
-    const staffFacilitiesId = await upsertUser(client, passwordHash, {
-      name: "Facilities Staff",
-      email: "staff.facilities@iitj.ac.in",
-      role: "STAFF",
-      department: "Facilities",
-    });
-
-    const facultyCsId = await upsertUser(client, passwordHash, {
-      name: "Faculty CS",
-      email: "faculty.cs@iitj.ac.in",
-      role: "FACULTY",
-      department: "Computer Science",
-    });
-
-    const facultyEeId = await upsertUser(client, passwordHash, {
-      name: "Faculty EE",
-      email: "faculty.ee@iitj.ac.in",
-      role: "FACULTY",
-      department: "Electrical Engineering",
-    });
-
-    const studentAliceId = await upsertUser(client, passwordHash, {
-      name: "Student Alice",
-      email: "student.alice@iitj.ac.in",
-      role: "STUDENT",
-      department: "Computer Science",
-    });
-
-    const studentBobId = await upsertUser(client, passwordHash, {
-      name: "Student Bob",
-      email: "student.bob@iitj.ac.in",
-      role: "STUDENT",
-      department: "Electrical Engineering",
-    });
-
-    const studentCharlieId = await upsertUser(client, passwordHash, {
-      name: "Student Charlie",
-      email: "student.charlie@iitj.ac.in",
-      role: "STUDENT",
-      department: "Mechanical Engineering",
-    });
+    const adminId = getSeededUserId(userIdsByKey, "admin");
+    const staffOpsId = getSeededUserId(userIdsByKey, "staffOps");
+    const staffFacilitiesId = getSeededUserId(userIdsByKey, "staffFacilities");
+    const facultyCsId = getSeededUserId(userIdsByKey, "facultyCs");
+    const facultyEeId = getSeededUserId(userIdsByKey, "facultyEe");
+    const studentAliceId = getSeededUserId(userIdsByKey, "studentAlice");
+    const studentBobId = getSeededUserId(userIdsByKey, "studentBob");
+    const studentCharlieId = getSeededUserId(userIdsByKey, "studentCharlie");
 
     // Buildings and rooms
     const academicBlockAId = await upsertBuilding(client, {
@@ -669,10 +684,25 @@ async function seedDevData() {
       equipmentList: "40 Workstations, Projector",
     });
 
-    // Staff building assignments
-    await ensureStaffAssignment(client, staffOpsId, academicBlockAId, adminId);
-    await ensureStaffAssignment(client, staffOpsId, lectureHallComplexId, adminId);
-    await ensureStaffAssignment(client, staffFacilitiesId, innovationCenterId, adminId);
+    const buildingIdsByName = {
+      "Academic Block A": academicBlockAId,
+      "Lecture Hall Complex": lectureHallComplexId,
+      "Innovation Center": innovationCenterId,
+    };
+
+    // Staff building assignments come from seededLoginUsers.json
+    for (const assignment of SEEDED_STAFF_BUILDING_ASSIGNMENTS) {
+      const staffId = getSeededUserId(userIdsByKey, assignment.staffKey);
+      const buildingId = buildingIdsByName[assignment.buildingName];
+
+      if (!buildingId) {
+        throw new Error(
+          `Unknown building '${assignment.buildingName}' in seededLoginUsers.json for staff key '${assignment.staffKey}'.`,
+        );
+      }
+
+      await ensureStaffAssignment(client, staffId, buildingId, adminId);
+    }
 
     // Courses and course mappings
     const courseCs101Id = await upsertCourse(client, {
@@ -876,14 +906,9 @@ async function seedDevData() {
     }
 
     console.log("\nSeeded login accounts:");
-    console.log("- admin@iitj.ac.in (ADMIN)");
-    console.log("- staff.ops@iitj.ac.in (STAFF)");
-    console.log("- staff.facilities@iitj.ac.in (STAFF)");
-    console.log("- faculty.cs@iitj.ac.in (FACULTY)");
-    console.log("- faculty.ee@iitj.ac.in (FACULTY)");
-    console.log("- student.alice@iitj.ac.in (STUDENT)");
-    console.log("- student.bob@iitj.ac.in (STUDENT)");
-    console.log("- student.charlie@iitj.ac.in (STUDENT)");
+    for (const seededUser of SEEDED_LOGIN_USERS) {
+      console.log(`- ${seededUser.email} (${seededUser.role})`);
+    }
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;

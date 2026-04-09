@@ -9,7 +9,7 @@ type CallbackState = "loading" | "error" | "success";
 
 export default function AuthCallbackPage() {
   const navigate = useNavigate();
-  const { loginWithToken, user } = useAuth();
+  const { loginWithToken } = useAuth();
   const [state, setState] = useState<CallbackState>("loading");
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [isFirstLoginFlow, setIsFirstLoginFlow] = useState(false);
@@ -26,7 +26,8 @@ export default function AuthCallbackPage() {
     const error = searchParams.get("error");
     const isFirstLogin = searchParams.get("firstLogin") === "true";
 
-    if (user && !accessToken && !error) {
+    if (getAuthUser() && !accessToken && !error) {
+      hasProcessedRef.current = true;
       navigate("/");
       return;
     }
@@ -46,6 +47,7 @@ export default function AuthCallbackPage() {
     }
 
     let isCancelled = false;
+    let redirectTimeout: number | null = null;
     hasProcessedRef.current = true;
 
     (async () => {
@@ -75,7 +77,7 @@ export default function AuthCallbackPage() {
         setState("success");
 
         // Small delay to show success state before redirect
-        setTimeout(() => {
+        redirectTimeout = window.setTimeout(() => {
           if (!isCancelled) {
             navigate(isFirstLogin ? "/profile/setup" : "/");
           }
@@ -94,8 +96,11 @@ export default function AuthCallbackPage() {
 
     return () => {
       isCancelled = true;
+      if (redirectTimeout !== null) {
+        window.clearTimeout(redirectTimeout);
+      }
     };
-  }, [user, loginWithToken, navigate]);
+  }, [loginWithToken, navigate]);
 
   if (state === "error") {
     return (

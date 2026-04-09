@@ -94,18 +94,13 @@ Frontend URL:
 
 All seeded accounts use email/password login only.
 
-Default password for all seeded users:
+Default password for seeded users:
 - password123
 
-Seeded users:
-- admin@iitj.ac.in (ADMIN)
-- staff.ops@iitj.ac.in (STAFF)
-- staff.facilities@iitj.ac.in (STAFF)
-- faculty.cs@iitj.ac.in (FACULTY)
-- faculty.ee@iitj.ac.in (FACULTY)
-- student.alice@iitj.ac.in (STUDENT)
-- student.bob@iitj.ac.in (STUDENT)
-- student.charlie@iitj.ac.in (STUDENT)
+All seeded login accounts are defined in one file:
+- backend/scripts/seededLoginUsers.json
+
+If you set `SEED_DEFAULT_PASSWORD` in backend/.env, that value overrides `defaultPassword` from this file.
 
 ## 6. Optional: Reset and Re-seed
 
