@@ -61,7 +61,7 @@ router.patch(
 router.delete(
   '/:id',
   authMiddleware,
-  requireRole(['ADMIN', 'STAFF']),
+  requireRole(['ADMIN']),
   validate({ params: idParamSchema }),
   (req, res, next) => {
     controller.delete(req, res).catch(next);
