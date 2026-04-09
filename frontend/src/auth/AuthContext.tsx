@@ -279,7 +279,7 @@ function SessionTimeoutModal({
         }
         return prev - 1;
       });
-    }, 1000);
+    }, 60 * 1000);
 
     return () => clearInterval(interval);
   }, [onLogout]);
