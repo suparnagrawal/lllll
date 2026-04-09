@@ -1,11 +1,71 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "../auth/AuthContext";
 import { Loader2, AlertCircle } from "lucide-react";
-import { getAuthUser } from "../lib/api";
+import { useAuth } from "../auth/AuthContext";
 import { markProfileSetupRequired } from "../auth/profileSetup";
+import { getAuthUser } from "../lib/api";
 
 type CallbackState = "loading" | "error" | "success";
+
+type PendingOAuthPayload = {
+  accessToken: string;
+  refreshToken: string | null;
+  isFirstLogin: boolean;
+};
+
+const CALLBACK_TIMEOUT_MS = 15000;
+const PENDING_OAUTH_PAYLOAD_KEY = "pendingOAuthPayload";
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => {
+      reject(new Error(message));
+    }, timeoutMs);
+
+    promise
+      .then((value) => {
+        window.clearTimeout(timeoutId);
+        resolve(value);
+      })
+      .catch((error) => {
+        window.clearTimeout(timeoutId);
+        reject(error);
+      });
+  });
+}
+
+function readPendingOAuthPayload(): PendingOAuthPayload | null {
+  const raw = sessionStorage.getItem(PENDING_OAUTH_PAYLOAD_KEY);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<PendingOAuthPayload>;
+    if (typeof parsed.accessToken !== "string" || parsed.accessToken.length === 0) {
+      return null;
+    }
+
+    return {
+      accessToken: parsed.accessToken,
+      refreshToken:
+        typeof parsed.refreshToken === "string" && parsed.refreshToken.length > 0
+          ? parsed.refreshToken
+          : null,
+      isFirstLogin: parsed.isFirstLogin === true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writePendingOAuthPayload(payload: PendingOAuthPayload): void {
+  sessionStorage.setItem(PENDING_OAUTH_PAYLOAD_KEY, JSON.stringify(payload));
+}
+
+function clearPendingOAuthPayload(): void {
+  sessionStorage.removeItem(PENDING_OAUTH_PAYLOAD_KEY);
+}
 
 export default function AuthCallbackPage() {
   const navigate = useNavigate();
@@ -13,34 +73,48 @@ export default function AuthCallbackPage() {
   const [state, setState] = useState<CallbackState>("loading");
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [isFirstLoginFlow, setIsFirstLoginFlow] = useState(false);
-  const hasProcessedRef = useRef(false);
 
   useEffect(() => {
-    if (hasProcessedRef.current) {
-      return;
+    const searchParams = new URLSearchParams(window.location.search);
+    const error = searchParams.get("error");
+
+    const accessTokenFromUrl = searchParams.get("accessToken");
+    const refreshTokenFromUrl = searchParams.get("refreshToken");
+    const isFirstLoginFromUrl = searchParams.get("firstLogin") === "true";
+
+    if (accessTokenFromUrl) {
+      writePendingOAuthPayload({
+        accessToken: accessTokenFromUrl,
+        refreshToken: refreshTokenFromUrl,
+        isFirstLogin: isFirstLoginFromUrl,
+      });
+
+      // Strip tokens from URL immediately after capture.
+      window.history.replaceState({}, "", "/auth/callback");
     }
 
-    const searchParams = new URLSearchParams(window.location.search);
-    const accessToken = searchParams.get("accessToken");
-    const refreshToken = searchParams.get("refreshToken");
-    const error = searchParams.get("error");
-    const isFirstLogin = searchParams.get("firstLogin") === "true";
+    const pending = accessTokenFromUrl
+      ? {
+          accessToken: accessTokenFromUrl,
+          refreshToken: refreshTokenFromUrl,
+          isFirstLogin: isFirstLoginFromUrl,
+        }
+      : readPendingOAuthPayload();
 
-    if (getAuthUser() && !accessToken && !error) {
-      hasProcessedRef.current = true;
+    if (getAuthUser() && !pending?.accessToken && !error) {
       navigate("/");
       return;
     }
 
     if (error === "oauth_failed") {
-      hasProcessedRef.current = true;
+      clearPendingOAuthPayload();
       setState("error");
       setErrorMessage("Google sign-in failed. Please try again.");
       return;
     }
 
-    if (!accessToken) {
-      hasProcessedRef.current = true;
+    if (!pending?.accessToken) {
+      clearPendingOAuthPayload();
       setState("error");
       setErrorMessage("Missing OAuth token. Please try signing in again.");
       return;
@@ -48,38 +122,39 @@ export default function AuthCallbackPage() {
 
     let isCancelled = false;
     let redirectTimeout: number | null = null;
-    hasProcessedRef.current = true;
 
     (async () => {
       try {
         setState("loading");
         setErrorMessage("");
-        
-        // Store tokens and fetch user info
-        localStorage.setItem("authAccessToken", accessToken);
-        if (refreshToken) {
-          localStorage.setItem("authRefreshToken", refreshToken);
+
+        localStorage.setItem("authAccessToken", pending.accessToken);
+        if (pending.refreshToken) {
+          localStorage.setItem("authRefreshToken", pending.refreshToken);
         }
 
-        // Use loginWithToken to fetch user data
-        await loginWithToken(accessToken);
+        await withTimeout(
+          loginWithToken(pending.accessToken),
+          CALLBACK_TIMEOUT_MS,
+          "Sign-in is taking too long. Verify backend API is running on http://localhost:5000, then try again.",
+        );
 
         if (isCancelled) {
           return;
         }
 
         const authUser = getAuthUser();
-        if (isFirstLogin && authUser?.id) {
+        if (pending.isFirstLogin && authUser?.id) {
           markProfileSetupRequired(authUser.id);
         }
 
-        setIsFirstLoginFlow(isFirstLogin);
+        clearPendingOAuthPayload();
+        setIsFirstLoginFlow(pending.isFirstLogin);
         setState("success");
 
-        // Small delay to show success state before redirect
         redirectTimeout = window.setTimeout(() => {
           if (!isCancelled) {
-            navigate(isFirstLogin ? "/profile/setup" : "/");
+            navigate(pending.isFirstLogin ? "/profile/setup" : "/");
           }
         }, 500);
       } catch (err) {
@@ -87,9 +162,10 @@ export default function AuthCallbackPage() {
           return;
         }
 
+        clearPendingOAuthPayload();
         setState("error");
         setErrorMessage(
-          err instanceof Error ? err.message : "Authentication failed. Please try again."
+          err instanceof Error ? err.message : "Authentication failed. Please try again.",
         );
       }
     })();
@@ -112,9 +188,7 @@ export default function AuthCallbackPage() {
             </div>
           </div>
 
-          <h1 className="text-2xl font-bold text-center text-slate-900 mb-2">
-            Authentication Failed
-          </h1>
+          <h1 className="text-2xl font-bold text-center text-slate-900 mb-2">Authentication Failed</h1>
 
           <p className="text-center text-slate-600 mb-6">{errorMessage}</p>
 
@@ -148,9 +222,7 @@ export default function AuthCallbackPage() {
             </div>
           </div>
 
-          <h1 className="text-2xl font-bold text-slate-900 mb-2">
-            Sign In Successful
-          </h1>
+          <h1 className="text-2xl font-bold text-slate-900 mb-2">Sign In Successful</h1>
 
           <p className="text-slate-600">
             {isFirstLoginFlow
@@ -162,7 +234,6 @@ export default function AuthCallbackPage() {
     );
   }
 
-  // Loading state
   return (
     <div className="flex items-center justify-center w-full h-screen bg-gradient-to-br from-slate-50 to-slate-100">
       <div className="w-full max-w-md p-8 bg-white rounded-lg shadow-lg">
@@ -172,13 +243,9 @@ export default function AuthCallbackPage() {
           </div>
         </div>
 
-        <h1 className="text-2xl font-bold text-center text-slate-900 mb-2">
-          Completing Sign In
-        </h1>
+        <h1 className="text-2xl font-bold text-center text-slate-900 mb-2">Completing Sign In</h1>
 
-        <p className="text-center text-slate-600 mb-8">
-          Please wait while we verify your credentials...
-        </p>
+        <p className="text-center text-slate-600 mb-8">Please wait while we verify your credentials...</p>
 
         <div className="space-y-2">
           <div className="flex items-center space-x-2">
