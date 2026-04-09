@@ -7,6 +7,8 @@ This guide only covers:
 - running migrations and seed data
 - starting backend and frontend dev servers
 
+For hosted demo deployment (GitHub + Supabase + Render + Vercel), see `DEPLOYMENT_DEMO_GUIDE.md`.
+
 ## 1. Prerequisites
 
 - Docker + Docker Compose

@@ -1,0 +1,53 @@
+services:
+  - type: web
+    name: ura-backend
+    runtime: node
+    plan: free
+    rootDir: backend
+    autoDeploy: true
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: SESSION_SECRET
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_CALLBACK_URL
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: CACHE_VERY_SHORT_TTL
+        value: "120"
+      - key: CACHE_SHORT_TTL
+        value: "300"
+      - key: CACHE_MEDIUM_TTL
+        value: "1800"
+      - key: CACHE_LONG_TTL
+        value: "3600"
+      - key: CACHE_VERY_LONG_TTL
+        value: "7200"

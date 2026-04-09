@@ -1,4 +1,7 @@
-const API_BASE_URL = "/api";
+const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
+const API_BASE_URL = configuredApiBaseUrl
+  ? configuredApiBaseUrl.replace(/\/$/, "")
+  : "/api";
 const AUTH_TOKEN_KEY = "authToken";
 const AUTH_USER_KEY = "authUser";
 
@@ -566,37 +569,42 @@ export async function login(email: string, password: string): Promise<AuthUser> 
 }
 
 export async function startGoogleOAuthLogin(): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/auth/google`, {
-    method: "GET",
-    redirect: "manual",
-  });
+  try {
+    const response = await fetch(`${API_BASE_URL}/auth/google`, {
+      method: "GET",
+      redirect: "manual",
+    });
 
-  if (response.type === "opaqueredirect") {
-    window.location.assign(`${API_BASE_URL}/auth/google`);
-    return;
-  }
-
-  if (response.status >= 300 && response.status < 400) {
-    const redirectLocation = response.headers.get("location");
-
-    if (redirectLocation) {
-      window.location.assign(redirectLocation);
+    if (response.type === "opaqueredirect") {
+      window.location.assign(`${API_BASE_URL}/auth/google`);
       return;
     }
-  }
 
-  const contentType = response.headers.get("content-type") ?? "";
-  const isJson = contentType.includes("application/json");
-  const payload = isJson ? ((await response.json()) as unknown) : null;
+    if (response.status >= 300 && response.status < 400) {
+      const redirectLocation = response.headers.get("location");
 
-  if (!response.ok) {
-    const apiPayload = payload as ApiErrorPayload | null;
-    const message =
-      apiPayload?.error ??
-      apiPayload?.message ??
-      httpErrorMessage(response.status);
+      if (redirectLocation) {
+        window.location.assign(redirectLocation);
+        return;
+      }
+    }
 
-    throw new Error(message);
+    const contentType = response.headers.get("content-type") ?? "";
+    const isJson = contentType.includes("application/json");
+    const payload = isJson ? ((await response.json()) as unknown) : null;
+
+    if (!response.ok) {
+      const apiPayload = payload as ApiErrorPayload | null;
+      const message =
+        apiPayload?.error ??
+        apiPayload?.message ??
+        httpErrorMessage(response.status);
+
+      throw new Error(message);
+    }
+  } catch {
+    window.location.assign(`${API_BASE_URL}/auth/google`);
+    return;
   }
 
   window.location.assign(`${API_BASE_URL}/auth/google`);

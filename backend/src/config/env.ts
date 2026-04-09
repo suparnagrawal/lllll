@@ -59,6 +59,15 @@ function optionalBooleanEnv(name: string): boolean | null {
 	return null;
 }
 
+const frontendUrl = (optionalEnv("FRONTEND_URL") ?? "http://localhost:5173").replace(
+	/\/$/, "",
+);
+
+const corsOrigins = (optionalEnv("CORS_ORIGINS") ?? frontendUrl)
+	.split(",")
+	.map((origin) => origin.trim().replace(/\/$/, ""))
+	.filter((origin) => origin.length > 0);
+
 export const env = {
 	NODE_ENV: process.env.NODE_ENV ?? "development",
 	PORT: Number(process.env.PORT ?? "5000"),
@@ -74,9 +83,8 @@ export const env = {
 	SMTP_PASS: optionalEnv("SMTP_PASS"),
 	SMTP_FROM: optionalEnv("SMTP_FROM"),
 	SMTP_SECURE: optionalBooleanEnv("SMTP_SECURE"),
-	FRONTEND_URL: (optionalEnv("FRONTEND_URL") ?? "http://localhost:5173").replace(
-		/\/$/, "",
-	),
+	FRONTEND_URL: frontendUrl,
+	CORS_ORIGINS: corsOrigins,
 };
 
 export const isGoogleOAuthConfigured =

@@ -1,6 +1,7 @@
 import "./config/env"; // load env FIRST
 
 import connectPgSimple from "connect-pg-simple";
+import cors from "cors";
 import express from "express";
 import session from "express-session";
 import passport from "./auth/passport";
@@ -32,6 +33,14 @@ const PORT = env.PORT || 5000;
 const sessionSecret = env.SESSION_SECRET ?? env.JWT_SECRET;
 
 const PgSession = connectPgSimple(session);
+
+app.use(
+  cors({
+    origin: env.CORS_ORIGINS,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }),
+);
 
 app.use(
   session({
