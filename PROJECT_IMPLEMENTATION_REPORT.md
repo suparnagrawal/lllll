@@ -812,3 +812,30 @@ PENDING_FACULTY or PENDING_STAFF
 | Migration Files | 24 |
 
 This system provides a complete solution for university room allocation with robust authentication, role-based access control, approval workflows, and bulk timetable import capabilities.
+
+---
+
+## 14. CURRENT CODEBASE STATUS (APRIL 10, 2026)
+
+### Stabilization Work Completed
+
+| Area | File(s) | Status |
+|------|---------|--------|
+| React hook order safety | `/frontend/src/pages/Bookings.tsx` | Fixed by keeping authorization guard in `BookingsPage` and moving hook usage into a rendered child component, preventing hooks from running after an early return. |
+| Session timeout countdown consistency | `/frontend/src/auth/AuthContext.tsx` | Countdown logic and UI were aligned; current working tree shows a smooth second-by-second 5-minute countdown display (`mm:ss`). |
+| Backend type safety (P0 scope) | `/backend/src/api/middleware/rateLimit.middleware.ts`, `/backend/src/routes/slotChangeRequests.ts`, `/backend/src/routes/venueChangeRequests.ts` | Fixed typed rate-limit configuration/middleware signatures and added explicit undefined guards for request lookup rows in cancel endpoints. |
+
+### Runtime and Build Validation
+
+| Check | Command | Result |
+|------|---------|--------|
+| Backend startup | `npm run dev` (backend) | Pass. Server starts on port `5000`; Redis connection established. |
+| Frontend startup | `npm run dev` (frontend) | Pass. Vite dev server starts and serves on `http://127.0.0.1:5173/`. |
+| Frontend production build | `npm run build` (frontend) | Pass. Build completes successfully. |
+| Backend TypeScript (project-wide) | `npx tsc --noEmit -p backend/tsconfig.json` | One remaining pre-existing error in `/backend/src/services/slotChangeService.ts:186` (outside this P0 file scope). |
+
+### Current Working Tree Notes
+
+- `HOW_TO_RUN.md` is aligned to backend default port `5000`.
+- `backend/package-lock.json` contains dependency lockfile updates from local install.
+- `frontend/src/auth/AuthContext.tsx` contains the active timeout countdown UI/logic update.

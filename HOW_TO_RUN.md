@@ -42,7 +42,7 @@ cp .env.example .env
 Edit .env and make sure at least these are correct for local Docker:
 
 ```env
-PORT=5001
+PORT=5000
 NODE_ENV=development
 DATABASE_URL=postgresql://postgres:postgres@localhost:5433/classroom_booking
 REDIS_URL=redis://localhost:6379
@@ -75,7 +75,7 @@ npm run dev
 ```
 
 Backend base URL:
-- http://localhost:5001
+- http://localhost:5000
 
 ## 4. Frontend Setup
 
