@@ -742,7 +742,7 @@ function RoomRow({
         <input
           type="checkbox"
           checked={isSelected}
-          onChange={() => {}}
+          onChange={onToggle}
           onClick={(e) => e.stopPropagation()}
           className="w-4 h-4 text-blue-500 rounded"
         />
