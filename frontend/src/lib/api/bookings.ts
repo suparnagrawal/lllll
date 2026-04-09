@@ -13,7 +13,18 @@ export async function getBookings(filters?: {
   if (filters?.startAt) params.set("startAt", filters.startAt);
   if (filters?.endAt) params.set("endAt", filters.endAt);
   const qs = params.toString();
-  return request<Booking[]>(`/bookings${qs ? `?${qs}` : ""}`);
+  const bookings = await request<Booking[]>(`/bookings${qs ? `?${qs}` : ""}`);
+
+  return [...bookings].sort((a, b) => {
+    const aTime = Date.parse(a.startAt);
+    const bTime = Date.parse(b.startAt);
+
+    if (!Number.isNaN(aTime) && !Number.isNaN(bTime) && bTime !== aTime) {
+      return bTime - aTime;
+    }
+
+    return b.id - a.id;
+  });
 }
 
 export async function createBooking(input: {

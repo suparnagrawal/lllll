@@ -45,7 +45,7 @@ export function DaysPage() {
   useEffect(() => {
     const loadData = async () => {
       if (!systemId) {
-        setError("Invalid system ID");
+        setError("Invalid slot system selection");
         setLoading(false);
         return;
       }
@@ -68,7 +68,7 @@ export function DaysPage() {
     event.preventDefault();
 
     if (!systemId) {
-      setError("Invalid system ID");
+      setError("Invalid slot system selection");
       return;
     }
 

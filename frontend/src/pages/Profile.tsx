@@ -388,13 +388,42 @@ function SecuritySection() {
         bookingRequests: Array<{ id: number; eventType: string; purpose: string; status: string; startAt: string; endAt: string; createdAt: string }>;
         approvedBookings: Array<{ id: number; roomId: number; startAt: string; endAt: string; source: string; approvedAt: string }>;
       }>("/users/profile/export");
-      
-      const dataStr = JSON.stringify(data, null, 2);
+
+      const sanitizedData = {
+        exportedAt: data.exportedAt,
+        user: {
+          name: data.user.name,
+          email: data.user.email,
+          role: data.user.role,
+          department: data.user.department,
+          registeredVia: data.user.registeredVia,
+          createdAt: data.user.createdAt,
+        },
+        bookingRequests: data.bookingRequests.map((requestRow) => ({
+          eventType: requestRow.eventType,
+          purpose: requestRow.purpose,
+          status: requestRow.status,
+          startAt: requestRow.startAt,
+          endAt: requestRow.endAt,
+          createdAt: requestRow.createdAt,
+        })),
+        approvedBookings: data.approvedBookings.map((booking) => ({
+          startAt: booking.startAt,
+          endAt: booking.endAt,
+          source: booking.source,
+          approvedAt: booking.approvedAt,
+        })),
+      };
+
+      const dataStr = JSON.stringify(sanitizedData, null, 2);
       const dataBlob = new Blob([dataStr], { type: "application/json" });
       const url = URL.createObjectURL(dataBlob);
       const link = document.createElement("a");
+      const exportDate = new Date().toISOString().split("T")[0];
+      const slugSource = (user.name || user.email || "profile").trim().toLowerCase();
+      const safeSlug = slugSource.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "profile";
       link.href = url;
-      link.download = `user-data-${user.id}-${new Date().toISOString().split("T")[0]}.json`;
+      link.download = `user-data-${safeSlug}-${exportDate}.json`;
       link.click();
       URL.revokeObjectURL(url);
 

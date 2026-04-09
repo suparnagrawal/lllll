@@ -606,6 +606,8 @@ The system supports bulk importing timetables from Excel files with a preview-re
    - `AMBIGUOUS_CLASSROOM`: Multiple room matches
    - `DUPLICATE_ROW`: Duplicate entry
    - `CONFLICTING_MAPPING`: Conflicts with existing bookings
+   - `MISSING_REQUIRED_FIELD`: Required fields missing in a row
+   - `OTHER_PROCESSING_ERROR`: Parser/normalization error in a row
 4. **Review**: Admin reviews classifications, resolves issues
 5. **Decisions**: Admin saves resolutions (`PUT /api/timetable/imports/:id/decisions`)
 6. **Commit**: System creates bookings (`POST /api/timetable/imports/:id/commit`)
@@ -638,9 +640,10 @@ Created (isLocked=false) → First Import Committed → Locked (isLocked=true)
 
 | Constraint | Behavior |
 |------------|----------|
-| Only one **PREVIEWED** batch per slot system | Enforced by partial unique DB index |
-| New preview replaces existing | Upsert semantics: old PREVIEWED batch is deleted before creating new |
-| Committed batches are preserved | Their bookings remain; the batch serves as an audit record |
+| Only one retained batch per slot system at preview time | Preview flow enumerates existing batches for the same slot system and removes redundant ones |
+| Fingerprint reuse optimization | If a matching fingerprint batch exists, it is reused and other same-slot-system batches are deleted |
+| New preview without fingerprint match | Existing same-slot-system batches are deleted before inserting the new PREVIEWED batch |
+| Batch deletion side-effect | Deleting a committed batch deletes its linked bookings as part of batch cleanup |
 | Slot system is locked after commit | `isLocked = true` set atomically on commit |
 
 ### Conflict-Aware Commit Flow
@@ -691,7 +694,7 @@ Resolutions  │
 
 - **Acquire**: `detectCommitConflicts` freezes booking mutations system-wide
 - **Scope**: Blocks booking approvals, creates, updates, and deletes (requests still allowed)
-- **Release**: Automatically on `commitWithResolutions` or `cancelCommit`
+- **Release**: Automatically on `commitWithResolutions` or `cancelCommit` (including error paths)
 - **Error recovery**: All error paths call `unfreezeBookings` to ensure no dangling freeze
 - **Idempotent**: Re-calling with same batchId succeeds; different batchId returns 409
 - **UI indicator**: Red banner shown when freeze is active, with holder info
@@ -727,36 +730,36 @@ The Change Workspace supports:
 ### Booking Request Flow
 
 ```
-STUDENT/FACULTY submits request
-         │
-         ▼
-   PENDING_FACULTY (if faculty assigned)
-         │
-    Faculty reviews
-         │
-   ┌─────┴─────┐
-   │           │
-Approve    Forward
-   │           │
-   │     PENDING_STAFF
-   │           │
-   │     Staff reviews
-   │           │
-   │    ┌──────┴──────┐
-   │    │             │
-   │  Approve      Reject
-   │    │             │
-   │    ▼             ▼
-   │ APPROVED      REJECTED
-   │    │
-   ▼    ▼
-Creates Booking
+STUDENT submits request
+        │
+        ▼
+PENDING_FACULTY
+        │
+  FACULTY actions
+   ├─ Forward ───────────────► PENDING_STAFF
+   └─ Reject  ───────────────► REJECTED
+
+FACULTY submits request
+        │
+        ▼
+PENDING_STAFF
+
+PENDING_STAFF
+   STAFF actions
+   ├─ Approve ───────────────► APPROVED + booking created
+   └─ Reject  ───────────────► REJECTED
+
+PENDING_FACULTY or PENDING_STAFF
+   Owner/Admin can cancel ───► CANCELLED
 ```
+
+- Note: In current booking-request routes, ADMIN can cancel but does not directly approve/reject booking requests.
 
 ### Change Request Flows
 
-**Slot Change**: Faculty requests → Staff approves → Old booking deleted, new created
-**Venue Change**: Faculty requests → Staff approves → Booking room updated
+**Slot Change**: FACULTY creates `PENDING` → STAFF/ADMIN approve (old booking replaced with new slot booking) or reject → FACULTY may cancel while pending.
+
+**Venue Change**: FACULTY creates `PENDING` → STAFF/ADMIN approve (booking moved to proposed room) or reject → FACULTY may cancel while pending.
 
 ---
 

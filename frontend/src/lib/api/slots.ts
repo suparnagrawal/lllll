@@ -27,7 +27,18 @@ import type {
 
 // Slot Systems
 export async function getSlotSystems(): Promise<SlotSystem[]> {
-  return request<SlotSystem[]>("/timetable/slot-systems");
+  const systems = await request<SlotSystem[]>("/timetable/slot-systems");
+
+  return [...systems].sort((a, b) => {
+    const aTime = Date.parse(a.createdAt);
+    const bTime = Date.parse(b.createdAt);
+
+    if (!Number.isNaN(aTime) && !Number.isNaN(bTime) && bTime !== aTime) {
+      return bTime - aTime;
+    }
+
+    return b.id - a.id;
+  });
 }
 
 export async function createSlotSystem(name: string): Promise<SlotSystem> {
@@ -161,7 +172,16 @@ export async function getTimetableImportBatches(input?: {
     `/timetable/imports${query ? `?${query}` : ""}`,
   );
 
-  return response.data;
+  return [...response.data].sort((a, b) => {
+    const aTime = Date.parse(a.createdAt);
+    const bTime = Date.parse(b.createdAt);
+
+    if (!Number.isNaN(aTime) && !Number.isNaN(bTime) && bTime !== aTime) {
+      return bTime - aTime;
+    }
+
+    return b.batchId - a.batchId;
+  });
 }
 
 export async function getTimetableImportBatch(

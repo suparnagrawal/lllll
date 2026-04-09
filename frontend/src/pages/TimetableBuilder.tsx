@@ -2803,6 +2803,10 @@ export function TimetableBuilderPage() {
                     startAt: "",
                     endAt: "",
                   };
+                  const resolvedRoomLabel =
+                    row.resolvedRoomId === null
+                      ? "-"
+                      : (roomLabelById.get(row.resolvedRoomId) ?? "Assigned room");
 
                   return (
                     <div className="data-item" key={`processed-row-${row.rowId}`}>
@@ -2814,7 +2818,7 @@ export function TimetableBuilderPage() {
                           </span>
                         </div>
                         <div className="data-item-subtitle">
-                          Resolved Slot: {row.resolvedSlotLabel || "-"} · Resolved Room: {row.resolvedRoomId ?? "-"}
+                          Resolved Slot: {row.resolvedSlotLabel || "-"} · Resolved Room: {resolvedRoomLabel}
                         </div>
                         <div className="empty-text mt-1">
                           Created {row.created} · Already Processed {row.alreadyProcessed} · Failed {row.failed} · Skipped {row.skipped}
@@ -2867,7 +2871,7 @@ export function TimetableBuilderPage() {
 
                               {isAdmin && occurrence.booking && (
                                 <div className="empty-text mt-2">
-                                  Source: {occurrence.booking.source.replace(/_/g, " ")} · Source Ref: {occurrence.booking.sourceRef ?? "-"} · Request Link: {occurrence.booking.requestId ?? "-"} · Approved By: {occurrence.booking.approvedBy ?? "-"} · Approved At: {occurrence.booking.approvedAt ?? "-"}
+                                  Source: {occurrence.booking.source.replace(/_/g, " ")} · Linked Request: {occurrence.booking.requestId ? "Yes" : "No"} · Approved At: {occurrence.booking.approvedAt ? new Date(occurrence.booking.approvedAt).toLocaleString() : "-"}
                                 </div>
                               )}
 
@@ -3395,6 +3399,10 @@ export function TimetableBuilderPage() {
             <div className="space-y-4">
               {conflictReport.conflicts.map((conflict) => {
                 const resolution = conflictResolutions[conflict.occurrenceId];
+                const conflictRoomLabel =
+                  conflict.roomName || roomLabelById.get(conflict.roomId) || "Assigned room";
+                const conflictingRoomLabel =
+                  roomLabelById.get(conflict.conflictingBooking.roomId) || "Existing booking room";
                 return (
                   <div
                     key={conflict.occurrenceId}
@@ -3402,11 +3410,11 @@ export function TimetableBuilderPage() {
                     style={{ borderColor: resolution ? "#28a745" : "#ffc107" }}
                   >
                     <div className="font-medium mb-2">
-                      Occurrence #{conflict.occurrenceId} — Room: {conflict.roomName ?? conflict.roomId},{" "}
+                      Requested Slot — Room: {conflictRoomLabel},{" "}
                       {new Date(conflict.startAt).toLocaleString()} → {new Date(conflict.endAt).toLocaleString()}
                     </div>
                     <div className="text-sm text-gray-500 mb-2">
-                      Conflicts with: Booking #{conflict.conflictingBooking.id} ({new Date(conflict.conflictingBooking.startAt).toLocaleString()} → {new Date(conflict.conflictingBooking.endAt).toLocaleString()})
+                      Conflicts with: {conflictingRoomLabel} ({new Date(conflict.conflictingBooking.startAt).toLocaleString()} → {new Date(conflict.conflictingBooking.endAt).toLocaleString()})
                     </div>
 
                     <div className="flex gap-3 flex-wrap items-center">
@@ -3536,14 +3544,14 @@ export function TimetableBuilderPage() {
               <div className="border rounded p-4 mb-4">
                 <h4 className="font-medium mb-2">Current System Status</h4>
                 <p className="text-sm text-gray-600">
-                  System ID: {changePreview.slotSystemId} | Locked: {changePreview.isLocked ? "Yes" : "No"}
+                  Lock Status: {changePreview.isLocked ? "Locked" : "Unlocked"}
                 </p>
                 {changePreview.affectedBatches.length > 0 && (
                   <div className="mt-2">
                     <p className="text-sm font-medium">Committed Batches:</p>
                     {changePreview.affectedBatches.map((batch) => (
                       <p key={batch.batchId} className="text-sm text-gray-500">
-                        Batch #{batch.batchId} — {batch.status} ({batch.affectedOccurrences} affected occurrences)
+                        Batch status: {batch.status} ({batch.affectedOccurrences} affected occurrences)
                       </p>
                     ))}
                   </div>

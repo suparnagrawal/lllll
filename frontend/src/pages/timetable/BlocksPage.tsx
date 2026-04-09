@@ -30,7 +30,7 @@ export function BlocksPage() {
   useEffect(() => {
     const loadData = async () => {
       if (!systemId) {
-        setError("Invalid system ID");
+        setError("Invalid slot system selection");
         setLoading(false);
         return;
       }
@@ -144,7 +144,7 @@ export function BlocksPage() {
     if (!approved) return;
 
     if (!systemId) {
-      setError("Invalid system ID");
+      setError("Invalid slot system selection");
       return;
     }
 

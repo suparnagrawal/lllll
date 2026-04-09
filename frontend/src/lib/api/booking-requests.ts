@@ -3,7 +3,18 @@ import type { BookingRequest, BookingStatus, BookingEventType } from "./types";
 
 export async function getBookingRequests(status?: BookingStatus): Promise<BookingRequest[]> {
   const query = status ? `?status=${encodeURIComponent(status)}` : "";
-  return request<BookingRequest[]>(`/booking-requests${query}`);
+  const requests = await request<BookingRequest[]>(`/booking-requests${query}`);
+
+  return [...requests].sort((a, b) => {
+    const aTime = Date.parse(a.createdAt);
+    const bTime = Date.parse(b.createdAt);
+
+    if (!Number.isNaN(aTime) && !Number.isNaN(bTime) && bTime !== aTime) {
+      return bTime - aTime;
+    }
+
+    return b.id - a.id;
+  });
 }
 
 export async function createBookingRequest(input: {

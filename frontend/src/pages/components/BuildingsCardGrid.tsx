@@ -39,7 +39,6 @@ export function BuildingsCardGrid({
     return buildings.filter(
       (b) =>
         b.name.toLowerCase().includes(search.toLowerCase()) ||
-        b.id.toString().includes(search) ||
         (b.location && b.location.toLowerCase().includes(search.toLowerCase()))
     );
   }, [buildings, search]);

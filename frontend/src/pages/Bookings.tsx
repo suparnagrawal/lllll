@@ -268,7 +268,6 @@ export function BookingsPage() {
               b.approvedBy === null
                 ? "-"
                 : (adminUserNameById[b.approvedBy] ?? "Unknown User");
-            const requestLabel = b.requestId === null ? "-" : String(b.requestId);
 
             return (
               <div className="data-item" key={b.id}>
@@ -281,7 +280,7 @@ export function BookingsPage() {
                   </div>
                   {isAdmin && (
                     <div className="empty-text" style={{ marginTop: "var(--space-1)" }}>
-                      Source: {bookingSourceLabel(b.source)} · Source Ref: {b.sourceRef ?? "-"} · Request Link: {requestLabel} · Approved By: {approvedByLabel} · Approved At: {b.approvedAt ? formatDateTimeDDMMYYYY(b.approvedAt) : "-"}
+                      Source: {bookingSourceLabel(b.source)} · Linked Request: {b.requestId ? "Yes" : "No"} · Approved By: {approvedByLabel} · Approved At: {b.approvedAt ? formatDateTimeDDMMYYYY(b.approvedAt) : "-"}
                     </div>
                   )}
                 </div>

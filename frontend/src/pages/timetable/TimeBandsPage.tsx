@@ -30,7 +30,7 @@ export function TimeBandsPage() {
   useEffect(() => {
     const loadData = async () => {
       if (!systemId) {
-        setError("Invalid system ID");
+        setError("Invalid slot system selection");
         setLoading(false);
         return;
       }
@@ -76,7 +76,7 @@ export function TimeBandsPage() {
     event.preventDefault();
 
     if (!systemId) {
-      setError("Invalid system ID");
+      setError("Invalid slot system selection");
       return;
     }
 

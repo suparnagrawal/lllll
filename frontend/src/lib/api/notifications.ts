@@ -17,7 +17,21 @@ export async function getNotifications(input?: {
 
   const query = params.toString();
 
-  return request<NotificationsResponse>(`/notifications${query ? `?${query}` : ""}`);
+  const response = await request<NotificationsResponse>(`/notifications${query ? `?${query}` : ""}`);
+
+  return {
+    ...response,
+    data: [...response.data].sort((a, b) => {
+      const aTime = Date.parse(a.sentAt);
+      const bTime = Date.parse(b.sentAt);
+
+      if (!Number.isNaN(aTime) && !Number.isNaN(bTime) && bTime !== aTime) {
+        return bTime - aTime;
+      }
+
+      return b.notificationId - a.notificationId;
+    }),
+  };
 }
 
 export async function markNotificationRead(notificationId: number): Promise<AppNotification> {
