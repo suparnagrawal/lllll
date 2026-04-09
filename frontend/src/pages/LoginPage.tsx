@@ -320,19 +320,15 @@ export default function LoginPage() {
         <div className="mt-8 text-center space-y-4">
           <p className="text-sm text-gray-600">
             Don't have an account?{" "}
-            <a href="mailto:admin@example.com" className="text-blue-600 hover:text-blue-700 font-medium">
-              Contact admin
+            <a href="mailto:support@uras.app" className="text-blue-600 hover:text-blue-700 font-medium">
+              Contact support
             </a>
           </p>
 
           <div className="flex items-center justify-center gap-4 text-xs text-gray-500">
-            <a href="#" className="hover:text-gray-700">
-              Terms of Service
-            </a>
+            <span>Terms of Service</span>
             <span>•</span>
-            <a href="#" className="hover:text-gray-700">
-              Privacy Policy
-            </a>
+            <span>Privacy Policy</span>
           </div>
         </div>
       </div>

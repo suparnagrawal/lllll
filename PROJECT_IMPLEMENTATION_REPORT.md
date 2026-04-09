@@ -839,3 +839,21 @@ This system provides a complete solution for university room allocation with rob
 - `HOW_TO_RUN.md` is aligned to backend default port `5000`.
 - `backend/package-lock.json` contains dependency lockfile updates from local install.
 - `frontend/src/auth/AuthContext.tsx` contains the active timeout countdown UI/logic update.
+
+### Task Group 2 Stabilization (Refactor Branch)
+
+| Area | File(s) | Status |
+|------|---------|--------|
+| Booking-to-course linking in creation flows | `/backend/src/services/bookingService.ts`, `/backend/src/routes/bookingRequests.ts` | Added optional `courseId` handling and `booking_course_link` insertion with `onConflictDoNothing` for duplicate safety. Link insert runs in the same executor/transaction and only when `courseId` is present. |
+| Availability checkbox interaction | `/frontend/src/pages/Availability.tsx` | Replaced no-op checkbox handler with `onToggle` while keeping row click + checkbox click propagation behavior stable. |
+| Building delete RBAC consistency | `/backend/src/routes/buildings.ts`, `/backend/src/api/controllers/buildings.controller.ts` | Route guard now requires ADMIN only, matching controller-level ADMIN-only enforcement. |
+| Login dead links cleanup | `/frontend/src/pages/LoginPage.tsx` | Replaced dummy support email with `mailto:support@uras.app` and removed placeholder `#` links for terms/privacy labels. |
+
+### Task Group 2 Validation Snapshot
+
+| Check | Result |
+|------|--------|
+| Backend tests (`npm test`) | Pass (22/22) |
+| Frontend build (`npm run build`) | Pass |
+| Backend runtime smoke (`/health`, `/health/ready`) | Pass |
+| Frontend runtime smoke (dev server HTTP 200) | Pass |
