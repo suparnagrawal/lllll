@@ -22,6 +22,7 @@ export default function AuthCallbackPage() {
     const refreshToken = searchParams.get("refreshToken");
     const error = searchParams.get("error");
     const authProvider = searchParams.get("authProvider");
+    const setupToken = searchParams.get("token");
 
     if (error === "oauth_failed") {
       setState("error");
@@ -59,12 +60,17 @@ export default function AuthCallbackPage() {
         // Small delay to show success state before redirect
         setTimeout(() => {
           if (!isCancelled) {
-            // If OAuth and first login, redirect to setup page
-            if (authProvider === "google") {
-              navigate(`/auth/setup?authProvider=${authProvider}`);
-            } else {
-              navigate("/");
+            // Redirect to setup only when backend explicitly provides a setup token.
+            if (setupToken) {
+              const encodedToken = encodeURIComponent(setupToken);
+              const setupUrl = authProvider
+                ? `/auth/setup?token=${encodedToken}&authProvider=${encodeURIComponent(authProvider)}`
+                : `/auth/setup?token=${encodedToken}`;
+              navigate(setupUrl);
+              return;
             }
+
+            navigate("/");
           }
         }, 500);
       } catch (err) {

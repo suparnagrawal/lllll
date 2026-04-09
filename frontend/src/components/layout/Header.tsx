@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../../auth/AuthContext';
 import { Link } from 'react-router-dom';
 import {
@@ -8,11 +8,126 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from '../ui/dropdown-menu';
+import { getNotifications, markAllNotificationsRead, markNotificationRead } from '../../lib/api';
+import type { AppNotification } from '../../lib/api';
 import { Bell, LogOut, User, Settings, Mail } from 'lucide-react';
+
+function formatNotificationTime(sentAt: string): string {
+  const parsed = new Date(sentAt);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return sentAt;
+  }
+
+  return parsed.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
 
 export function Header() {
   const { user, logout } = useAuth();
-  const [notificationCount] = useState(0);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [notificationCount, setNotificationCount] = useState(0);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [notificationsError, setNotificationsError] = useState<string | null>(null);
+
+  const refreshNotifications = useCallback(
+    async (silent = false) => {
+      if (!user) {
+        return;
+      }
+
+      if (!silent) {
+        setNotificationsLoading(true);
+      }
+
+      try {
+        const response = await getNotifications({ limit: 20 });
+        setNotifications(response.data);
+        setNotificationCount(response.unreadCount);
+        setNotificationsError(null);
+      } catch (error) {
+        if (!silent) {
+          setNotificationsError(
+            error instanceof Error ? error.message : 'Failed to fetch notifications',
+          );
+        }
+      } finally {
+        if (!silent) {
+          setNotificationsLoading(false);
+        }
+      }
+    },
+    [user],
+  );
+
+  useEffect(() => {
+    if (!user) {
+      setNotifications([]);
+      setNotificationCount(0);
+      setNotificationsError(null);
+      return;
+    }
+
+    void refreshNotifications();
+
+    const intervalId = window.setInterval(() => {
+      void refreshNotifications(true);
+    }, 30000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [user, refreshNotifications]);
+
+  const handleMarkNotificationRead = async (notificationId: number) => {
+    const target = notifications.find(
+      (notification) => notification.notificationId === notificationId,
+    );
+
+    if (!target || target.isRead) {
+      return;
+    }
+
+    try {
+      await markNotificationRead(notificationId);
+      setNotifications((current) =>
+        current.map((notification) =>
+          notification.notificationId === notificationId
+            ? { ...notification, isRead: true }
+            : notification,
+        ),
+      );
+      setNotificationCount((current) => Math.max(0, current - 1));
+      setNotificationsError(null);
+    } catch (error) {
+      setNotificationsError(
+        error instanceof Error ? error.message : 'Failed to mark notification as read',
+      );
+    }
+  };
+
+  const handleMarkAllNotificationsRead = async () => {
+    if (notificationCount === 0) {
+      return;
+    }
+
+    try {
+      await markAllNotificationsRead();
+      setNotifications((current) =>
+        current.map((notification) => ({ ...notification, isRead: true })),
+      );
+      setNotificationCount(0);
+      setNotificationsError(null);
+    } catch (error) {
+      setNotificationsError(
+        error instanceof Error ? error.message : 'Failed to mark all notifications as read',
+      );
+    }
+  };
 
   const handleLogout = () => {
     logout();
@@ -30,14 +145,66 @@ export function Header() {
         {user && (
           <div className="flex items-center gap-4">
             {/* Notifications */}
-            <button className="relative p-2 hover:bg-gray-100 rounded-lg transition-colors">
-              <Bell className="w-5 h-5 text-gray-600" />
-              {notificationCount > 0 && (
-                <span className="absolute top-1 right-1 inline-flex items-center justify-center px-2 py-1 text-xs font-bold leading-none text-white transform translate-x-1/2 -translate-y-1/2 bg-red-600 rounded-full">
-                  {notificationCount}
-                </span>
-              )}
-            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="relative p-2 hover:bg-gray-100 rounded-lg transition-colors">
+                  <Bell className="w-5 h-5 text-gray-600" />
+                  {notificationCount > 0 && (
+                    <span className="absolute top-1 right-1 inline-flex items-center justify-center min-w-4 h-4 px-1 text-[10px] font-bold leading-none text-white transform translate-x-1/2 -translate-y-1/2 bg-red-600 rounded-full">
+                      {notificationCount > 99 ? '99+' : notificationCount}
+                    </span>
+                  )}
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-80 max-w-[calc(100vw-2rem)] p-0">
+                <div className="border-b border-gray-200 px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-gray-900">Notifications</p>
+                    <button
+                      type="button"
+                      onClick={() => void handleMarkAllNotificationsRead()}
+                      disabled={notificationCount === 0 || notificationsLoading}
+                      className="text-xs font-medium text-blue-600 disabled:text-gray-400 disabled:cursor-not-allowed"
+                    >
+                      Mark all read
+                    </button>
+                  </div>
+                  {notificationsError && (
+                    <p className="mt-1 text-xs text-red-600">{notificationsError}</p>
+                  )}
+                </div>
+
+                <div className="max-h-80 overflow-y-auto">
+                  {notificationsLoading && notifications.length === 0 ? (
+                    <p className="px-3 py-4 text-sm text-gray-500">Loading notifications...</p>
+                  ) : notifications.length === 0 ? (
+                    <p className="px-3 py-4 text-sm text-gray-500">No notifications yet.</p>
+                  ) : (
+                    notifications.map((notification) => (
+                      <button
+                        key={notification.notificationId}
+                        type="button"
+                        onClick={() => void handleMarkNotificationRead(notification.notificationId)}
+                        className={`w-full text-left border-b border-gray-100 px-3 py-2 hover:bg-gray-50 transition-colors ${
+                          notification.isRead ? 'bg-white' : 'bg-blue-50/50'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-sm font-medium text-gray-900">{notification.subject}</p>
+                          {!notification.isRead && (
+                            <span className="mt-1 inline-block h-2 w-2 rounded-full bg-blue-600" />
+                          )}
+                        </div>
+                        <p className="mt-1 text-xs text-gray-600">{notification.message}</p>
+                        <p className="mt-1 text-[11px] text-gray-500">
+                          {formatNotificationTime(notification.sentAt)}
+                        </p>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </DropdownMenuContent>
+            </DropdownMenu>
 
             {/* User Menu */}
             <DropdownMenu>

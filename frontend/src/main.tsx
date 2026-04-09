@@ -7,13 +7,16 @@ import './index.css'
 import 'react-datepicker/dist/react-datepicker.css'
 import { router } from './routes'
 import { AuthProvider } from './auth/AuthContext.tsx'
+import { ToastProvider } from './context/ToastContext'
 import { queryClient } from './lib/queryClient'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <RouterProvider router={router} />
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
       </AuthProvider>
       {import.meta.env.DEV && <ReactQueryDevtools />}
     </QueryClientProvider>

@@ -306,8 +306,8 @@ router.post(
 router.post(
   "/:id/approve",
   authMiddleware,
-  requireRole("STAFF", "ADMIN"),
-  requireBookingsUnfrozen,
+  requireRole(["STAFF", "ADMIN"]),
+  requireBookingsUnfrozen(),
   async (req, res) => {
     const id = Number(req.params.id);
     const { reviewNote } = req.body;
@@ -385,7 +385,7 @@ router.post(
 router.post(
   "/:id/reject",
   authMiddleware,
-  requireRole("STAFF", "ADMIN"),
+  requireRole(["STAFF", "ADMIN"]),
   async (req, res) => {
     const id = Number(req.params.id);
     const { reviewNote } = req.body;

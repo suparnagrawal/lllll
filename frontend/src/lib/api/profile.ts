@@ -1,5 +1,4 @@
 import { request } from "./client";
-import type { AuthUser } from "./types";
 
 export type UserProfile = {
   id: number;
@@ -18,33 +17,20 @@ export type UpdateProfileInput = {
 };
 
 export async function getCurrentUserProfile(): Promise<UserProfile> {
-  const user = await request<AuthUser & { email: string; department: string | null; avatarUrl: string | null }>("/auth/me");
-  
-  return {
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    role: user.role,
-    department: user.department ?? null,
-    avatarUrl: user.avatarUrl ?? null,
-    registeredVia: "email",
-    isActive: true,
-    createdAt: new Date().toISOString(),
-  };
+  return request<UserProfile>("/users/profile");
 }
 
 export async function updateUserProfile(
-  userId: number,
   input: UpdateProfileInput,
 ): Promise<UserProfile> {
-  return request<UserProfile>(`/users/${userId}`, {
+  return request<UserProfile>("/users/profile", {
     method: "PATCH",
     body: JSON.stringify(input),
   });
 }
 
-export async function deleteUserAccount(userId: number): Promise<void> {
-  await request<{ ok: boolean }>(`/users/${userId}`, {
+export async function deleteUserAccount(): Promise<void> {
+  await request<{ ok: boolean }>("/users/profile", {
     method: "DELETE",
   });
 }

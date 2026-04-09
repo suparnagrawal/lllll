@@ -69,7 +69,7 @@ export default function DashboardPage() {
   const handleQuickAction = (action: string) => {
     switch (action) {
       case "new-booking":
-        navigate("/booking-requests");
+        navigate("/requests");
         break;
       case "check-availability":
         navigate("/availability");

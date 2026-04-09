@@ -237,6 +237,245 @@ router.get("/:id/building-assignments", authMiddleware, async (req, res) => {
   }
 });
 
+// GET /users/profile
+// Returns current user's profile details
+router.get("/profile", authMiddleware, async (req, res) => {
+  try {
+    if (!req.user?.id) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const rows = await db
+      .select({
+        id: users.id,
+        name: sql<string>`coalesce(${users.displayName}, ${users.name})`,
+        email: users.email,
+        role: users.role,
+        department: users.department,
+        avatarUrl: users.avatarUrl,
+        registeredVia: users.registeredVia,
+        isActive: users.isActive,
+        createdAt: users.createdAt,
+      })
+      .from(users)
+      .where(eq(users.id, req.user.id))
+      .limit(1);
+
+    const profile = rows[0];
+
+    if (!profile) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    return res.json(profile);
+  } catch (error) {
+    logger.error(error);
+    return res.status(500).json({ error: "Failed to fetch profile" });
+  }
+});
+
+// PATCH /users/profile
+// Allows a user to update their own profile fields
+router.patch("/profile", authMiddleware, async (req, res) => {
+  try {
+    if (!req.user?.id) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const rawDepartment = req.body?.department;
+
+    if (
+      rawDepartment !== undefined &&
+      rawDepartment !== null &&
+      typeof rawDepartment !== "string"
+    ) {
+      return res.status(400).json({ error: "department must be a string when provided" });
+    }
+
+    const profileRows = await db
+      .select({ id: users.id, isActive: users.isActive })
+      .from(users)
+      .where(eq(users.id, req.user.id))
+      .limit(1);
+
+    const profile = profileRows[0];
+
+    if (!profile) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    if (!profile.isActive) {
+      return res.status(403).json({ error: "Your account is inactive" });
+    }
+
+    const updatePayload: { department?: string | null } = {};
+
+    if (rawDepartment !== undefined) {
+      updatePayload.department =
+        typeof rawDepartment === "string" && rawDepartment.trim().length > 0
+          ? rawDepartment.trim()
+          : null;
+    }
+
+    if (Object.keys(updatePayload).length === 0) {
+      return res.status(400).json({ error: "No updatable profile fields provided" });
+    }
+
+    const updatedRows = await db
+      .update(users)
+      .set(updatePayload)
+      .where(eq(users.id, req.user.id))
+      .returning({
+        id: users.id,
+        name: sql<string>`coalesce(${users.displayName}, ${users.name})`,
+        email: users.email,
+        role: users.role,
+        department: users.department,
+        avatarUrl: users.avatarUrl,
+        registeredVia: users.registeredVia,
+        isActive: users.isActive,
+        createdAt: users.createdAt,
+      });
+
+    return res.json(updatedRows[0]);
+  } catch (error) {
+    logger.error(error);
+    return res.status(500).json({ error: "Failed to update profile" });
+  }
+});
+
+// DELETE /users/profile
+// Allows a user to delete (anonymize + deactivate) their own account
+router.delete("/profile", authMiddleware, async (req, res) => {
+  try {
+    if (!req.user?.id) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const targetId = req.user.id;
+
+    const targetRows = await db
+      .select({ id: users.id, role: users.role, isActive: users.isActive })
+      .from(users)
+      .where(eq(users.id, targetId))
+      .limit(1);
+
+    const target = targetRows[0];
+
+    if (!target) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    if (target.role === "ADMIN" && target.isActive) {
+      const activeAdminCount = await getActiveAdminCount();
+
+      if (activeAdminCount <= 1) {
+        return res.status(400).json({
+          error: "Cannot delete the last active ADMIN",
+        });
+      }
+    }
+
+    const anonymizedName = `Deleted User ${targetId}`;
+    const anonymizedEmail = `deleted_user_${targetId}_${Date.now()}@deleted.local`;
+    const passwordHash = await bcrypt.hash(`deleted_${targetId}_${Date.now()}`, 10);
+
+    await db
+      .update(users)
+      .set({
+        name: anonymizedName,
+        email: anonymizedEmail,
+        passwordHash,
+        role: "STUDENT",
+        googleId: null,
+        avatarUrl: null,
+        displayName: null,
+        department: null,
+        isActive: false,
+        registeredVia: "email",
+        firstLogin: false,
+      })
+      .where(eq(users.id, targetId));
+
+    return res.json({ ok: true });
+  } catch (error) {
+    logger.error(error);
+    return res.status(500).json({ error: "Failed to delete profile" });
+  }
+});
+
+// GET /users/profile/export
+// Export user data with bookings and requests (GDPR compliance)
+router.get("/profile/export", authMiddleware, async (req, res) => {
+  try {
+    if (!req.user?.id) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    // Get user profile
+    const userRows = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, req.user.id))
+      .limit(1);
+
+    const user = userRows[0];
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    // Get user's booking requests
+    const userBookingRequests = await db
+      .select()
+      .from(bookingRequests)
+      .where(
+        or(
+          eq(bookingRequests.userId, req.user.id),
+          eq(bookingRequests.facultyId, req.user.id)
+        )
+      );
+
+    // Get user's bookings (if they approved them)
+    const userBookings = await db
+      .select()
+      .from(bookings)
+      .where(eq(bookings.approvedBy, req.user.id));
+
+    return res.json({
+      exportedAt: new Date().toISOString(),
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        department: user.department,
+        registeredVia: user.registeredVia,
+        createdAt: user.createdAt,
+      },
+      bookingRequests: userBookingRequests.map((br) => ({
+        id: br.id,
+        eventType: br.eventType,
+        purpose: br.purpose,
+        status: br.status,
+        startAt: br.startAt,
+        endAt: br.endAt,
+        createdAt: br.createdAt,
+      })),
+      approvedBookings: userBookings.map((b) => ({
+        id: b.id,
+        roomId: b.roomId,
+        startAt: b.startAt,
+        endAt: b.endAt,
+        source: b.source,
+        approvedAt: b.approvedAt,
+      })),
+    });
+  } catch (error) {
+    logger.error(error);
+    return res.status(500).json({ error: "Failed to export user data" });
+  }
+});
+
 router.use(authMiddleware, requireRole("ADMIN"));
 
 router.get("/", async (req, res) => {
@@ -829,78 +1068,6 @@ router.delete("/:id", async (req, res) => {
   } catch (error) {
     logger.error(error);
     return res.status(500).json({ error: "Failed to delete user" });
-  }
-});
-
-// GET /users/profile/export
-// Export user data with bookings and requests (GDPR compliance)
-router.get("/profile/export", authMiddleware, async (req, res) => {
-  try {
-    if (!req.user?.id) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
-
-    // Get user profile
-    const userRows = await db
-      .select()
-      .from(users)
-      .where(eq(users.id, req.user.id))
-      .limit(1);
-
-    const user = userRows[0];
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    // Get user's booking requests
-    const userBookingRequests = await db
-      .select()
-      .from(bookingRequests)
-      .where(
-        or(
-          eq(bookingRequests.userId, req.user.id),
-          eq(bookingRequests.facultyId, req.user.id)
-        )
-      );
-
-    // Get user's bookings (if they approved them)
-    const userBookings = await db
-      .select()
-      .from(bookings)
-      .where(eq(bookings.approvedBy, req.user.id));
-
-    return res.json({
-      exportedAt: new Date().toISOString(),
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        department: user.department,
-        registeredVia: user.registeredVia,
-        createdAt: user.createdAt,
-      },
-      bookingRequests: userBookingRequests.map((br) => ({
-        id: br.id,
-        eventType: br.eventType,
-        purpose: br.purpose,
-        status: br.status,
-        startAt: br.startAt,
-        endAt: br.endAt,
-        createdAt: br.createdAt,
-      })),
-      approvedBookings: userBookings.map((b) => ({
-        id: b.id,
-        roomId: b.roomId,
-        startAt: b.startAt,
-        endAt: b.endAt,
-        source: b.source,
-        approvedAt: b.approvedAt,
-      })),
-    });
-  } catch (error) {
-    logger.error(error);
-    return res.status(500).json({ error: "Failed to export user data" });
   }
 });
 

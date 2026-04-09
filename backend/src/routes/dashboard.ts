@@ -2,7 +2,7 @@ import { Router } from "express";
 import { db } from "../db";
 import { bookingRequests, bookings, users, rooms } from "../db/schema";
 import { authMiddleware } from "../middleware/auth";
-import { eq, and, gte, lt, desc, sql } from "drizzle-orm";
+import { eq, and, gte, lt, desc, sql, inArray } from "drizzle-orm";
 import logger from "../shared/utils/logger";
 
 const router = Router();
@@ -34,12 +34,7 @@ router.get("/data", authMiddleware, async (req, res, next) => {
     const pendingRequests = await db
       .select({ count: sql`count(*)` })
       .from(bookingRequests)
-      .where(
-        and(
-          eq(bookingRequests.status, "PENDING_FACULTY"),
-          eq(bookingRequests.status, "PENDING_STAFF"),
-        ),
-      );
+      .where(inArray(bookingRequests.status, ["PENDING_FACULTY", "PENDING_STAFF"]));
 
     const activeUsers = await db
       .select({ count: sql`count(distinct ${bookingRequests.userId})` })
@@ -141,12 +136,7 @@ router.get("/stats", authMiddleware, async (req, res, next) => {
     const pendingRequests = await db
       .select({ count: sql`count(*)` })
       .from(bookingRequests)
-      .where(
-        and(
-          eq(bookingRequests.status, "PENDING_FACULTY"),
-          eq(bookingRequests.status, "PENDING_STAFF"),
-        ),
-      );
+      .where(inArray(bookingRequests.status, ["PENDING_FACULTY", "PENDING_STAFF"]));
 
     // Count active users (users with recent activity in last 30 days)
     const thirtyDaysAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);

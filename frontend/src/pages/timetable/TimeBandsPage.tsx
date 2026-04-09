@@ -7,7 +7,7 @@ import {
   createTimeBand,
   updateTimeBand,
   deleteTimeBand,
-} from "../../api/api";
+} from "../../lib/api";
 
 export function TimeBandsPage() {
   const { id } = useParams<{ id: string }>();

@@ -6,7 +6,7 @@ import {
   getFullGrid,
   createDay,
   deleteDay,
-} from "../../api/api";
+} from "../../lib/api";
 
 const DAY_OF_WEEK_OPTIONS: DayOfWeek[] = [
   "MON",

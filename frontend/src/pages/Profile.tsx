@@ -228,7 +228,7 @@ function ProfileSection() {
 
   const handleEditSubmit = async (data: UpdateProfileFormData) => {
     try {
-      await updateMutation.mutateAsync({ userId: user.id, input: data });
+      await updateMutation.mutateAsync(data);
       setEditModalOpen(false);
     } catch (error) {
       console.error("Failed to update profile:", error);
@@ -416,7 +416,7 @@ function SecuritySection() {
 
   const handleDeleteAccount = async () => {
     try {
-      await deleteMutation.mutateAsync(user.id);
+      await deleteMutation.mutateAsync();
       pushToast("success", "Account deletion initiated. You will be logged out.");
       setTimeout(() => {
         logout();

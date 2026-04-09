@@ -173,26 +173,31 @@ This is a **full-stack web application** for managing university room bookings a
 | GET | `/` | List requests | All authenticated |
 | GET | `/:id` | Get request details | All authenticated |
 | POST | `/` | Submit booking request | STUDENT, FACULTY |
-| PATCH | `/:id/approve` | Approve request | STAFF, ADMIN |
-| PATCH | `/:id/reject` | Reject request | STAFF, ADMIN |
-| DELETE | `/:id` | Cancel request | Owner only |
+| POST | `/:id/forward` | Forward request to staff queue | FACULTY |
+| POST | `/:id/approve` | Approve request and create booking | STAFF |
+| POST | `/:id/reject` | Reject request | FACULTY, STAFF |
+| POST | `/:id/cancel` | Cancel pending request | Owner, ADMIN |
 
 ### Change Requests
 **Slot Changes** (`/api/slot-change-requests`):
 | Method | Endpoint | Purpose | Roles |
 |--------|----------|---------|-------|
 | GET | `/` | List slot change requests | All authenticated |
+| GET | `/:id` | Get slot change request details | All authenticated |
 | POST | `/` | Request slot change | FACULTY |
-| PATCH | `/:id/approve` | Approve change | STAFF, ADMIN |
-| PATCH | `/:id/reject` | Reject change | STAFF, ADMIN |
+| POST | `/:id/approve` | Approve change | STAFF, ADMIN |
+| POST | `/:id/reject` | Reject change | STAFF, ADMIN |
+| POST | `/:id/cancel` | Cancel own pending request | FACULTY |
 
 **Venue Changes** (`/api/venue-change-requests`):
 | Method | Endpoint | Purpose | Roles |
 |--------|----------|---------|-------|
 | GET | `/` | List venue change requests | All authenticated |
+| GET | `/:id` | Get venue change request details | All authenticated |
 | POST | `/` | Request venue change | FACULTY |
-| PATCH | `/:id/approve` | Approve change | STAFF, ADMIN |
-| PATCH | `/:id/reject` | Reject change | STAFF, ADMIN |
+| POST | `/:id/approve` | Approve change | STAFF, ADMIN |
+| POST | `/:id/reject` | Reject change | STAFF, ADMIN |
+| POST | `/:id/cancel` | Cancel own pending request | FACULTY |
 
 ### Availability (`/api/availability`)
 | Method | Endpoint | Purpose | Roles |
@@ -211,14 +216,23 @@ This is a **full-stack web application** for managing university room bookings a
 | POST | `/days` | Create day (blocked if locked) |
 | GET | `/days` | List days |
 | DELETE | `/days/:id` | Delete day (blocked if locked) |
+| POST | `/days/:id/lanes` | Add lane to a day |
+| DELETE | `/days/:id/lanes` | Remove lane from a day |
 | POST | `/time-bands` | Create time band (blocked if locked) |
 | GET | `/time-bands` | List time bands |
 | PATCH | `/time-bands/:id` | Update time band (blocked if locked) |
 | DELETE | `/time-bands/:id` | Delete time band (blocked if locked) |
 | POST | `/blocks` | Create block (blocked if locked) |
 | DELETE | `/blocks/:id` | Delete block (blocked if locked) |
+| GET | `/imports` | List import batches |
 | POST | `/imports/preview` | Preview Excel import |
+| GET | `/imports/:id` | Get import batch details |
+| PUT | `/imports/:id/decisions` | Save row-level decisions |
+| POST | `/imports/:id/rows/:rowId/transfer` | Transfer a row to another batch/system |
+| POST | `/imports/:id/reallocate` | Re-run allocation for unresolved rows |
 | POST | `/imports/:id/commit` | Commit import |
+| DELETE | `/imports/:id` | Delete import batch |
+| GET | `/imports/:id/processed-rows` | Get processed rows with outcomes |
 | POST | `/imports/:id/detect-conflicts` | Detect booking conflicts |
 | POST | `/imports/:id/commit-with-resolutions` | Commit with conflict resolutions |
 | POST | `/imports/:id/cancel-commit` | Cancel commit, release freeze |
@@ -227,24 +241,33 @@ This is a **full-stack web application** for managing university room bookings a
 ### Users (`/api/users`)
 | Method | Endpoint | Purpose | Roles |
 |--------|----------|---------|-------|
-| GET | `/` | List users | All authenticated |
-| GET | `/:id` | Get user profile | All authenticated |
+| GET | `/faculty` | List active faculty users | All authenticated |
+| GET | `/profile` | Get current user profile | All authenticated |
+| PATCH | `/profile` | Update current user profile | All authenticated |
+| DELETE | `/profile` | Delete own account (anonymize + deactivate) | All authenticated |
+| GET | `/profile/export` | Export own user data | All authenticated |
+| GET | `/:id/building-assignments` | View staff building assignments | ADMIN, STAFF (self for STAFF) |
+| GET | `/` | List users (paginated + filters) | ADMIN |
 | POST | `/` | Create user | ADMIN |
-| PATCH | `/:id` | Update user | ADMIN |
-| POST | `/staff-assignments` | Assign staff to building | ADMIN |
+| PATCH | `/:id/role` | Update user role | ADMIN |
+| PUT | `/:id/building-assignments` | Set staff building assignments | ADMIN |
+| PATCH | `/:id/active` | Activate/deactivate user | ADMIN |
+| DELETE | `/:id` | Delete user (anonymized soft delete) | ADMIN |
 
 ### Notifications (`/api/notifications`)
 | Method | Endpoint | Purpose | Roles |
 |--------|----------|---------|-------|
-| GET | `/` | List notifications | Owner |
-| GET | `/unread-count` | Unread count | Owner |
-| PATCH | `/:id/read` | Mark as read | Owner |
+| GET | `/` | List notifications (includes `unreadCount`) | Owner |
+| POST | `/:id/read` | Mark one notification as read | Owner |
+| POST | `/read-all` | Mark all notifications as read | Owner |
 
 ### Dashboard (`/api/dashboard`)
 | Method | Endpoint | Purpose | Roles |
 |--------|----------|---------|-------|
+| GET | `/data` | Combined payload: stats + upcoming bookings + activity feed | All authenticated |
 | GET | `/stats` | Aggregated statistics | All authenticated |
-| GET | `/recent-activity` | Recent activities | All authenticated |
+| GET | `/upcoming-bookings` | Next upcoming bookings | All authenticated |
+| GET | `/activity-feed` | Recent activity feed | All authenticated |
 
 ### Health (`/health`)
 | Method | Endpoint | Purpose |

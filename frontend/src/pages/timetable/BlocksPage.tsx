@@ -6,7 +6,7 @@ import {
   getFullGrid,
   createBlock,
   deleteBlock,
-} from "../../api/api";
+} from "../../lib/api";
 
 export function BlocksPage() {
   const { id } = useParams<{ id: string }>();

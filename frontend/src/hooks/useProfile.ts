@@ -16,8 +16,7 @@ export function useUpdateProfile() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ userId, input }: { userId: number; input: UpdateProfileInput }) =>
-      profileApi.updateUserProfile(userId, input),
+    mutationFn: (input: UpdateProfileInput) => profileApi.updateUserProfile(input),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['user-profile'] });
     },
@@ -28,7 +27,7 @@ export function useDeleteAccount() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (userId: number) => profileApi.deleteUserAccount(userId),
+    mutationFn: () => profileApi.deleteUserAccount(),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['user-profile'] });
     },

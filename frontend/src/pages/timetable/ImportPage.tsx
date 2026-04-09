@@ -6,7 +6,7 @@ import {
   getSlotSystems,
   previewTimetableImport,
   commitTimetableImport,
-} from "../../api/api";
+} from "../../lib/api";
 
 type Step = "select-system" | "upload-file" | "preview" | "map-columns" | "confirm";
 
