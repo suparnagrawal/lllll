@@ -6,7 +6,7 @@
  */
 
 import { Request, Response, NextFunction } from "express";
-import { checkFreezeBlock } from "../services/bookingFreezeService";
+import { checkFreezeBlock } from "../modules/timetable/services/bookingFreezeService";
 import logger from "../shared/utils/logger";
 
 /**

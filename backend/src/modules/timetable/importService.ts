@@ -11,14 +11,14 @@ import {
   timetableImportRows,
   timetableImportOccurrences,
 } from "../../db/schema";
-import { createBookingsBulk, hasBookingOverlap } from "../../services/bookingService";
-import type { BookingCreateResult } from "../../services/bookingService";
+import { createBookingsBulk, hasBookingOverlap } from "../bookings/services/bookingService";
+import type { BookingCreateResult } from "../bookings/services/bookingService";
 import {
   freezeBookings,
   unfreezeBookings,
   getBookingFreezeState,
   isBookingFrozen,
-} from "../../services/bookingFreezeService";
+} from "./services/bookingFreezeService";
 import logger from "../../shared/utils/logger";
 import { DAY_OF_WEEK_VALUES, slotBlocks, slotDays, slotSystems, slotTimeBands } from "./schema";
 import { createBlock, lockSlotSystem } from "./service";

@@ -17,7 +17,7 @@ import {
 import {
   freezeBookings,
   unfreezeBookings,
-} from "../../services/bookingFreezeService";
+} from "./services/bookingFreezeService";
 import logger from "../../shared/utils/logger";
 import { slotBlocks, slotDays, slotSystems, slotTimeBands } from "./schema";
 import {

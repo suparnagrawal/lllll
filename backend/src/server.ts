@@ -10,20 +10,10 @@ import { generalLimiter, authLimiter } from "./api/middleware/rateLimit.middlewa
 import { markInternalOperation } from "./api/middleware/internalOperation.middleware";
 import { requestLogger } from "./api/middleware/requestLogger.middleware";
 import { performanceMiddleware } from "./api/middleware/performance.middleware";
-import buildingsRouter from "./routes/buildings";
-import roomsRouter from "./routes/rooms";
-import bookingsRouter from "./routes/bookings";
-import bookingRequestsRouter from "./routes/bookingRequests";
-import slotChangeRequestsRouter from "./routes/slotChangeRequests";
-import venueChangeRequestsRouter from "./routes/venueChangeRequests";
-import availabilityRoutes from './routes/availability';
-import authRoutes from "./routes/auth";
-import usersRoutes from "./routes/users";
-import notificationsRoutes from "./routes/notifications";
-import timetableRoutes from "./modules/timetable/routes";
-import dashboardRoutes from "./routes/dashboard";
 import healthRouter from "./api/routes/health.routes";
 import { errorHandler } from "./api/middleware/errorHandler.middleware";
+import { apiModules } from "./modules";
+import { registerModules } from "./modules/registerModules";
 import logger from "./shared/utils/logger";
 
 
@@ -70,19 +60,10 @@ app.use(markInternalOperation);
 app.use("/api", generalLimiter);
 app.use("/api/auth", authLimiter);
 
-// routes
-app.use("/api/buildings", buildingsRouter);
-app.use("/api/rooms", roomsRouter);
-app.use("/api/bookings", bookingsRouter);
-app.use("/api/booking-requests", bookingRequestsRouter);
-app.use("/api/slot-change-requests", slotChangeRequestsRouter);
-app.use("/api/venue-change-requests", venueChangeRequestsRouter);
-app.use('/api/availability', availabilityRoutes);
-app.use("/api/auth", authRoutes);
-app.use("/api/users", usersRoutes);
-app.use("/api/notifications", notificationsRoutes);
-app.use("/api/timetable", timetableRoutes);
-app.use("/api/dashboard", dashboardRoutes);
+// Feature modules
+registerModules(app, apiModules);
+
+// Infra routes (outside /api)
 app.use("/health", healthRouter);
 
 // Global error handler - must be after all routes
