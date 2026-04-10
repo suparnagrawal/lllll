@@ -6,8 +6,10 @@ import {
   users,
   rooms,
   courses,
+  courseFaculty,
   bookings,
   buildings,
+  bookingCourseLink,
 } from "../db/schema";
 import { authMiddleware } from "../middleware/auth";
 import { requireRole } from "../middleware/rbac";
@@ -142,6 +144,85 @@ router.get("/", authMiddleware, async (req, res) => {
   } catch (error) {
     logger.error("Failed to fetch venue change requests", error);
     return res.status(500).json({ error: "Failed to fetch requests" });
+  }
+});
+
+/**
+ * GET /venue-change-requests/options
+ * Returns real dropdown data for venue change creation UI
+ */
+router.get("/options", authMiddleware, async (req, res) => {
+  try {
+    const role = req.user?.role;
+    const userId = req.user?.id;
+
+    if (!role || !userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    if (role === "STUDENT" || role === "PENDING_ROLE") {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    const courseRows =
+      role === "FACULTY"
+        ? await db
+            .select({ id: courses.id, code: courses.code, name: courses.name })
+            .from(courseFaculty)
+            .innerJoin(courses, eq(courseFaculty.courseId, courses.id))
+            .where(eq(courseFaculty.facultyId, userId))
+            .orderBy(courses.code)
+        : await db
+            .select({ id: courses.id, code: courses.code, name: courses.name })
+            .from(courses)
+            .orderBy(courses.code);
+
+    const courseIds = courseRows.map((course) => course.id);
+
+    const bookingSelectionQuery = db
+      .select({
+        id: bookings.id,
+        roomId: bookings.roomId,
+        startAt: bookings.startAt,
+        endAt: bookings.endAt,
+        courseId: bookingCourseLink.courseId,
+        courseCode: courses.code,
+        courseName: courses.name,
+        roomName: rooms.name,
+        buildingName: buildings.name,
+      })
+      .from(bookingCourseLink)
+      .innerJoin(bookings, eq(bookingCourseLink.bookingId, bookings.id))
+      .innerJoin(courses, eq(bookingCourseLink.courseId, courses.id))
+      .innerJoin(rooms, eq(bookings.roomId, rooms.id))
+      .innerJoin(buildings, eq(rooms.buildingId, buildings.id))
+      .orderBy(desc(bookings.startAt));
+
+    const bookingRows =
+      role === "FACULTY"
+        ? courseIds.length > 0
+          ? await bookingSelectionQuery.where(inArray(bookingCourseLink.courseId, courseIds))
+          : []
+        : await bookingSelectionQuery;
+
+    const roomRows = await db
+      .select({
+        id: rooms.id,
+        name: rooms.name,
+        buildingId: rooms.buildingId,
+        buildingName: buildings.name,
+      })
+      .from(rooms)
+      .innerJoin(buildings, eq(rooms.buildingId, buildings.id));
+
+    return res.json({
+      courses: courseRows,
+      bookings: bookingRows,
+      rooms: roomRows,
+    });
+  } catch (error) {
+    logger.error("Failed to fetch venue change options", error);
+    return res.status(500).json({ error: "Failed to fetch options" });
   }
 });
 

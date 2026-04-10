@@ -181,6 +181,15 @@ export {
   rejectSlotChangeRequest,
 } from "./slotChange";
 
+// Venue change endpoints
+export {
+  getVenueChangeOptions,
+  getVenueChangeRequests,
+  createVenueChangeRequest,
+  approveVenueChangeRequest,
+  rejectVenueChangeRequest,
+} from "./venueChange";
+
 // Notifications endpoints
 export {
   getNotifications,
