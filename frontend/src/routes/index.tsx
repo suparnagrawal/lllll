@@ -22,7 +22,17 @@ const VenueChangePage = lazy(() => import('../pages/VenueChangePage'));
 // eslint-disable-next-line react-refresh/only-export-components
 const UsersPage = lazy(() => import('../pages/UsersPage'));
 // eslint-disable-next-line react-refresh/only-export-components
-const TimetableBuilderPage = lazy(() => import('../pages/TimetableBuilderPage'));
+const TimetableLayoutPage = lazy(() => import('../pages/timetable/TimetableLayoutPage'));
+// eslint-disable-next-line react-refresh/only-export-components
+const TimetableOverviewPage = lazy(() => import('../pages/timetable/TimetableOverviewPage'));
+// eslint-disable-next-line react-refresh/only-export-components
+const TimetableStructurePage = lazy(() => import('../pages/timetable/TimetableStructurePage'));
+// eslint-disable-next-line react-refresh/only-export-components
+const TimetableImportsPage = lazy(() => import('../pages/timetable/TimetableImportsPage'));
+// eslint-disable-next-line react-refresh/only-export-components
+const TimetableProcessedRowsPage = lazy(() => import('../pages/timetable/TimetableProcessedRowsPage'));
+// eslint-disable-next-line react-refresh/only-export-components
+const TimetableWorkspacePage = lazy(() => import('../pages/timetable/TimetableWorkspacePage'));
 // eslint-disable-next-line react-refresh/only-export-components
 const AuthCallbackPage = lazy(() => import('../pages/AuthCallbackPage'));
 // eslint-disable-next-line react-refresh/only-export-components
@@ -110,9 +120,31 @@ export const router = createBrowserRouter([
                 path: 'users', 
                 element: <Suspense fallback={<PageLoader />}><UsersPage /></Suspense> 
               },
-              { 
-                path: 'timetable', 
-                element: <Suspense fallback={<PageLoader />}><TimetableBuilderPage /></Suspense> 
+              {
+                path: 'timetable',
+                element: <Suspense fallback={<PageLoader />}><TimetableLayoutPage /></Suspense>,
+                children: [
+                  {
+                    index: true,
+                    element: <Suspense fallback={<PageLoader />}><TimetableOverviewPage /></Suspense>,
+                  },
+                  {
+                    path: 'structure',
+                    element: <Suspense fallback={<PageLoader />}><TimetableStructurePage /></Suspense>,
+                  },
+                  {
+                    path: 'imports',
+                    element: <Suspense fallback={<PageLoader />}><TimetableImportsPage /></Suspense>,
+                  },
+                  {
+                    path: 'processed',
+                    element: <Suspense fallback={<PageLoader />}><TimetableProcessedRowsPage /></Suspense>,
+                  },
+                  {
+                    path: 'workspace',
+                    element: <Suspense fallback={<PageLoader />}><TimetableWorkspacePage /></Suspense>,
+                  },
+                ],
               },
             ],
           },

@@ -367,25 +367,29 @@ export async function getAvailabilityWithCache(
   );
 
   // Try to get from cache
-  try {
-    const cached = await redis.get(cacheKey);
-    if (cached) {
-      return JSON.parse(cached) as BuildingWithRooms[];
+  if (isRedisAvailable) {
+    try {
+      const cached = await redis.get(cacheKey);
+      if (cached) {
+        return JSON.parse(cached) as BuildingWithRooms[];
+      }
+    } catch (error) {
+      // Log but don't fail if cache read fails
+      console.warn('Cache read error:', error);
     }
-  } catch (error) {
-    // Log but don't fail if cache read fails
-    console.warn('Cache read error:', error);
   }
 
   // Query database if not cached
   const result = await queryAvailability(params);
 
   // Store in cache with SHORT_TTL (5 minutes)
-  try {
-    await redis.setex(cacheKey, SHORT_TTL, JSON.stringify(result));
-  } catch (error) {
-    // Log but don't fail if cache write fails
-    console.warn('Cache write error:', error);
+  if (isRedisAvailable) {
+    try {
+      await redis.setex(cacheKey, SHORT_TTL, JSON.stringify(result));
+    } catch (error) {
+      // Log but don't fail if cache write fails
+      console.warn('Cache write error:', error);
+    }
   }
 
   return result;
@@ -409,6 +413,10 @@ export async function invalidateAvailabilityCache(
   startAt?: Date,
   endAt?: Date
 ): Promise<void> {
+  if (!isRedisAvailable) {
+    return;
+  }
+
   try {
     if (buildingId !== undefined && startAt && endAt) {
       const cacheKey = getAvailabilityCacheKey(buildingId, startAt, endAt);

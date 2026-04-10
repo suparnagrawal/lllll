@@ -624,6 +624,8 @@ export function TimetableBuilderPage() {
   }, [selectedSystemId, slotSystems]);
 
   const isSystemLocked = selectedSystem?.isLocked ?? false;
+  const lockedStructureEditMessage =
+    "Slot system is locked. Use Edit Structure to modify days, time bands, lanes, or blocks.";
 
   const previewRowById = useMemo(() => {
     return new Map<number, TimetableImportPreviewRow>(
@@ -1039,6 +1041,11 @@ export function TimetableBuilderPage() {
       return;
     }
 
+    if (isSystemLocked) {
+      setError(lockedStructureEditMessage);
+      return;
+    }
+
     setActionLoading(true);
     setError(null);
 
@@ -1060,6 +1067,11 @@ export function TimetableBuilderPage() {
 
     if (selectedSystemId === "") {
       setError("Select a slot system first");
+      return;
+    }
+
+    if (isSystemLocked) {
+      setError(lockedStructureEditMessage);
       return;
     }
 
@@ -1100,6 +1112,11 @@ export function TimetableBuilderPage() {
   };
 
   const handleUpdateTimeBand = async (bandId: number) => {
+    if (isSystemLocked) {
+      setError(lockedStructureEditMessage);
+      return;
+    }
+
     if (!editingBandStart || !editingBandEnd) {
       setError("Band start and end times are required");
       return;
@@ -1126,6 +1143,11 @@ export function TimetableBuilderPage() {
 
   const handleDeleteTimeBand = async (bandId: number) => {
     if (selectedSystemId === "") {
+      return;
+    }
+
+    if (isSystemLocked) {
+      setError(lockedStructureEditMessage);
       return;
     }
 
@@ -1157,6 +1179,11 @@ export function TimetableBuilderPage() {
 
   const createBlockFromSelection = async (selection: DragSelection) => {
     if (selectedSystemId === "") {
+      return;
+    }
+
+    if (isSystemLocked) {
+      setError(lockedStructureEditMessage);
       return;
     }
 
@@ -1196,6 +1223,12 @@ export function TimetableBuilderPage() {
       return;
     }
 
+    if (isSystemLocked) {
+      setDragSelection(null);
+      setError(lockedStructureEditMessage);
+      return;
+    }
+
     const activeSelection = dragSelection;
     setDragSelection(null);
     await createBlockFromSelection(activeSelection);
@@ -1203,6 +1236,11 @@ export function TimetableBuilderPage() {
 
   const handleDeleteBlock = async (blockId: number) => {
     if (selectedSystemId === "") {
+      return;
+    }
+
+    if (isSystemLocked) {
+      setError(lockedStructureEditMessage);
       return;
     }
 
@@ -1224,6 +1262,11 @@ export function TimetableBuilderPage() {
       return;
     }
 
+    if (isSystemLocked) {
+      setError(lockedStructureEditMessage);
+      return;
+    }
+
     setActionLoading(true);
     setError(null);
 
@@ -1239,6 +1282,11 @@ export function TimetableBuilderPage() {
 
   const handleRemoveLane = async (day: SlotDay) => {
     if (selectedSystemId === "") {
+      return;
+    }
+
+    if (isSystemLocked) {
+      setError(lockedStructureEditMessage);
       return;
     }
 
@@ -1262,6 +1310,11 @@ export function TimetableBuilderPage() {
 
   const handleDeleteDay = async (day: SlotDay) => {
     if (selectedSystemId === "") {
+      return;
+    }
+
+    if (isSystemLocked) {
+      setError(lockedStructureEditMessage);
       return;
     }
 
@@ -1292,7 +1345,7 @@ export function TimetableBuilderPage() {
     laneIndex: number,
     bandIndex: number,
   ) => {
-    if (actionLoading || loadingGrid || selectedSystemId === "") {
+    if (actionLoading || loadingGrid || selectedSystemId === "" || isSystemLocked) {
       return;
     }
 
@@ -2001,7 +2054,11 @@ export function TimetableBuilderPage() {
         <p className="text-gray-600">Build slot systems with day columns, time-band rows, and merged slot blocks</p>
       </div>
 
-      <form className="border rounded-lg p-6 mb-8 mx-4 bg-white" onSubmit={handleCreateSlotSystem}>
+      <form
+        id="timetable-structure-section"
+        className="border rounded-lg p-6 mb-8 mx-4 bg-white"
+        onSubmit={handleCreateSlotSystem}
+      >
         <div className="card-header">
           <h3>Slot System Selector</h3>
         </div>
@@ -2063,6 +2120,7 @@ export function TimetableBuilderPage() {
           </button>
           {isSystemLocked && (
             <button
+              id="timetable-open-change-workspace"
               type="button"
               className="btn"
               style={{ backgroundColor: "#7c3aed", color: "white" }}
@@ -2108,7 +2166,11 @@ export function TimetableBuilderPage() {
         {successMessage && <div className="alert alert-success mt-4">{successMessage}</div>}
       </form>
 
-      <form className="border rounded-lg p-6 mb-8 mx-4 bg-white" onSubmit={handlePreviewImport}>
+      <form
+        id="timetable-import-section"
+        className="border rounded-lg p-6 mb-8 mx-4 bg-white"
+        onSubmit={handlePreviewImport}
+      >
         <div className="card-header">
           <h3>Classroom Allocation Import</h3>
           {previewReport && (
@@ -2765,7 +2827,7 @@ export function TimetableBuilderPage() {
         )}
 
         {(processedRowsLoading || processedRowsError || processedRowsReport) && (
-          <div className="mt-4">
+          <div id="timetable-processed-section" className="mt-4">
             <div className="card-header mb-2">
               <h3>Processed Rows And Booking CRUD</h3>
               {processedRowsReport && (
@@ -3046,7 +3108,7 @@ export function TimetableBuilderPage() {
         )}
       </form>
 
-      <div className="border rounded-lg p-6 mb-8 mx-4 bg-white">
+      <div id="timetable-grid-section" className="border rounded-lg p-6 mb-8 mx-4 bg-white">
         <div className="card-header">
           <h3>Grid Editor</h3>
           <span className="badge badge-role">
@@ -3064,7 +3126,7 @@ export function TimetableBuilderPage() {
                   className="input"
                   value={newDayOfWeek}
                   onChange={(e) => setNewDayOfWeek(e.target.value as DayOfWeek)}
-                  disabled={actionLoading}
+                  disabled={actionLoading || isSystemLocked}
                 >
                   {DAY_OF_WEEK_OPTIONS.map((dayOfWeek) => (
                     <option key={dayOfWeek} value={dayOfWeek}>
@@ -3075,7 +3137,12 @@ export function TimetableBuilderPage() {
               </div>
               <div className="flex-shrink-0">
                 <label className="sr-only" htmlFor="addDayButton">Add day</label>
-                <button id="addDayButton" type="submit" className="btn btn-primary" disabled={actionLoading}>
+                <button
+                  id="addDayButton"
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={actionLoading || isSystemLocked}
+                >
                   Add Day
                 </button>
               </div>
@@ -3089,7 +3156,7 @@ export function TimetableBuilderPage() {
                   mode="time"
                   value={newBandStart}
                   onChange={setNewBandStart}
-                  disabled={actionLoading}
+                  disabled={actionLoading || isSystemLocked}
                 />
               </div>
               <div className="form-field">
@@ -3099,12 +3166,17 @@ export function TimetableBuilderPage() {
                   mode="time"
                   value={newBandEnd}
                   onChange={setNewBandEnd}
-                  disabled={actionLoading}
+                  disabled={actionLoading || isSystemLocked}
                 />
               </div>
               <div className="flex-shrink-0">
                 <label className="sr-only" htmlFor="addBandButton">Add time band</label>
-                <button id="addBandButton" type="submit" className="btn btn-primary" disabled={actionLoading}>
+                <button
+                  id="addBandButton"
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={actionLoading || isSystemLocked}
+                >
                   Add Time Band
                 </button>
               </div>
@@ -3120,7 +3192,7 @@ export function TimetableBuilderPage() {
                   value={blockLabel}
                   onChange={(e) => setBlockLabel(e.target.value)}
                   placeholder="e.g. L1"
-                  disabled={actionLoading}
+                  disabled={actionLoading || isSystemLocked}
                 />
               </div>
               <div className="text-sm text-gray-500">
@@ -3177,7 +3249,7 @@ export function TimetableBuilderPage() {
                             type="button"
                             className="inline-flex items-center justify-center w-6 h-6 text-sm font-bold bg-blue-500 text-white hover:bg-blue-600 rounded border-0 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                             onClick={() => void handleAddLane(day.id)}
-                            disabled={actionLoading}
+                            disabled={actionLoading || isSystemLocked}
                             title="Add lane"
                             aria-label={`Add lane for ${DAY_LABELS[day.dayOfWeek]}`}
                           >
@@ -3187,7 +3259,7 @@ export function TimetableBuilderPage() {
                             type="button"
                             className="inline-flex items-center justify-center w-6 h-6 text-sm font-bold bg-orange-500 text-white hover:bg-orange-600 rounded border-0 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                             onClick={() => void handleRemoveLane(day)}
-                            disabled={actionLoading || day.laneCount <= 1}
+                            disabled={actionLoading || isSystemLocked || day.laneCount <= 1}
                             title="Remove lane"
                             aria-label={`Remove lane for ${DAY_LABELS[day.dayOfWeek]}`}
                           >
@@ -3197,7 +3269,7 @@ export function TimetableBuilderPage() {
                             type="button"
                             className="inline-flex items-center justify-center w-6 h-6 text-lg font-bold bg-red-500 text-white hover:bg-red-600 rounded border-0 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                             onClick={() => void handleDeleteDay(day)}
-                            disabled={actionLoading}
+                            disabled={actionLoading || isSystemLocked}
                             title="Delete day"
                             aria-label={`Delete ${DAY_LABELS[day.dayOfWeek]}`}
                           >
@@ -3253,7 +3325,7 @@ export function TimetableBuilderPage() {
                               type="button"
                               className="btn btn-primary btn-sm"
                               onClick={() => void handleUpdateTimeBand(band.id)}
-                              disabled={actionLoading}
+                              disabled={actionLoading || isSystemLocked}
                             >
                               {actionLoading ? "Saving..." : "Save"}
                             </button>
@@ -3277,7 +3349,7 @@ export function TimetableBuilderPage() {
                               type="button"
                               className="inline-flex items-center justify-center w-6 h-6 text-xs text-blue-600 hover:bg-blue-50 rounded border border-blue-200 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                               onClick={() => startEditingTimeBand(band)}
-                              disabled={actionLoading}
+                              disabled={actionLoading || isSystemLocked}
                               title="Edit time band"
                               aria-label={`Edit time band ${toTimeLabel(String(band.startTime))} to ${toTimeLabel(String(band.endTime))}`}
                             >
@@ -3292,7 +3364,7 @@ export function TimetableBuilderPage() {
                               type="button"
                               className="inline-flex items-center justify-center w-6 h-6 text-xs text-red-600 hover:bg-red-50 rounded border border-red-200 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                               onClick={() => void handleDeleteTimeBand(band.id)}
-                              disabled={actionLoading}
+                              disabled={actionLoading || isSystemLocked}
                               title="Delete time band"
                               aria-label={`Delete time band ${toTimeLabel(String(band.startTime))} to ${toTimeLabel(String(band.endTime))}`}
                             >
@@ -3335,7 +3407,7 @@ export function TimetableBuilderPage() {
                                 type="button"
                                 className="w-full px-3 py-2 bg-blue-600 text-white text-xs font-semibold rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                                 onClick={() => void handleDeleteBlock(block.id)}
-                                disabled={actionLoading}
+                                disabled={actionLoading || isSystemLocked}
                                 title="Delete block"
                               >
                                 <span className="block truncate">{block.label}</span>
@@ -3347,14 +3419,20 @@ export function TimetableBuilderPage() {
 
                         const isSelecting = isCellSelected(day.id, laneIndex, bandIndex);
 
+                        const isCellReadOnly = isSystemLocked;
+
                         return (
                           <td
                             key={`${day.id}-${laneIndex}-${band.id}`}
-                            className={`border p-4 text-center cursor-pointer text-xs font-semibold text-gray-500 hover:bg-gray-100 transition-colors ${isSelecting ? "bg-blue-100 text-blue-700" : "bg-white"}`}
+                            className={`border p-4 text-center text-xs font-semibold transition-colors ${
+                              isCellReadOnly
+                                ? "cursor-not-allowed bg-gray-50 text-gray-400"
+                                : `cursor-pointer text-gray-500 hover:bg-gray-100 ${isSelecting ? "bg-blue-100 text-blue-700" : "bg-white"}`
+                            }`}
                             onMouseDown={() => handleEmptyCellMouseDown(day.id, laneIndex, bandIndex)}
                             onMouseEnter={() => handleEmptyCellMouseEnter(day.id, laneIndex, bandIndex)}
                           >
-                            <span>{isSelecting ? "Merge" : "Add"}</span>
+                            <span>{isCellReadOnly ? "Locked" : isSelecting ? "Merge" : "Add"}</span>
                           </td>
                         );
                       });

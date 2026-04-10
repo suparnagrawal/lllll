@@ -2,48 +2,73 @@ import Redis from 'ioredis';
 import logger from '../../shared/utils/logger';
 
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+const REDIS_RETRY_LOG_INTERVAL = 20;
 
 // Track Redis connection state
 export let isRedisAvailable = false;
 
+let hasLoggedUnavailable = false;
+
+function markRedisAvailable(): void {
+  if (!isRedisAvailable) {
+    logger.info('Redis connected');
+  }
+
+  isRedisAvailable = true;
+  hasLoggedUnavailable = false;
+}
+
+function markRedisUnavailable(message: string): void {
+  const wasAvailable = isRedisAvailable;
+  isRedisAvailable = false;
+
+  if (wasAvailable || !hasLoggedUnavailable) {
+    logger.warn(message);
+    hasLoggedUnavailable = true;
+  }
+}
+
 // Create Redis client with connection failure handling
 // In development, Redis is optional - the server will work without it
 export const redis = new Redis(redisUrl, {
-  maxRetriesPerRequest: 3,
+  maxRetriesPerRequest: 1,
   retryStrategy(times) {
-    if (times > 3) {
-      logger.warn('Redis connection failed after 3 retries, disabling Redis features');
-      isRedisAvailable = false;
-      // Return null to stop retrying
-      return null;
+    // Keep retrying so Redis can recover without backend restart.
+    if (times % REDIS_RETRY_LOG_INTERVAL === 0) {
+      logger.warn(
+        `Redis still unavailable after ${times} reconnect attempts; fallback behavior remains active`
+      );
     }
-    // Retry with exponential backoff
-    return Math.min(times * 200, 2000);
+
+    // Retry with bounded backoff.
+    return Math.min(times * 250, 5000);
   },
   lazyConnect: true,
 });
 
 redis.on('error', (error: NodeJS.ErrnoException) => {
-  // Only log once when Redis becomes unavailable
-  if (isRedisAvailable || error.code !== 'ECONNREFUSED') {
+  if (error.code && error.code !== 'ECONNREFUSED') {
     logger.error('Redis connection error:', error);
   }
-  isRedisAvailable = false;
+
+  markRedisUnavailable('Redis unavailable - rate limiting and caching will use fallback behavior');
 });
 
 redis.on('connect', () => {
-  logger.info('Redis connected');
-  isRedisAvailable = true;
+  markRedisAvailable();
 });
 
 redis.on('ready', () => {
-  isRedisAvailable = true;
+  markRedisAvailable();
+});
+
+redis.on('end', () => {
+  markRedisUnavailable('Redis connection closed - retrying in background');
 });
 
 // Attempt initial connection (non-blocking)
 redis.connect().catch(() => {
-  logger.warn('Redis unavailable - rate limiting and caching will use fallback behavior');
-  isRedisAvailable = false;
+  markRedisUnavailable('Redis unavailable - rate limiting and caching will use fallback behavior');
 });
 
 export const cacheKeys = {
