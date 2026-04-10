@@ -72,7 +72,13 @@ import type {
 import { useAuth } from "../auth/AuthContext";
 import { formatDateDDMMYYYY } from "../utils/datetime";
 import { DateInput } from "../components/DateInput";
-import { formatEditDiffSummary, groupOperationsByGroupId } from "./timetableEditUtils";
+import {
+  formatBookingImpactMessage,
+  formatEditDiffSummary,
+  groupOperationsByGroupId,
+  mapEditStartErrorToMessage,
+  shouldShowPruneConfirmation,
+} from "./timetableEditUtils";
 
 const DAY_OF_WEEK_OPTIONS: DayOfWeek[] = [
   "MON",
@@ -2168,7 +2174,7 @@ export function TimetableBuilderPage() {
       setCommitTargetSlotSystemId(selectedSystemId);
 
       // Check if pruning is enabled and there are bookings to prune
-      if (editPruneBookings && result.diff.bookingImpact.totalAffectedBookings > 0) {
+      if (shouldShowPruneConfirmation({ pruneEnabled: editPruneBookings, result })) {
         setPendingPruneBookingCount(result.diff.bookingImpact.totalAffectedBookings);
         setShowPruneConfirmation(true);
         setEditSessionStatus("VIEW");
@@ -2188,15 +2194,7 @@ export function TimetableBuilderPage() {
       await runInternalThenFinalizeForEdit(result.session.commitSessionId, selectedSystemId);
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : "Failed to start edit commit";
-
-      // Handle specific error codes from backend
-      if (errorMsg.includes("Version mismatch") || errorMsg.includes("Timetable updated")) {
-        setChangeError("This timetable was updated by someone else. Please reload.");
-      } else if (errorMsg.includes("No changes detected")) {
-        setChangeError("No changes detected. Edit aborted.");
-      } else {
-        setChangeError(errorMsg);
-      }
+      setChangeError(mapEditStartErrorToMessage(errorMsg));
     } finally {
       setEditStartLoading(false);
       setEditSessionStatus("VIEW");
@@ -3871,7 +3869,7 @@ export function TimetableBuilderPage() {
                   {formatEditDiffSummary(editStartResult.diff)}
                 </p>
                 <p className="text-sm text-blue-600 mt-1 font-medium">
-                  Booking Impact: {editStartResult.diff.bookingImpact.totalAffectedBookings} bookings will be affected
+                  {formatBookingImpactMessage(editStartResult.diff.bookingImpact.totalAffectedBookings)}
                 </p>
                 {editStartResult.diff.operations.length > 0 && (
                   <div className="mt-2 max-h-40 overflow-y-auto border rounded bg-white p-2">

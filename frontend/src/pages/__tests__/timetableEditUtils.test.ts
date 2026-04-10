@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatBookingImpactMessage,
   formatEditDiffSummary,
   groupOperationsByGroupId,
+  mapEditStartErrorToMessage,
+  shouldShowPruneConfirmation,
 } from "../timetableEditUtils";
 import type { EditCommitSessionStartResponse } from "../../lib/api";
 
@@ -107,5 +110,93 @@ describe("groupOperationsByGroupId", () => {
 
     expect(grouped).toHaveLength(1);
     expect(grouped[0].totalBookingsImpacted).toBe(8);
+  });
+});
+
+describe("prune confirmation flow", () => {
+  it("returns true when prune is enabled and bookings are affected", () => {
+    const result = {
+      session: {
+        commitSessionId: 1,
+        batchId: 1,
+        slotSystemId: 1,
+        status: "STARTED",
+        payloadSnapshot: "[]",
+        isFrozen: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      diff: {
+        summary: {
+          total: 1,
+          added: 1,
+          removed: 0,
+          changedSlot: 0,
+          changedVenue: 0,
+        },
+        changedLabels: ["A"],
+        operations: [],
+        affectedRows: 1,
+        unchangedRows: 0,
+        expectedVersion: 1,
+        currentVersion: 1,
+        bookingImpact: {
+          totalAffectedBookings: 12,
+          byOperation: [],
+        },
+      },
+    } as EditCommitSessionStartResponse;
+
+    expect(shouldShowPruneConfirmation({ pruneEnabled: true, result })).toBe(true);
+  });
+
+  it("returns false when no affected bookings", () => {
+    const result = {
+      diff: {
+        summary: {
+          total: 0,
+          added: 0,
+          removed: 0,
+          changedSlot: 0,
+          changedVenue: 0,
+        },
+        changedLabels: [],
+        operations: [],
+        affectedRows: 0,
+        unchangedRows: 0,
+        expectedVersion: 1,
+        currentVersion: 1,
+        bookingImpact: {
+          totalAffectedBookings: 0,
+          byOperation: [],
+        },
+      },
+    } as EditCommitSessionStartResponse;
+
+    expect(shouldShowPruneConfirmation({ pruneEnabled: true, result })).toBe(false);
+  });
+});
+
+describe("version conflict UI", () => {
+  it("maps version mismatch to user-safe reload message", () => {
+    const msg = mapEditStartErrorToMessage("Version mismatch. Expected 5, found 6");
+    expect(msg).toBe("This timetable was updated by someone else. Please reload.");
+  });
+});
+
+describe("no-change UI", () => {
+  it("maps no-change backend response to no-change UI text", () => {
+    const msg = mapEditStartErrorToMessage("No changes detected");
+    expect(msg).toBe("No changes detected. Edit aborted.");
+  });
+});
+
+describe("booking impact display", () => {
+  it("formats booking impact summary text", () => {
+    expect(formatBookingImpactMessage(12)).toBe("This change affects 12 bookings");
+  });
+
+  it("formats singular booking impact summary text", () => {
+    expect(formatBookingImpactMessage(1)).toBe("This change affects 1 booking");
   });
 });

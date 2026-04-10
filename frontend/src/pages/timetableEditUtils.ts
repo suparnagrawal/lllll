@@ -42,3 +42,30 @@ export function groupOperationsByGroupId(
     return b.totalBookingsImpacted - a.totalBookingsImpacted;
   });
 }
+
+export function shouldShowPruneConfirmation(input: {
+  pruneEnabled: boolean;
+  result: EditCommitSessionStartResponse | null;
+}): boolean {
+  return (
+    input.pruneEnabled === true &&
+    input.result !== null &&
+    input.result.diff.bookingImpact.totalAffectedBookings > 0
+  );
+}
+
+export function mapEditStartErrorToMessage(message: string): string {
+  if (message.includes("Version mismatch") || message.includes("Timetable updated")) {
+    return "This timetable was updated by someone else. Please reload.";
+  }
+
+  if (message.includes("No changes detected")) {
+    return "No changes detected. Edit aborted.";
+  }
+
+  return message;
+}
+
+export function formatBookingImpactMessage(totalAffectedBookings: number): string {
+  return `This change affects ${totalAffectedBookings} booking${totalAffectedBookings === 1 ? "" : "s"}`;
+}
