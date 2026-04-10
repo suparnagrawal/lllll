@@ -507,7 +507,55 @@ export async function applySlotChange(
   if (!currentBooking) {
     return { success: false, error: "Current booking no longer exists" };
   }
+
+  const isLinked = await isBookingLinkedToCourse(
+    request.currentBookingId,
+    request.courseId,
+    executor,
+  );
+
+  if (!isLinked) {
+    return {
+      success: false,
+      error: "Current booking is no longer linked to the requested course",
+    };
+  }
+
   const targetRoomId = request.proposedRoomId ?? currentBooking.roomId;
+
+  const roomRows = await executor
+    .select({ id: rooms.id })
+    .from(rooms)
+    .where(eq(rooms.id, targetRoomId))
+    .limit(1);
+
+  if (!roomRows[0]) {
+    return { success: false, error: "Target room no longer exists" };
+  }
+
+  const capacityCheck = await checkRoomCapacity(targetRoomId, request.courseId, executor);
+
+  if (!capacityCheck.sufficient) {
+    return {
+      success: false,
+      error: `Room capacity (${capacityCheck.roomCapacity}) is insufficient for enrolled students (${capacityCheck.enrolledCount})`,
+    };
+  }
+
+  const studentConflicts = await checkStudentConflicts(
+    request.courseId,
+    new Date(request.proposedStart),
+    new Date(request.proposedEnd),
+    request.currentBookingId,
+    executor,
+  );
+
+  if (studentConflicts.enrollmentDataAvailable && studentConflicts.hasConflicts) {
+    return {
+      success: false,
+      error: `Student schedule conflict detected for ${studentConflicts.conflicts.length} enrollment(s)`,
+    };
+  }
 
   // Validate one more time before applying
   const hasOverlap = await hasBookingOverlap(
@@ -548,14 +596,24 @@ export async function applySlotChange(
   }
 
   // Update request status
-  await executor
+  const updatedRequestRows = await executor
     .update(slotChangeRequests)
     .set({
       status: "APPROVED",
       reviewedBy: approvedBy,
       updatedAt: new Date(),
     })
-    .where(eq(slotChangeRequests.id, requestId));
+    .where(
+      and(
+        eq(slotChangeRequests.id, requestId),
+        eq(slotChangeRequests.status, "PENDING"),
+      ),
+    )
+    .returning({ id: slotChangeRequests.id });
+
+  if (updatedRequestRows.length === 0) {
+    return { success: false, error: "Slot change request is no longer pending" };
+  }
 
   return { success: true, newBookingId: updatedBooking.id };
 }

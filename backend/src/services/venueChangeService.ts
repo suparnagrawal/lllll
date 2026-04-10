@@ -440,6 +440,42 @@ export async function applyVenueChange(
     return { success: false, error: "Current booking no longer exists" };
   }
 
+  const isLinked = await isBookingLinkedToCourse(
+    request.currentBookingId,
+    request.courseId,
+    executor,
+  );
+
+  if (!isLinked) {
+    return {
+      success: false,
+      error: "Current booking is no longer linked to the requested course",
+    };
+  }
+
+  const proposedRoom = await getRoomWithBuilding(request.proposedRoomId, executor);
+
+  if (!proposedRoom) {
+    return { success: false, error: "Proposed room no longer exists" };
+  }
+
+  if (currentBooking.roomId === request.proposedRoomId) {
+    return { success: false, error: "Proposed room is the same as current room" };
+  }
+
+  const capacityCheck = await checkRoomCapacity(
+    request.proposedRoomId,
+    request.courseId,
+    executor,
+  );
+
+  if (!capacityCheck.sufficient) {
+    return {
+      success: false,
+      error: `Room capacity (${capacityCheck.roomCapacity}) is insufficient for enrolled students (${capacityCheck.enrolledCount})`,
+    };
+  }
+
   // Validate one more time before applying
   const hasOverlap = await hasBookingOverlap(
     request.proposedRoomId,
@@ -476,14 +512,24 @@ export async function applyVenueChange(
   }
 
   // Update request status
-  await executor
+  const updatedRequestRows = await executor
     .update(venueChangeRequests)
     .set({
       status: "APPROVED",
       reviewedBy: approvedBy,
       updatedAt: new Date(),
     })
-    .where(eq(venueChangeRequests.id, requestId));
+    .where(
+      and(
+        eq(venueChangeRequests.id, requestId),
+        eq(venueChangeRequests.status, "PENDING"),
+      ),
+    )
+    .returning({ id: venueChangeRequests.id });
+
+  if (updatedRequestRows.length === 0) {
+    return { success: false, error: "Venue change request is no longer pending" };
+  }
 
   return { success: true, newBookingId: updatedBooking.id };
 }
