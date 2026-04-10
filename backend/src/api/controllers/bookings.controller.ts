@@ -1,9 +1,9 @@
 import { Request, Response } from 'express';
 import {
-  type BulkBookingItemInput,
-  type CreateBookingInput,
   createBooking,
   createBookingsBulk,
+  type BulkBookingItemInput,
+  type CreateBookingInput,
   updateBooking,
 } from '../../services/bookingService';
 import { db } from '../../db';
@@ -15,13 +15,15 @@ import {
 } from '../../services/staffBuildingScope';
 import { NotFoundError, ForbiddenError, ValidationError } from '../../domain/errors/AppError';
 
-type BulkCreateRequestBody = {
-  items: BulkBookingItemInput[];
+type BookingCreateRequestBody = CreateBookingInput & {
+  approvedBy?: number;
+  approvedAt?: string | Date;
 };
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
+type BookingBulkRequestItem = BulkBookingItemInput & {
+  approvedBy?: number;
+  approvedAt?: string | Date;
+};
 
 export class BookingsController {
   async list(req: Request, res: Response): Promise<void> {
@@ -146,7 +148,10 @@ export class BookingsController {
   }
 
   async create(req: Request, res: Response): Promise<void> {
-    const input: CreateBookingInput = { ...(req.body as CreateBookingInput) };
+    const input: BookingCreateRequestBody =
+      req.body && typeof req.body === 'object'
+        ? { ...(req.body as BookingCreateRequestBody) }
+        : ({} as BookingCreateRequestBody);
 
     if (req.user?.role === 'STAFF') {
       const roomId = Number(input.roomId);
@@ -160,7 +165,7 @@ export class BookingsController {
       }
     }
 
-    if (req.user?.id !== undefined) {
+    if (input && typeof input === 'object' && req.user?.id !== undefined) {
       if (input.approvedBy === undefined) {
         input.approvedBy = req.user.id;
       }
@@ -280,8 +285,7 @@ export class BookingsController {
   }
 
   async bulkCreate(req: Request, res: Response): Promise<void> {
-    const body = req.body as BulkCreateRequestBody;
-    const items = body.items;
+    const items = req.body?.items as BookingBulkRequestItem[] | undefined;
 
     if (!Array.isArray(items)) {
       throw new ValidationError('items must be an array');
@@ -302,7 +306,7 @@ export class BookingsController {
       const roomIds = Array.from(
         new Set(
           items
-            .map((item) => Number(item?.roomId))
+            .map((item) => Number(item.roomId))
             .filter((roomId) => Number.isInteger(roomId) && roomId > 0),
         ),
       );
@@ -330,18 +334,16 @@ export class BookingsController {
       }
     }
 
-    const userId = req.user?.id;
-
-    const stampedItems: BulkBookingItemInput[] =
-      userId !== undefined
+    const stampedItems =
+      req.user?.id !== undefined
         ? items.map((item) => {
-            if (!isObject(item)) {
+            if (!item || typeof item !== 'object') {
               return item;
             }
 
             return {
               ...item,
-              approvedBy: item.approvedBy !== undefined ? item.approvedBy : userId,
+              approvedBy: item.approvedBy !== undefined ? item.approvedBy : req.user?.id,
               approvedAt: item.approvedAt !== undefined ? item.approvedAt : new Date(),
             };
           })

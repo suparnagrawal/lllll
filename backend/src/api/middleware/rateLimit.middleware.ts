@@ -1,33 +1,13 @@
 import rateLimit from 'express-rate-limit';
-import RedisStore from 'rate-limit-redis';
-import type { RedisReply } from 'rate-limit-redis';
-import type { SendCommandFn } from 'rate-limit-redis';
+import RedisStore, { type RedisReply, type SendCommandFn } from 'rate-limit-redis';
 import type { NextFunction, Request, Response } from 'express';
 import { redis, isRedisAvailable } from '../../data/cache/redis.client';
 
 type RateLimitOptions = NonNullable<Parameters<typeof rateLimit>[0]>;
 
-function toRedisReply(value: unknown): RedisReply {
-  if (
-    typeof value === 'string' ||
-    typeof value === 'number' ||
-    typeof value === 'boolean'
-  ) {
-    return value;
-  }
-
-  if (Array.isArray(value)) {
-    return value.map((entry) =>
-      typeof entry === 'string' ||
-      typeof entry === 'number' ||
-      typeof entry === 'boolean'
-        ? entry
-        : String(entry),
-    );
-  }
-
-  return String(value);
-}
+const sendRedisCommand: SendCommandFn = (command: string, ...args: string[]) => {
+  return redis.call(command, ...args).then((result) => result as RedisReply);
+};
 
 function createRateLimiter(input: {
   prefix: string;
@@ -55,25 +35,11 @@ function createRateLimiter(input: {
   // Return a middleware that conditionally uses Redis or memory store
   return (req: Request, res: Response, next: NextFunction) => {
     if (isRedisAvailable) {
-      const sendCommand: SendCommandFn = async (...commandArgs) => {
-        if (commandArgs.length === 0) {
-          throw new Error('Redis command is required');
-        }
-
-        const [command, ...args] = commandArgs;
-        if (command === undefined) {
-          throw new Error('Redis command is required');
-        }
-
-        const result = await redis.call(command, ...args);
-        return toRedisReply(result);
-      };
-
       // Use Redis store when available
       const redisLimiter = rateLimit({
         ...baseConfig,
         store: new RedisStore({
-          sendCommand,
+          sendCommand: sendRedisCommand,
           prefix: input.prefix,
         }),
       });
