@@ -8,13 +8,18 @@ const dateTimeString = z
       message: 'Invalid datetime value'
     })
   )
-  .transform((d) => d.toISOString());
+  .transform((d) => {
+    if (d instanceof Date) {
+      return d.toISOString();
+    }
+    return new Date(d as any).toISOString();
+  });
 
 export const createBookingSchema = z.object({
   roomId: z.number().int().positive('roomId must be a positive integer'),
-  courseId: z.number().int().positive('courseId must be a positive integer').optional(),
   startAt: dateTimeString,
   endAt: dateTimeString,
+  courseId: z.number().int().positive('courseId must be a positive integer').optional(),
   metadata: z.record(z.any()).optional(),
 }).refine((data) => {
   const start = new Date(data.startAt);
@@ -75,9 +80,9 @@ export const bulkCreateBookingSchema = z.object({
   items: z.array(
     z.object({
       roomId: z.number().int().positive('roomId must be a positive integer'),
-      courseId: z.number().int().positive('courseId must be a positive integer').optional(),
       startAt: dateTimeString,
       endAt: dateTimeString,
+      courseId: z.number().int().positive('courseId must be a positive integer').optional(),
       metadata: z.record(z.any()).optional(),
       clientRowId: z.string().optional(),
     }).refine((data) => {
