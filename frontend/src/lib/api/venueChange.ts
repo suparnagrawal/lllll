@@ -47,3 +47,11 @@ export async function rejectVenueChangeRequest(
     body: JSON.stringify({ reviewNote }),
   });
 }
+
+export async function cancelVenueChangeRequest(
+  id: number
+): Promise<ChangeRequestActionResponse> {
+  return request<ChangeRequestActionResponse>(`/venue-change-requests/${id}/cancel`, {
+    method: "POST",
+  });
+}

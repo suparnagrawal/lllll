@@ -47,3 +47,11 @@ export async function rejectSlotChangeRequest(
     body: JSON.stringify({ reviewNote }),
   });
 }
+
+export async function cancelSlotChangeRequest(
+  id: number
+): Promise<ChangeRequestActionResponse> {
+  return request<ChangeRequestActionResponse>(`/slot-change-requests/${id}/cancel`, {
+    method: "POST",
+  });
+}

@@ -16,6 +16,7 @@ import {
 } from "../components/ui/select";
 import {
   useApproveSlotChangeRequest,
+  useCancelSlotChangeRequest,
   useCreateSlotChangeRequest,
   useRejectSlotChangeRequest,
   useSlotChangeOptions,
@@ -95,6 +96,7 @@ export default function SlotChangePage() {
   const createMutation = useCreateSlotChangeRequest();
   const approveMutation = useApproveSlotChangeRequest();
   const rejectMutation = useRejectSlotChangeRequest();
+  const cancelMutation = useCancelSlotChangeRequest();
 
   const courseOptions = options?.courses ?? [];
   const bookingOptions = options?.bookings ?? [];
@@ -196,6 +198,16 @@ export default function SlotChangePage() {
       await rejectMutation.mutateAsync({ id: requestId, reviewNote: note });
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "Failed to reject request");
+    }
+  };
+
+  const handleCancel = async (requestId: number) => {
+    setActionError(null);
+
+    try {
+      await cancelMutation.mutateAsync(requestId);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Failed to cancel request");
     }
   };
 
@@ -348,6 +360,7 @@ export default function SlotChangePage() {
                 : currentRoomLabel;
               const reviewNote = reviewNotes[request.id] ?? "";
               const isPending = request.status === "PENDING";
+              const canCancel = user?.role === "FACULTY" && request.requestedBy === user.id && isPending;
 
               return (
                 <div key={request.id} className="rounded-lg border p-4 space-y-3">
@@ -381,7 +394,7 @@ export default function SlotChangePage() {
                         <Button
                           type="button"
                           onClick={() => void handleApprove(request.id)}
-                          disabled={approveMutation.isPending || rejectMutation.isPending}
+                          disabled={approveMutation.isPending || rejectMutation.isPending || cancelMutation.isPending}
                         >
                           Approve
                         </Button>
@@ -389,11 +402,24 @@ export default function SlotChangePage() {
                           type="button"
                           variant="destructive"
                           onClick={() => void handleReject(request.id)}
-                          disabled={approveMutation.isPending || rejectMutation.isPending}
+                          disabled={approveMutation.isPending || rejectMutation.isPending || cancelMutation.isPending}
                         >
                           Reject
                         </Button>
                       </div>
+                    </div>
+                  )}
+
+                  {canCancel && (
+                    <div className="flex justify-end">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => void handleCancel(request.id)}
+                        disabled={approveMutation.isPending || rejectMutation.isPending || cancelMutation.isPending}
+                      >
+                        {cancelMutation.isPending ? "Cancelling..." : "Cancel Request"}
+                      </Button>
                     </div>
                   )}
                 </div>

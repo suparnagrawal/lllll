@@ -55,3 +55,14 @@ export function useRejectVenueChangeRequest() {
     },
   });
 }
+
+export function useCancelVenueChangeRequest() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: number) => venueChangeApi.cancelVenueChangeRequest(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["venue-change-requests"] });
+    },
+  });
+}

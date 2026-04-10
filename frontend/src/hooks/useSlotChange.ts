@@ -55,3 +55,14 @@ export function useRejectSlotChangeRequest() {
     },
   });
 }
+
+export function useCancelSlotChangeRequest() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: number) => slotChangeApi.cancelSlotChangeRequest(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["slot-change-requests"] });
+    },
+  });
+}

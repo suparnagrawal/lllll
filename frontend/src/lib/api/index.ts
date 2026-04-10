@@ -179,6 +179,7 @@ export {
   createSlotChangeRequest,
   approveSlotChangeRequest,
   rejectSlotChangeRequest,
+  cancelSlotChangeRequest,
 } from "./slotChange";
 
 // Venue change endpoints
@@ -188,6 +189,7 @@ export {
   createVenueChangeRequest,
   approveVenueChangeRequest,
   rejectVenueChangeRequest,
+  cancelVenueChangeRequest,
 } from "./venueChange";
 
 // Notifications endpoints
