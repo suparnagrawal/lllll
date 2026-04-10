@@ -1,6 +1,6 @@
 import { and, eq, gt, lt, ne } from "drizzle-orm";
 import { db } from "../db";
-import { bookingCourseLink, bookings, courses, rooms } from "../db/schema";
+import { bookingCourseLink, bookings, courseEnrollments, courses, rooms } from "../db/schema";
 
 type DbExecutor = Pick<typeof db, "select" | "insert" | "update" | "delete">;
 
@@ -25,7 +25,7 @@ export type BookingSourceMetadata = {
   sourceRef?: string;
   approvedBy?: number;
   approvedAt?: string | Date;
-  auxiliaryData?: Record<string, string>;
+  auxiliaryData?: Record<string, unknown>;
   courseId?: number;
 };
 
@@ -35,6 +35,11 @@ export type CreateBookingInput = {
   endAt: string | Date;
   requestId?: number | null;
   courseId?: number | null;
+  source?: BookingSource;
+  sourceRef?: string;
+  approvedBy?: number;
+  approvedAt?: string | Date;
+  auxiliaryData?: Record<string, unknown>;
   metadata?: BookingSourceMetadata;
 };
 
@@ -90,6 +95,13 @@ export type BulkBookingItemInput = {
   roomId: unknown;
   startAt: unknown;
   endAt: unknown;
+  requestId?: unknown;
+  courseId?: unknown;
+  source?: unknown;
+  sourceRef?: unknown;
+  approvedBy?: unknown;
+  approvedAt?: unknown;
+  auxiliaryData?: unknown;
   clientRowId?: string;
   metadata?: BookingSourceMetadata;
   [key: string]: unknown;
@@ -152,6 +164,8 @@ export function assertNoSlotFieldsInPayload(input: unknown) {
 function normalizeCreateInput(raw: CreateBookingInput | BulkBookingItemInput) {
   assertNoSlotFieldsInPayload(raw);
 
+  const typedRaw = raw as CreateBookingInput;
+
   const parsedRoomId = Number(raw.roomId);
   if (!Number.isInteger(parsedRoomId) || parsedRoomId <= 0) {
     throw createBookingServiceError(400, "INVALID_ROOM_ID", "Invalid roomId");
@@ -197,7 +211,7 @@ function normalizeCreateInput(raw: CreateBookingInput | BulkBookingItemInput) {
     throw createBookingServiceError(400, "INVALID_REQUEST_ID", "Invalid requestId");
   }
 
-  const sourceRaw = (raw as CreateBookingInput).metadata?.source;
+  const sourceRaw = typedRaw.metadata?.source ?? typedRaw.source;
   const source: BookingSource = sourceRaw ?? "MANUAL_REQUEST";
 
   if (
@@ -209,13 +223,13 @@ function normalizeCreateInput(raw: CreateBookingInput | BulkBookingItemInput) {
     throw createBookingServiceError(400, "INVALID_SOURCE", "Invalid booking source");
   }
 
-  const sourceRefRaw = (raw as CreateBookingInput).metadata?.sourceRef;
+  const sourceRefRaw = typedRaw.metadata?.sourceRef ?? typedRaw.sourceRef;
   const sourceRef =
     typeof sourceRefRaw === "string" && sourceRefRaw.trim()
       ? sourceRefRaw.trim()
       : null;
 
-  const approvedByRaw = (raw as CreateBookingInput).metadata?.approvedBy;
+  const approvedByRaw = typedRaw.metadata?.approvedBy ?? typedRaw.approvedBy;
   const approvedBy =
     approvedByRaw === undefined || approvedByRaw === null
       ? null
@@ -228,7 +242,7 @@ function normalizeCreateInput(raw: CreateBookingInput | BulkBookingItemInput) {
     throw createBookingServiceError(400, "INVALID_APPROVER", "Invalid approvedBy");
   }
 
-  const approvedAtRaw = (raw as CreateBookingInput).metadata?.approvedAt;
+  const approvedAtRaw = typedRaw.metadata?.approvedAt ?? typedRaw.approvedAt;
   const approvedAtCandidate =
     approvedAtRaw === undefined || approvedAtRaw === null || approvedAtRaw === ""
       ? null
@@ -240,21 +254,29 @@ function normalizeCreateInput(raw: CreateBookingInput | BulkBookingItemInput) {
 
   const approvedAt = approvedBy !== null ? approvedAtCandidate ?? new Date() : null;
 
-  const courseIdRaw: unknown =
-    (raw as { metadata?: { courseId?: unknown }; courseId?: unknown }).metadata
-      ?.courseId ??
-    (raw as { courseId?: unknown }).courseId;
+  const courseIdRaw = typedRaw.metadata?.courseId ?? typedRaw.courseId;
 
   const courseId =
     courseIdRaw === undefined ||
-    courseIdRaw === null ||
-    courseIdRaw === ""
+    courseIdRaw === null
       ? null
       : Number(courseIdRaw);
 
   if (courseId !== null && (!Number.isInteger(courseId) || courseId <= 0)) {
     throw createBookingServiceError(400, "INVALID_COURSE_ID", "Invalid courseId");
   }
+
+  const metadataAuxiliaryData =
+    typedRaw.metadata?.auxiliaryData && typeof typedRaw.metadata.auxiliaryData === "object"
+      ? typedRaw.metadata.auxiliaryData
+      : undefined;
+
+  const rootAuxiliaryData =
+    typedRaw.auxiliaryData && typeof typedRaw.auxiliaryData === "object"
+      ? typedRaw.auxiliaryData
+      : undefined;
+
+  const auxiliaryData = metadataAuxiliaryData ?? rootAuxiliaryData;
 
   return {
     roomId: parsedRoomId,
@@ -266,7 +288,48 @@ function normalizeCreateInput(raw: CreateBookingInput | BulkBookingItemInput) {
     source,
     sourceRef,
     courseId,
+    auxiliaryData,
   };
+}
+
+function readBooleanLike(value: unknown): boolean | null {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+
+  if (normalized === "true" || normalized === "1" || normalized === "yes") {
+    return true;
+  }
+
+  if (normalized === "false" || normalized === "0" || normalized === "no") {
+    return false;
+  }
+
+  return null;
+}
+
+function hasRequiredFlag(
+  auxiliaryData: Record<string, unknown> | undefined,
+  keys: string[],
+): boolean {
+  if (!auxiliaryData) {
+    return false;
+  }
+
+  for (const key of keys) {
+    const parsed = readBooleanLike(auxiliaryData[key]);
+    if (parsed === true) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 async function ensureRoomExists(roomId: number, executor: DbExecutor) {
@@ -278,6 +341,84 @@ async function ensureRoomExists(roomId: number, executor: DbExecutor) {
 
   if (row.length === 0) {
     throw createBookingServiceError(404, "ROOM_NOT_FOUND", "Room not found");
+  }
+}
+
+async function ensureRoomCanHostBooking(
+  roomId: number,
+  courseId: number | null,
+  auxiliaryData: Record<string, unknown> | undefined,
+  executor: DbExecutor,
+) {
+  const roomRows = await executor
+    .select({
+      id: rooms.id,
+      capacity: rooms.capacity,
+      hasProjector: rooms.hasProjector,
+      hasMic: rooms.hasMic,
+      accessible: rooms.accessible,
+    })
+    .from(rooms)
+    .where(eq(rooms.id, roomId))
+    .limit(1);
+
+  const room = roomRows[0];
+
+  if (!room) {
+    throw createBookingServiceError(404, "ROOM_NOT_FOUND", "Room not found");
+  }
+
+  if (courseId !== null && room.capacity !== null) {
+    const enrollmentRows = await executor
+      .select({ studentId: courseEnrollments.studentId })
+      .from(courseEnrollments)
+      .where(eq(courseEnrollments.courseId, courseId));
+
+    if (enrollmentRows.length > room.capacity) {
+      throw createBookingServiceError(
+        400,
+        "ROOM_CAPACITY_INSUFFICIENT",
+        `Room capacity (${room.capacity}) is insufficient for enrolled students (${enrollmentRows.length})`,
+      );
+    }
+  }
+
+  const requiredProjector = hasRequiredFlag(auxiliaryData, [
+    "requiresProjector",
+    "projectorRequired",
+    "needsProjector",
+  ]);
+  const requiredMic = hasRequiredFlag(auxiliaryData, [
+    "requiresMic",
+    "micRequired",
+    "needsMic",
+  ]);
+  const requiredAccessible = hasRequiredFlag(auxiliaryData, [
+    "requiresAccessible",
+    "accessibilityRequired",
+    "needsAccessible",
+  ]);
+
+  const missingFeatures: string[] = [];
+
+  if (requiredProjector && !room.hasProjector) {
+    missingFeatures.push("projector");
+  }
+
+  if (requiredMic && !room.hasMic) {
+    missingFeatures.push("microphone");
+  }
+
+  if (requiredAccessible && !room.accessible) {
+    missingFeatures.push("accessibility");
+  }
+
+  if (missingFeatures.length > 0) {
+    throw createBookingServiceError(
+      400,
+      "ROOM_EQUIPMENT_MISMATCH",
+      `Room is missing required features: ${missingFeatures.join(", ")}`,
+    );
   }
 }
 
@@ -326,11 +467,16 @@ export async function createBooking(
   try {
     const input = normalizeCreateInput(raw);
 
-    await ensureRoomExists(input.roomId, executor);
-
     if (input.courseId !== null) {
       await ensureCourseExists(input.courseId, executor);
     }
+
+    await ensureRoomCanHostBooking(
+      input.roomId,
+      input.courseId,
+      input.auxiliaryData,
+      executor,
+    );
 
     const overlap = await hasBookingOverlap(
       input.roomId,
@@ -587,6 +733,7 @@ export async function updateBooking(
 
 export async function createBookingsBulk(
   items: BulkBookingItemInput[],
+  executor: DbExecutor = db,
 ): Promise<BulkBookingResult> {
   const results: BulkBookingItemResult[] = [];
 
@@ -596,12 +743,33 @@ export async function createBookingsBulk(
       continue;
     }
 
-    const result = await createBooking({
-      roomId: item.roomId as number,
-      startAt: item.startAt as string,
-      endAt: item.endAt as string,
-      ...(item.metadata ? { metadata: item.metadata } : {}),
-    });
+    const metadata: BookingSourceMetadata = {
+      ...(item.metadata ?? {}),
+      ...(item.source !== undefined ? { source: item.source as BookingSource } : {}),
+      ...(item.sourceRef !== undefined ? { sourceRef: item.sourceRef as string } : {}),
+      ...(item.approvedBy !== undefined ? { approvedBy: item.approvedBy as number } : {}),
+      ...(item.approvedAt !== undefined
+        ? { approvedAt: item.approvedAt as string | Date }
+        : {}),
+      ...(item.auxiliaryData !== undefined
+        ? { auxiliaryData: item.auxiliaryData as Record<string, unknown> }
+        : {}),
+      ...(item.courseId !== undefined ? { courseId: item.courseId as number } : {}),
+    };
+
+    const result = await createBooking(
+      {
+        roomId: item.roomId as number,
+        startAt: item.startAt as string,
+        endAt: item.endAt as string,
+        ...(item.requestId !== undefined
+          ? { requestId: item.requestId as number | null }
+          : {}),
+        ...(item.courseId !== undefined ? { courseId: item.courseId as number } : {}),
+        ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
+      },
+      executor,
+    );
 
     const rowResult: BulkBookingItemResult = {
       index,
