@@ -43,6 +43,8 @@ export const queryConfigs = {
   // Volatile - bookings can change, but user-initiated
   bookings: QUERY_CONFIG_VOLATILE,
   bookingRequests: QUERY_CONFIG_VOLATILE,
+  slotChangeRequests: QUERY_CONFIG_VOLATILE,
+  venueChangeRequests: QUERY_CONFIG_VOLATILE,
 
   // Volatile - rooms list can be modified by admins
   rooms: QUERY_CONFIG_VOLATILE,
@@ -54,6 +56,8 @@ export const queryConfigs = {
   // Stable - user data changes only when profile is updated
   profile: QUERY_CONFIG_STABLE,
   users: QUERY_CONFIG_STABLE,
+  slotChangeOptions: QUERY_CONFIG_STABLE,
+  venueChangeOptions: QUERY_CONFIG_STABLE,
 
   // Static - event types and slot systems rarely change
   slotSystems: QUERY_CONFIG_STATIC,

@@ -16,6 +16,8 @@ const BookingRequestsPage = lazy(() => import('../pages/BookingRequestsPage'));
 // eslint-disable-next-line react-refresh/only-export-components
 const AvailabilityPage = lazy(() => import('../pages/AvailabilityPage'));
 // eslint-disable-next-line react-refresh/only-export-components
+const SlotChangePage = lazy(() => import('../pages/SlotChangePage'));
+// eslint-disable-next-line react-refresh/only-export-components
 const UsersPage = lazy(() => import('../pages/UsersPage'));
 // eslint-disable-next-line react-refresh/only-export-components
 const TimetableBuilderPage = lazy(() => import('../pages/TimetableBuilderPage'));
@@ -81,6 +83,17 @@ export const router = createBrowserRouter([
           { 
             path: 'requests', 
             element: <Suspense fallback={<PageLoader />}><BookingRequestsPage /></Suspense> 
+          },
+
+          // Accessible to FACULTY, STAFF, ADMIN
+          {
+            element: <RequireRole roles={['FACULTY', 'STAFF', 'ADMIN']} />,
+            children: [
+              {
+                path: 'slot-change',
+                element: <Suspense fallback={<PageLoader />}><SlotChangePage /></Suspense>,
+              },
+            ],
           },
 
           // ADMIN only

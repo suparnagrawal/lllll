@@ -19,6 +19,22 @@ export type {
   BookingSource,
   BookingRequest,
   Booking,
+  ChangeRequestStatus,
+  ChangeRequestCourseOption,
+  ChangeRequestBookingOption,
+  ChangeRequestRoomOption,
+  ChangeRequestRequester,
+  SlotChangeRequestRecord,
+  VenueChangeRequestRecord,
+  SlotChangeRequestListItem,
+  VenueChangeRequestListItem,
+  SlotChangeOptionsResponse,
+  VenueChangeOptionsResponse,
+  SlotChangeCreateInput,
+  VenueChangeCreateInput,
+  SlotChangeCreateResponse,
+  VenueChangeCreateResponse,
+  ChangeRequestActionResponse,
   NotificationType,
   AppNotification,
   NotificationsResponse,
@@ -155,6 +171,15 @@ export {
   rejectBookingRequest,
   cancelBookingRequest,
 } from "./booking-requests";
+
+// Slot change endpoints
+export {
+  getSlotChangeOptions,
+  getSlotChangeRequests,
+  createSlotChangeRequest,
+  approveSlotChangeRequest,
+  rejectSlotChangeRequest,
+} from "./slotChange";
 
 // Notifications endpoints
 export {

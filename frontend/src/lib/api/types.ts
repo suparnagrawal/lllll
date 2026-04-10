@@ -140,6 +140,128 @@ export type Booking = {
   sourceRef: string | null;
 };
 
+export type ChangeRequestStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
+
+export type ChangeRequestCourseOption = {
+  id: number;
+  code: string;
+  name: string;
+};
+
+export type ChangeRequestBookingOption = {
+  id: number;
+  roomId: number;
+  startAt: string;
+  endAt: string;
+  courseId: number;
+  courseCode: string;
+  courseName: string;
+  roomName: string;
+  buildingName: string;
+};
+
+export type ChangeRequestRoomOption = {
+  id: number;
+  name: string;
+  buildingId: number;
+  buildingName: string;
+};
+
+export type ChangeRequestRequester = {
+  id: number;
+  name: string;
+  email: string;
+};
+
+export type SlotChangeRequestRecord = {
+  id: number;
+  requestedBy: number;
+  courseId: number;
+  currentBookingId: number;
+  proposedRoomId: number | null;
+  proposedStart: string;
+  proposedEnd: string;
+  reason: string;
+  status: ChangeRequestStatus;
+  reviewedBy: number | null;
+  reviewNote: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type VenueChangeRequestRecord = {
+  id: number;
+  requestedBy: number;
+  courseId: number;
+  currentBookingId: number;
+  proposedRoomId: number;
+  reason: string;
+  status: ChangeRequestStatus;
+  reviewedBy: number | null;
+  reviewNote: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SlotChangeRequestListItem = {
+  request: SlotChangeRequestRecord;
+  course: ChangeRequestCourseOption;
+  currentBooking: Booking;
+  proposedRoom: ChangeRequestRoomOption | null;
+  requestedByUser: ChangeRequestRequester;
+};
+
+export type VenueChangeRequestListItem = {
+  request: VenueChangeRequestRecord;
+  course: ChangeRequestCourseOption;
+  currentBooking: Booking;
+  proposedRoom: ChangeRequestRoomOption;
+  requestedByUser: ChangeRequestRequester;
+};
+
+export type SlotChangeOptionsResponse = {
+  courses: ChangeRequestCourseOption[];
+  bookings: ChangeRequestBookingOption[];
+  rooms: ChangeRequestRoomOption[];
+};
+
+export type VenueChangeOptionsResponse = {
+  courses: ChangeRequestCourseOption[];
+  bookings: ChangeRequestBookingOption[];
+  rooms: ChangeRequestRoomOption[];
+};
+
+export type SlotChangeCreateInput = {
+  courseId: number;
+  currentBookingId: number;
+  proposedRoomId?: number;
+  proposedStart: string;
+  proposedEnd: string;
+  reason: string;
+};
+
+export type VenueChangeCreateInput = {
+  courseId: number;
+  currentBookingId: number;
+  proposedRoomId: number;
+  reason: string;
+};
+
+export type SlotChangeCreateResponse = {
+  request: SlotChangeRequestRecord;
+  warnings: string[];
+};
+
+export type VenueChangeCreateResponse = {
+  request: VenueChangeRequestRecord;
+  warnings: string[];
+};
+
+export type ChangeRequestActionResponse = {
+  success: boolean;
+  bookingId?: number;
+};
+
 export type BookingDetail = {
   id: number;
   startAt: string;
