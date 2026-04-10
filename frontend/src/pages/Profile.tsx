@@ -27,19 +27,24 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Badge } from "../components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "../components/ui/table";
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "../components/ui/card";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { useUpdateProfile, useDeleteAccount, useUserProfile } from "../hooks/useProfile";
+import {
+  useUpdateProfile,
+  useDeleteAccount,
+  useUserProfile,
+  useUserSessions,
+  useSignOutOtherSessions,
+  useUserActivityLog,
+} from "../hooks/useProfile";
 import { request } from "../lib/api/client";
 import { LogOut, Lock, Download, Trash2 } from "lucide-react";
 
@@ -50,56 +55,7 @@ const updateProfileSchema = z.object({
 
 type UpdateProfileFormData = z.infer<typeof updateProfileSchema>;
 
-// Mock data for activity log
-const mockActivityLog = [
-  {
-    id: "1",
-    type: "LOGIN" as const,
-    title: "Login",
-    description: "Successfully logged in to the system",
-    timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-    metadata: {
-      ipAddress: "192.168.1.1",
-      device: "Chrome on Windows",
-    },
-  },
-  {
-    id: "2",
-    type: "LOGIN" as const,
-    title: "Login",
-    description: "Successfully logged in to the system",
-    timestamp: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
-    metadata: {
-      ipAddress: "192.168.1.1",
-      device: "Chrome on Windows",
-    },
-  },
-  {
-    id: "3",
-    type: "ACTION" as const,
-    title: "Profile Updated",
-    description: "Updated profile information",
-    timestamp: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
-  },
-];
-
-// Mock sessions
-const mockSessions = [
-  {
-    id: "current",
-    deviceName: "Chrome - Windows",
-    lastAccessedAt: new Date().toISOString(),
-    ipAddress: "192.168.1.1",
-    isCurrent: true,
-  },
-  {
-    id: "mobile",
-    deviceName: "Chrome - iPhone",
-    lastAccessedAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-    ipAddress: "203.0.113.45",
-    isCurrent: false,
-  },
-];
+// Disclaimers for incomplete features
 
 function getRoleBadgeColor(role: string) {
   const colors: Record<string, string> = {
@@ -320,7 +276,6 @@ function ProfileSection() {
 function SettingsSection() {
   const { user } = useAuth();
   const [emailNotifications, setEmailNotifications] = useState(true);
-  const [theme, setTheme] = useState<"light" | "dark">("light");
 
   if (!user) {
     return null;
@@ -351,36 +306,9 @@ function SettingsSection() {
               <span className="ml-2 text-sm">{emailNotifications ? "Enabled" : "Disabled"}</span>
             </label>
           </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Theme (Experimental)</CardTitle>
-          <CardDescription>Choose your preferred appearance</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex gap-4">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="radio"
-                value="light"
-                checked={theme === "light"}
-                onChange={(e) => setTheme(e.target.value as "light" | "dark")}
-              />
-              <span className="text-sm">Light</span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="radio"
-                value="dark"
-                checked={theme === "dark"}
-                onChange={(e) => setTheme(e.target.value as "light" | "dark")}
-                disabled
-              />
-              <span className="text-sm text-gray-400">Dark (Coming soon)</span>
-            </label>
-          </div>
+          <p className="text-xs text-gray-500 mt-2">
+            Note: Preferences are currently saved locally on this browser.
+          </p>
         </CardContent>
       </Card>
 
@@ -408,14 +336,22 @@ function SecuritySection() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const deleteMutation = useDeleteAccount();
+  const signOutOtherSessionsMutation = useSignOutOtherSessions();
+  const {
+    data: sessions = [],
+    isLoading: sessionsLoading,
+    error: sessionsError,
+  } = useUserSessions(user?.id);
   const { pushToast } = useToast();
 
   if (!user) return null;
 
+  const hasOtherSessions = sessions.some((session) => !session.isCurrentSession);
+
   const handleExportData = async () => {
     try {
       setIsExporting(true);
-      
+
       const data = await request<{
         exportedAt: string;
         user: { id: number; name: string; email: string; role: string; department?: string | null; registeredVia: string; createdAt: string };
@@ -470,9 +406,14 @@ function SecuritySection() {
   };
 
   const handleSignOutOthers = async () => {
+    if (!user?.id) {
+      return;
+    }
+
     try {
+      await signOutOtherSessionsMutation.mutateAsync(user.id);
       pushToast("success", "Signed out all other sessions");
-    } catch (error) {
+    } catch {
       pushToast("error", "Failed to sign out other sessions");
     }
   };
@@ -500,35 +441,59 @@ function SecuritySection() {
           <CardDescription>Manage your active login sessions</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Device</TableHead>
-                <TableHead>Last Accessed</TableHead>
-                <TableHead>IP Address</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {mockSessions.map((session) => (
-                <TableRow key={session.id}>
-                  <TableCell>
-                    <span className="font-medium text-sm">{session.deviceName}</span>
-                    {session.isCurrent && (
-                      <Badge className="ml-2 bg-green-100 text-green-800">Current</Badge>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-sm text-gray-600">
-                    {new Date(session.lastAccessedAt).toLocaleDateString()}
-                  </TableCell>
-                  <TableCell className="text-sm text-gray-600">{session.ipAddress}</TableCell>
-                </TableRow>
+          {sessionsLoading ? (
+            <p className="text-sm text-gray-500">Loading sessions...</p>
+          ) : sessionsError ? (
+            <p className="text-sm text-red-600">Failed to load sessions.</p>
+          ) : sessions.length === 0 ? (
+            <p className="text-sm text-gray-600">No active sessions found.</p>
+          ) : (
+            <div className="space-y-2">
+              {sessions.map((session) => (
+                <div
+                  key={session.id}
+                  className="p-3 bg-gray-50 border border-gray-200 rounded-lg"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-medium text-gray-900">
+                      {session.deviceName}
+                    </p>
+                    {session.isCurrentSession ? (
+                      <Badge className="bg-green-100 text-green-800">Current</Badge>
+                    ) : null}
+                  </div>
+                  <p className="text-xs text-gray-600 mt-1">
+                    Created: {new Date(session.createdAt).toLocaleString()}
+                  </p>
+                  <p className="text-xs text-gray-600">
+                    IP: {session.ipAddress ?? "Unknown"}
+                  </p>
+                </div>
               ))}
-            </TableBody>
-          </Table>
-          <Button onClick={handleSignOutOthers} variant="outline" className="gap-2">
+            </div>
+          )}
+
+          <Button
+            onClick={handleSignOutOthers}
+            variant="outline"
+            className="gap-2 w-full sm:w-auto"
+            disabled={
+              sessionsLoading ||
+              signOutOtherSessionsMutation.isPending ||
+              !hasOtherSessions
+            }
+          >
             <LogOut className="w-4 h-4" />
-            Sign Out All Other Sessions
+            {signOutOtherSessionsMutation.isPending
+              ? "Signing Out..."
+              : "Sign Out All Other Sessions"}
           </Button>
+
+          {!sessionsLoading && sessions.length > 0 && !hasOtherSessions ? (
+            <p className="text-xs text-gray-500">
+              No other sessions available to sign out.
+            </p>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -584,6 +549,13 @@ function SecuritySection() {
 }
 
 function ActivitySection() {
+  const { user } = useAuth();
+  const {
+    data: activityLog = [],
+    isLoading,
+    error,
+  } = useUserActivityLog(user?.id, 20);
+
   return (
     <div className="space-y-6">
       <Card>
@@ -592,38 +564,34 @@ function ActivitySection() {
           <CardDescription>Recent account activity and logins</CardDescription>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Activity</TableHead>
-                <TableHead>Date & Time</TableHead>
-                <TableHead>Device/IP</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {mockActivityLog.map((log) => (
-                <TableRow key={log.id}>
-                  <TableCell>
-                    <div>
-                      <p className="font-medium text-sm">{log.title}</p>
-                      <p className="text-xs text-gray-600">{log.description}</p>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-sm text-gray-600">
-                    {new Date(log.timestamp).toLocaleString()}
-                  </TableCell>
-                  <TableCell className="text-xs text-gray-600">
-                    {log.metadata?.device && (
-                      <div>
-                        <p>{log.metadata.device}</p>
-                        {log.metadata.ipAddress && <p>{log.metadata.ipAddress}</p>}
-                      </div>
-                    )}
-                  </TableCell>
-                </TableRow>
+          {isLoading ? (
+            <p className="text-sm text-gray-500">Loading activity...</p>
+          ) : error ? (
+            <p className="text-sm text-red-600">Failed to load activity.</p>
+          ) : activityLog.length === 0 ? (
+            <p className="text-sm text-gray-600">No recent activity found.</p>
+          ) : (
+            <div className="space-y-2">
+              {activityLog.map((entry) => (
+                <div
+                  key={entry.id}
+                  className="p-3 bg-gray-50 border border-gray-200 rounded-lg"
+                >
+                  <p className="text-sm font-medium text-gray-900">{entry.title}</p>
+                  <p className="text-xs text-gray-600 mt-1">{entry.description}</p>
+                  <p className="text-xs text-gray-600 mt-1">
+                    {new Date(entry.timestamp).toLocaleString()}
+                  </p>
+                  {entry.metadata?.device || entry.metadata?.ipAddress ? (
+                    <p className="text-xs text-gray-600 mt-1">
+                      {entry.metadata?.device ?? "Unknown device"}
+                      {entry.metadata?.ipAddress ? ` · ${entry.metadata.ipAddress}` : ""}
+                    </p>
+                  ) : null}
+                </div>
               ))}
-            </TableBody>
-          </Table>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

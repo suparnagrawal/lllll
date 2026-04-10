@@ -35,6 +35,23 @@ export function BookingsPage() {
     );
   }
 
+  return (
+    <BookingsPageContent
+      isAdmin={isAdmin}
+      canMutate={canMutate}
+      locationPrefill={locationPrefill}
+    />
+  );
+}
+
+type BookingsPageContentProps = {
+  isAdmin: boolean;
+  canMutate: boolean;
+  locationPrefill?: BookingRequestPrefill;
+};
+
+function BookingsPageContent({ isAdmin, canMutate, locationPrefill }: BookingsPageContentProps) {
+
   // Filters
   const [filterRoomId, setFilterRoomId] = useState<number | "">("");
   const [filterBuildingId, setFilterBuildingId] = useState<number | "">("");

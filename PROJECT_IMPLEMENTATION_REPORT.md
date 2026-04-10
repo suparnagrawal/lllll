@@ -18,8 +18,9 @@ This is a **full-stack web application** for managing university room bookings a
 ## 1. PROJECT STRUCTURE
 
 ```
-/home/suparn/software/
+/workspace/
 ├── backend/                    # Node.js/Express API server
+│   ├── Dockerfile              # Container image definition (build + runtime)
 │   ├── src/
 │   │   ├── server.ts           # Express entry point
 │   │   ├── api/                # Controllers, routes, middleware
@@ -32,9 +33,11 @@ This is a **full-stack web application** for managing university room bookings a
 │   │   ├── modules/            # Feature modules (timetable)
 │   │   ├── routes/             # Express route definitions
 │   │   └── shared/             # Utilities, validators, types
-│   └── drizzle/                # Database migrations (24 files)
+│   └── drizzle/                # Database migrations (25 journal entries, 29 SQL files incl. compatibility files)
 │
 ├── frontend/                   # React SPA
+│   ├── Dockerfile              # Frontend build + Nginx runtime image
+│   ├── nginx.conf              # SPA + /api reverse proxy config
 │   ├── src/
 │   │   ├── main.tsx            # React entry point
 │   │   ├── App.tsx             # Root component with providers
@@ -52,8 +55,7 @@ This is a **full-stack web application** for managing university room bookings a
 │   ├── utils/                  # Logger, pagination, response utils
 │   └── validators/             # Zod validation schemas
 │
-├── docs/                       # Project documentation
-├── docker-compose.yml          # PostgreSQL + Redis containers
+├── docker-compose.yml          # PostgreSQL + Redis + backend + frontend
 └── HOW_TO_RUN.md               # Setup instructions
 ```
 
@@ -246,6 +248,9 @@ This is a **full-stack web application** for managing university room bookings a
 | PATCH | `/profile` | Update current user profile | All authenticated |
 | DELETE | `/profile` | Delete own account (anonymize + deactivate) | All authenticated |
 | GET | `/profile/export` | Export own user data | All authenticated |
+| GET | `/profile/sessions` | List current and other active sessions for current user | All authenticated |
+| POST | `/profile/sessions/logout-others` | Revoke all active sessions except current session | All authenticated |
+| GET | `/profile/activity` | Profile activity feed (bookings/requests/sessions) | All authenticated |
 | GET | `/:id/building-assignments` | View staff building assignments | ADMIN, STAFF (self for STAFF) |
 | GET | `/` | List users (paginated + filters) | ADMIN |
 | POST | `/` | Create user | ADMIN |
@@ -467,7 +472,7 @@ Additional modules under `/frontend/src/pages/timetable/` exist but are not moun
 | `useAvailability`, `useRoomDayTimeline` | Availability search + per-room timeline |
 | `useManagedUsers`, `useFacultyUsers`, `useUserBuildingAssignments` + mutations | User admin and staff-building assignment |
 | `useSlotSystems` + slot-system mutation hooks | Slot-system list/create/delete |
-| `useUserProfile`, `useUpdateProfile`, `useDeleteAccount`, `useExportUserData` | Profile and account actions |
+| `useUserProfile`, `useUpdateProfile`, `useDeleteAccount`, `useExportUserData`, `useUserSessions`, `useSignOutOtherSessions`, `useUserActivityLog` | Profile, account, and session/activity actions |
 
 ### API Client
 
@@ -483,7 +488,7 @@ Additional modules under `/frontend/src/pages/timetable/` exist but are not moun
 | `slots.ts` | Slot system and timetable import/conflict/change-workspace clients |
 | `dashboard.ts` | Dashboard aggregate/stat/activity endpoints |
 | `notifications.ts` | Notification list/read/read-all endpoints |
-| `profile.ts` | Self-profile update/delete/export helpers |
+| `profile.ts` | Self-profile update/delete/export plus live sessions/activity helpers |
 | `types.ts` | Frontend API contract types |
 | `constants.ts`, `jwt-utils.ts`, `storage-utils.ts`, `index.ts` | Client constants/utilities and barrel exports |
 
@@ -569,24 +574,33 @@ Level 3: Page-level filtering
 
 ### Services
 
-| Service | Image | Port | Purpose |
-|---------|-------|------|---------|
+| Service | Image/Build | Port | Purpose |
+|---------|-------------|------|---------|
 | PostgreSQL | `postgres:17-alpine` | 5433:5432 | Primary database |
-| Redis | `redis:7-alpine` | 6379:6379 | Caching & rate limiting |
+| Redis | `redis:7-alpine` | 6379:6379 | Caching + rate limiting store |
+| Backend API | `backend/Dockerfile` | 5000:5000 | Express API runtime |
+| Frontend | `frontend/Dockerfile` + `frontend/nginx.conf` | 5173:5173 | React static assets + `/api` reverse proxy |
 
 ### Volumes
 - `pgdata`: PostgreSQL data persistence
 - `redisdata`: Redis data persistence
 
+### Container Artifacts
+
+- Backend image is multi-stage: TypeScript build stage then production runtime (`node dist/server.js`).
+- Frontend image is multi-stage: Vite build stage then Nginx runtime.
+- Frontend Nginx config proxies `/api/*` to `http://backend:5000/api/*` and serves SPA fallback via `try_files`.
+
 ### Environment Variables (Backend)
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `DATABASE_URL` | PostgreSQL connection | Required |
-| `JWT_SECRET` | JWT signing key | Required |
+| `DATABASE_URL` | PostgreSQL connection | `postgres://ura_user:ura_pass@db:5432/ura_system` (compose) |
+| `JWT_SECRET` | JWT signing key | `change_me_before_production` (override recommended) |
+| `SESSION_SECRET` | Session cookie secret | `change_me_before_production` (override recommended) |
 | `PORT` | Server port | 5000 |
-| `NODE_ENV` | Environment | development |
-| `REDIS_URL` | Redis connection | redis://localhost:6379 |
+| `NODE_ENV` | Environment | production (compose backend service) |
+| `REDIS_URL` | Redis connection | `redis://redis:6379` (compose) |
 | `FRONTEND_URL` | CORS origin | http://localhost:5173 |
 | `GOOGLE_CLIENT_ID` | OAuth client ID | Optional |
 | `GOOGLE_CLIENT_SECRET` | OAuth secret | Optional |
@@ -809,6 +823,108 @@ PENDING_FACULTY or PENDING_STAFF
 | UI Components (shared + feature) | 30+ |
 | Custom Hooks | 15+ |
 | Zod Schemas | 15+ |
-| Migration Files | 24 |
+| Migration Files | 29 SQL files (25 in migration journal) |
 
 This system provides a complete solution for university room allocation with robust authentication, role-based access control, approval workflows, and bulk timetable import capabilities.
+
+---
+
+## 14. CURRENT CODEBASE STATUS (APRIL 10, 2026)
+
+### Stabilization Work Completed
+
+| Area | File(s) | Status |
+|------|---------|--------|
+| React hook order safety | `/frontend/src/pages/Bookings.tsx` | Fixed by keeping authorization guard in `BookingsPage` and moving hook usage into a rendered child component, preventing hooks from running after an early return. |
+| Session timeout countdown consistency | `/frontend/src/auth/AuthContext.tsx` | Countdown logic and UI were aligned; current working tree shows a smooth second-by-second 5-minute countdown display (`mm:ss`). |
+| Backend type safety (P0 scope) | `/backend/src/api/middleware/rateLimit.middleware.ts`, `/backend/src/routes/slotChangeRequests.ts`, `/backend/src/routes/venueChangeRequests.ts` | Fixed typed rate-limit configuration/middleware signatures and added explicit undefined guards for request lookup rows in cancel endpoints. |
+
+### Runtime and Build Validation
+
+| Check | Command | Result |
+|------|---------|--------|
+| Backend startup | `npm run dev` (backend) | Pass. Server starts on port `5000`; Redis connection established. |
+| Frontend startup | `npm run dev` (frontend) | Pass. Vite dev server starts and serves on `http://127.0.0.1:5173/`. |
+| Backend tests | `npm --prefix backend test` | Pass (`27/27`). |
+| Frontend tests | `npm --prefix frontend test` | Pass (`6/6`). |
+| Frontend production build | `npm run build` (frontend) | Pass. Build completes successfully. |
+| Backend TypeScript (project-wide) | `npx tsc --noEmit -p backend/tsconfig.json` | Pass. Project type-check completes successfully. |
+| Compose validation | `docker-compose -f docker-compose.yml config` | Pass. Backend/frontend services resolve correctly. |
+
+### Current Working Tree Notes
+
+- `HOW_TO_RUN.md` is aligned to backend default port `5000` and frontend `5173`.
+- Frontend API base URL supports `VITE_API_BASE_URL` override with `/api` fallback for local proxying.
+- Profile page security/activity views now use live backend data instead of placeholders.
+- Backend TypeScript validation now passes cleanly for the full backend project.
+- Backend and frontend Dockerfiles now provide full-container deployment support.
+- Frontend production build uses `cssMinify: 'esbuild'` to avoid LightningCSS unknown at-rule warnings.
+- Drizzle migration chain now replays cleanly on a fresh database.
+
+### Task Group 2 Stabilization (Refactor Branch)
+
+| Area | File(s) | Status |
+|------|---------|--------|
+| Booking-to-course linking in creation flows | `/backend/src/services/bookingService.ts`, `/backend/src/routes/bookingRequests.ts` | Added optional `courseId` handling and `booking_course_link` insertion with `onConflictDoNothing` for duplicate safety. Link insert runs in the same executor/transaction and only when `courseId` is present. |
+| Availability checkbox interaction | `/frontend/src/pages/Availability.tsx` | Replaced no-op checkbox handler with `onToggle` while keeping row click + checkbox click propagation behavior stable. |
+| Building delete RBAC consistency | `/backend/src/routes/buildings.ts`, `/backend/src/api/controllers/buildings.controller.ts` | Route guard now requires ADMIN only, matching controller-level ADMIN-only enforcement. |
+| Login dead links cleanup | `/frontend/src/pages/LoginPage.tsx` | Replaced dummy support email with `mailto:support@uras.app` and removed placeholder `#` links for terms/privacy labels. |
+
+### Task Group 2 Validation Snapshot
+
+| Check | Result |
+|------|--------|
+| Backend tests (`npm test`) | Pass (22/22) |
+| Frontend build (`npm run build`) | Pass |
+| Backend runtime smoke (`/health`, `/health/ready`) | Pass |
+| Frontend runtime smoke (dev server HTTP 200) | Pass |
+
+### Task Group 3 Integration (Refactor Branch)
+
+| Area | File(s) | Status |
+|------|---------|--------|
+| Env and local integration consistency | `/backend/src/config/env.ts`, `/frontend/src/lib/api/constants.ts`, `/HOW_TO_RUN.md` | Port parsing/defaults and docs were aligned around backend `5000`, frontend `5173`, and explicit OAuth callback/frontend URLs. |
+| Profile backend APIs | `/backend/src/routes/users.ts` | Added authenticated profile endpoints for active sessions, sign-out-other-sessions, and profile activity feed without schema changes. |
+| Profile frontend integration | `/frontend/src/lib/api/profile.ts`, `/frontend/src/pages/Profile.tsx` | Removed mock behavior and wired security/activity tabs to real API hooks with loading/error/empty/live states. |
+
+### Task Group 3 Validation Snapshot
+
+| Check | Result |
+|------|--------|
+| Backend tests (`npm test`) | Pass (22/22) |
+| Frontend build (`npm run build`) | Pass |
+| Profile route smoke (`/api/users/profile/sessions`, `/api/users/profile/activity`, `/api/users/profile/sessions/logout-others` without auth) | Pass (`401` as expected for unauthenticated requests) |
+| Backend TypeScript (`npx tsc --noEmit -p backend/tsconfig.json`) | Pass |
+
+### Task Group 4 Hardening (Refactor Branch)
+
+| Area | File(s) | Status |
+|------|---------|--------|
+| Backend safety and typing hardening | `/backend/src/api/middleware/rateLimit.middleware.ts`, `/backend/src/routes/slotChangeRequests.ts`, `/backend/src/routes/venueChangeRequests.ts` | Strengthened type-safety and null-guard paths in high-risk request handlers and middleware. |
+| Runtime safety confidence | Backend routes + middleware | Confirmed no regressions in approval/change-request critical flows through backend test suite and type-check pass. |
+
+### Task Group 5 Final Polish (Refactor Branch)
+
+| Area | File(s) | Status |
+|------|---------|--------|
+| Backend build script restoration | `/backend/package.json` | Added `build` script (`tsc`) for production build readiness. |
+| Frontend build warning cleanup | `/frontend/vite.config.ts`, `/frontend/package.json` | Switched CSS minifier to esbuild and added required `esbuild` dev dependency; production build passes cleanly. |
+| Frontend test infrastructure | `/frontend/vitest.config.ts`, `/frontend/src/test/setup.ts` | Added jsdom test config, matcher setup, and cleanup hook. |
+| Frontend auth coverage | `/frontend/src/components/auth/__tests__/ProtectedRoute.test.tsx`, `/frontend/src/pages/__tests__/LoginPage.test.tsx` | Added protected-route redirect coverage and login validation/submit tests. |
+| Backend booking coverage | `/backend/src/services/__tests__/bookingService.test.ts`, `/backend/src/routes/__tests__/bookingRequests.approve.test.ts` | Added overlap/interval service tests and request approval transaction tests. |
+| Migration drift repair | `/backend/drizzle/0012_graceful_doctor_doom.sql`, `/backend/drizzle/0022_add_performance_indexes.sql`, `/backend/drizzle/0022_deep_johnny_blaze.sql` | Fixed duplicate/invalid migration SQL and added missing journal-aligned migration filename; clean bootstrap verified. |
+| Container deployment readiness | `/docker-compose.yml`, `/backend/Dockerfile`, `/frontend/Dockerfile`, `/frontend/nginx.conf` | Added backend/frontend services and container builds; compose config validation passes. |
+| Docs synchronization | `/HOW_TO_RUN.md`, `/PROJECT_IMPLEMENTATION_REPORT.md` | Updated commands, environment defaults, deployment instructions, and final validation notes. |
+
+### Task Group 5 Validation Snapshot
+
+| Check | Result |
+|------|--------|
+| Backend TypeScript (`npm --prefix backend exec tsc -- --noEmit -p backend/tsconfig.json`) | Pass |
+| Backend tests (`npm --prefix backend test`) | Pass (`27/27`) |
+| Backend build (`npm --prefix backend run build`) | Pass |
+| Frontend tests (`npm --prefix frontend test`) | Pass (`6/6`) |
+| Frontend build (`npm --prefix frontend run build`) | Pass |
+| Fresh DB migration replay (journal order) | Pass |
+| `drizzle-kit migrate` on clean scratch DB | Pass |
+| Compose configuration check (`docker-compose config`) | Pass |

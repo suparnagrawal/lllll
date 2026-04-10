@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useRoomDayTimeline } from "@/hooks/useAvailability";
 import { RoomAvailabilityTimeline } from "@/components/features/availability";
+import type { TimelineSegment } from "@/lib/api/types";
 
 export function RoomDetailsPage({ roomId }: { roomId: number }) {
   const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
@@ -25,13 +26,12 @@ export function RoomDetailsPage({ roomId }: { roomId: number }) {
   }
 
   const handleFreeSlotClick = (startTime: string, endTime: string) => {
-    console.log(`Book from ${startTime} to ${endTime}`);
-    // TODO: Open booking modal
+    void startTime;
+    void endTime;
   };
 
-  const handleSegmentClick = (segment: any) => {
-    console.log("Show booking details:", segment.booking);
-    // TODO: Show booking details panel
+  const handleSegmentClick = (segment: TimelineSegment) => {
+    void segment;
   };
 
   return (

@@ -14,6 +14,8 @@ const NAV_ITEMS: NavItem[] = [
   { path: '/', label: 'Dashboard', icon: '📊' },
   { path: '/rooms', label: 'Rooms', icon: '🚪' },
   { path: '/requests', label: 'Requests', icon: '📋' },
+  { path: '/slot-change', label: 'Slot Change', icon: '⏱️', roles: ['FACULTY', 'STAFF', 'ADMIN'] },
+  { path: '/venue-change', label: 'Venue Change', icon: '🏢', roles: ['FACULTY', 'STAFF', 'ADMIN'] },
   { path: '/bookings', label: 'Bookings', icon: '📅', roles: ['ADMIN', 'STAFF'] },
   { path: '/availability', label: 'Availability', icon: '🔍' },
   { path: '/users', label: 'Users', icon: '👥', roles: ['ADMIN'] },

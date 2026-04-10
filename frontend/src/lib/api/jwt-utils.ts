@@ -21,8 +21,13 @@ export function decodeToken(token: string): TokenPayload | null {
       return null;
     }
 
+    let payloadBase64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    while (payloadBase64.length % 4 !== 0) {
+      payloadBase64 += "=";
+    }
+
     const decoded = JSON.parse(
-      atob(parts[1].replace(/-/g, "+").replace(/_/g, "/"))
+      atob(payloadBase64)
     );
 
     if (

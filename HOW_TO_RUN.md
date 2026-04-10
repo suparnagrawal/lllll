@@ -1,85 +1,68 @@
-# How to Run (Local Development)
+# How to Run (Development + Deployment)
 
-This guide only covers:
-- environment setup
-- starting database services with Docker
-- installing backend/frontend dependencies
-- running migrations and seed data
-- starting backend and frontend dev servers
+This guide covers:
+- local development setup
+- migration + seed workflow
+- required validation commands
+- full Docker deployment
 
 ## 1. Prerequisites
 
-- Docker + Docker Compose
+- Docker and Docker Compose (`docker-compose`)
 - Node.js 20+
 - npm
 
-## 2. Start PostgreSQL and Redis
+## 2. Local Development Setup
 
-From the project root:
+From the project root, start only data services:
 
 ```bash
-docker compose up -d db redis
+docker-compose up -d db redis
 ```
 
-Services from docker-compose:
-- PostgreSQL: localhost:5433
-- Redis: localhost:6379
+Service ports:
+- PostgreSQL: `localhost:5433`
+- Redis: `localhost:6379`
 
 ## 3. Backend Setup
 
-Open a terminal in backend:
-
 ```bash
 cd backend
-```
-
-Copy env template:
-
-```bash
 cp .env.example .env
-```
-
-Edit .env and make sure at least these are correct for local Docker:
-
-```env
-PORT=5001
-NODE_ENV=development
-DATABASE_URL=postgresql://postgres:postgres@localhost:5433/classroom_booking
-REDIS_URL=redis://localhost:6379
-JWT_SECRET=your_jwt_secret_here
-SESSION_SECRET=your_session_secret_here
-```
-
-Install dependencies:
-
-```bash
 npm install
 ```
 
-Run migrations:
+Ensure backend `.env` uses the local Docker defaults:
+
+```env
+DATABASE_URL=postgres://ura_user:ura_pass@localhost:5433/ura_system
+REDIS_URL=redis://localhost:6379
+PORT=5000
+FRONTEND_URL=http://localhost:5173
+GOOGLE_CALLBACK_URL=http://localhost:5000/api/auth/google/callback
+JWT_SECRET=replace_with_strong_random_secret
+SESSION_SECRET=replace_with_strong_random_session_secret
+```
+
+Run migrations and seed data:
 
 ```bash
 npx drizzle-kit migrate
-```
-
-Seed development data (buildings, rooms, users, assignments, courses, requests, bookings, notifications):
-
-```bash
 npm run seed:dev
 ```
 
-Start backend dev server:
+Start backend:
 
 ```bash
 npm run dev
 ```
 
-Backend base URL:
-- http://localhost:5001
+Backend URL:
+- `http://localhost:5000`
 
 ## 4. Frontend Setup
 
-Open another terminal in frontend:
+In a new terminal:
 
 ```bash
 cd frontend
@@ -88,31 +71,60 @@ npm run dev
 ```
 
 Frontend URL:
-- http://localhost:5173
+- `http://localhost:5173`
 
-## 5. Seeded Login Accounts (Password Auth Only)
+Frontend uses `/api` and proxies to backend during development.
 
-All seeded accounts use email/password login only.
+## 5. Required Validation Commands
 
-Default password for seeded users:
-- password123
-
-All seeded login accounts are defined in one file:
-- backend/scripts/seededLoginUsers.json
-
-If you set `SEED_DEFAULT_PASSWORD` in backend/.env, that value overrides `defaultPassword` from this file.
-
-## 6. Optional: Reset and Re-seed
-
-If you want a clean database:
+From the project root:
 
 ```bash
-# from project root
-docker compose down -v
-docker compose up -d db redis
+npm --prefix backend exec tsc -- --noEmit -p backend/tsconfig.json
+npm --prefix backend test
+npm --prefix backend run build
+npm --prefix frontend test
+npm --prefix frontend run build
+```
 
-# then in backend
+## 6. Full Docker Deployment
+
+This runs PostgreSQL, Redis, backend API, and frontend (Nginx) together.
+
+1. Optionally set strong secrets in shell env before startup:
+
+```bash
+export JWT_SECRET="change_this"
+export SESSION_SECRET="change_this"
+```
+
+2. Build and start all services:
+
+```bash
+docker-compose up --build
+```
+
+Service URLs:
+- Frontend: `http://localhost:5173`
+- Backend API: `http://localhost:5000/api`
+- Health check: `http://localhost:5000/health`
+
+## 7. Migration Troubleshooting
+
+If `drizzle-kit migrate` fails on an old local database state, reset local DB volumes and re-run migrations:
+
+```bash
+docker-compose down -v
+docker-compose up -d db redis
 cd backend
 npx drizzle-kit migrate
 npm run seed:dev
 ```
+
+The migration chain has been verified on a fresh database.
+
+## 8. Seeded Login Accounts (Password Auth)
+
+- Default password: `password123`
+- Seeded users file: `backend/scripts/seededLoginUsers.json`
+- `SEED_DEFAULT_PASSWORD` in backend `.env` overrides the default password

@@ -5,6 +5,33 @@ let onUnauthorizedCallback: (() => void) | null = null;
 let isRefreshing = false;
 let refreshPromise: Promise<boolean> | null = null;
 
+function shouldRefreshOnUnauthorized(path: string): boolean {
+  return !path.startsWith("/auth/login") && !path.startsWith("/auth/refresh");
+}
+
+function buildHeaders(initHeaders: HeadersInit | undefined, token: string | null, isJson: boolean): Headers {
+  const headers = new Headers(initHeaders ?? {});
+
+  if (isJson && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  return headers;
+}
+
+async function fetchWithAuth(path: string, init: RequestInit | undefined, isJson: boolean): Promise<Response> {
+  const token = getAuthToken();
+
+  return fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    headers: buildHeaders(init?.headers, token, isJson),
+  });
+}
+
 export function setOnUnauthorized(cb: () => void) {
   onUnauthorizedCallback = cb;
 }
@@ -107,9 +134,11 @@ export async function refreshAccessToken(): Promise<boolean> {
       const payload = isJson ? ((await response.json()) as unknown) : null;
 
       if (!response.ok) {
-        clearAuth();
-        if (onUnauthorizedCallback) {
-          onUnauthorizedCallback();
+        if (response.status === 401 || response.status === 403) {
+          clearAuth();
+          if (onUnauthorizedCallback) {
+            onUnauthorizedCallback();
+          }
         }
         return false;
       }
@@ -124,10 +153,6 @@ export async function refreshAccessToken(): Promise<boolean> {
       return true;
     } catch (error) {
       console.error("Token refresh failed:", error);
-      clearAuth();
-      if (onUnauthorizedCallback) {
-        onUnauthorizedCallback();
-      }
       return false;
     } finally {
       isRefreshing = false;
@@ -140,16 +165,15 @@ export async function refreshAccessToken(): Promise<boolean> {
 
 
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = getAuthToken();
+  let response = await fetchWithAuth(path, init, true);
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(init?.headers ?? {}),
-    },
-    ...init,
-  });
+  if (response.status === 401 && shouldRefreshOnUnauthorized(path)) {
+    const refreshed = await refreshAccessToken();
+
+    if (refreshed) {
+      response = await fetchWithAuth(path, init, true);
+    }
+  }
 
   // Handle 204 No Content
   if (response.status === 204) {
@@ -162,7 +186,7 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     // Auto-logout on 401
-    if (response.status === 401) {
+    if (response.status === 401 && shouldRefreshOnUnauthorized(path)) {
       clearAuth();
       if (onUnauthorizedCallback) {
         onUnauthorizedCallback();
@@ -186,17 +210,21 @@ export async function requestFormData<T>(
   formData: FormData,
   init?: Omit<RequestInit, "body" | "headers"> & { headers?: HeadersInit }
 ): Promise<T> {
-  const token = getAuthToken();
-
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const requestInit: RequestInit = {
     ...init,
     method: init?.method ?? "POST",
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(init?.headers ?? {}),
-    },
     body: formData,
-  });
+  };
+
+  let response = await fetchWithAuth(path, requestInit, false);
+
+  if (response.status === 401 && shouldRefreshOnUnauthorized(path)) {
+    const refreshed = await refreshAccessToken();
+
+    if (refreshed) {
+      response = await fetchWithAuth(path, requestInit, false);
+    }
+  }
 
   if (response.status === 204) {
     return undefined as T;
@@ -207,7 +235,7 @@ export async function requestFormData<T>(
   const payload = isJson ? ((await response.json()) as unknown) : null;
 
   if (!response.ok) {
-    if (response.status === 401) {
+    if (response.status === 401 && shouldRefreshOnUnauthorized(path)) {
       clearAuth();
       if (onUnauthorizedCallback) {
         onUnauthorizedCallback();

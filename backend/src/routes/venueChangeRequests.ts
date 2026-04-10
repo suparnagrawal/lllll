@@ -1,13 +1,15 @@
 import { Router } from "express";
 import { db } from "../db";
-import { eq, and, or, inArray, desc } from "drizzle-orm";
+import { eq, and, or, inArray, desc, gte, lte } from "drizzle-orm";
 import {
   venueChangeRequests,
   users,
   rooms,
   courses,
+  courseFaculty,
   bookings,
   buildings,
+  bookingCourseLink,
 } from "../db/schema";
 import { authMiddleware } from "../middleware/auth";
 import { requireRole } from "../middleware/rbac";
@@ -18,6 +20,7 @@ import {
   applyVenueChange,
   getVenueChangeRequestWithDetails,
   suggestAlternativeRooms,
+  isAuthorizedForCourse,
 } from "../services/venueChangeService";
 import {
   getActiveAdminIds,
@@ -52,6 +55,36 @@ async function getStaffAndAdminIds(buildingId: number, excludeIds: number[] = []
   ]);
   const excluded = new Set(excludeIds);
   return [...new Set([...staffIds, ...adminIds])].filter((id) => !excluded.has(id));
+}
+
+function parseDateOnly(value: unknown): Date | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const match = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return null;
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const parsed = new Date(year, month - 1, day, 0, 0, 0, 0);
+
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function startOfDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
+}
+
+function endOfDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
+}
+
+function formatDateOnly(date: Date): string {
+  return date.toISOString().slice(0, 10);
 }
 
 /**
@@ -144,6 +177,284 @@ router.get("/", authMiddleware, async (req, res) => {
     return res.status(500).json({ error: "Failed to fetch requests" });
   }
 });
+
+/**
+ * GET /venue-change-requests/options
+ * Returns real dropdown data for venue change creation UI
+ */
+router.get("/options", authMiddleware, async (req, res) => {
+  try {
+    const role = req.user?.role;
+    const userId = req.user?.id;
+
+    if (!role || !userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    if (role === "STUDENT" || role === "PENDING_ROLE") {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    const courseRows =
+      role === "FACULTY"
+        ? await db
+            .select({ id: courses.id, code: courses.code, name: courses.name })
+            .from(courseFaculty)
+            .innerJoin(courses, eq(courseFaculty.courseId, courses.id))
+            .where(eq(courseFaculty.facultyId, userId))
+            .orderBy(courses.code)
+        : await db
+            .select({ id: courses.id, code: courses.code, name: courses.name })
+            .from(courses)
+            .orderBy(courses.code);
+
+    const courseIds = courseRows.map((course) => course.id);
+
+    const bookingSelectionQuery = db
+      .select({
+        id: bookings.id,
+        roomId: bookings.roomId,
+        startAt: bookings.startAt,
+        endAt: bookings.endAt,
+        courseId: bookingCourseLink.courseId,
+        courseCode: courses.code,
+        courseName: courses.name,
+        roomName: rooms.name,
+        buildingName: buildings.name,
+      })
+      .from(bookingCourseLink)
+      .innerJoin(bookings, eq(bookingCourseLink.bookingId, bookings.id))
+      .innerJoin(courses, eq(bookingCourseLink.courseId, courses.id))
+      .innerJoin(rooms, eq(bookings.roomId, rooms.id))
+      .innerJoin(buildings, eq(rooms.buildingId, buildings.id))
+      .orderBy(desc(bookings.startAt));
+
+    const bookingRows =
+      role === "FACULTY"
+        ? courseIds.length > 0
+          ? await bookingSelectionQuery.where(inArray(bookingCourseLink.courseId, courseIds))
+          : []
+        : await bookingSelectionQuery;
+
+    const roomRows = await db
+      .select({
+        id: rooms.id,
+        name: rooms.name,
+        buildingId: rooms.buildingId,
+        buildingName: buildings.name,
+      })
+      .from(rooms)
+      .innerJoin(buildings, eq(rooms.buildingId, buildings.id));
+
+    return res.json({
+      courses: courseRows,
+      bookings: bookingRows,
+      rooms: roomRows,
+    });
+  } catch (error) {
+    logger.error("Failed to fetch venue change options", error);
+    return res.status(500).json({ error: "Failed to fetch options" });
+  }
+});
+
+/**
+ * POST /venue-change-requests/batch
+ * Create venue change requests for multiple bookings in a date range (Faculty only)
+ */
+router.post(
+  "/batch",
+  authMiddleware,
+  requireRole("FACULTY"),
+  async (req, res) => {
+    const {
+      courseId,
+      proposedRoomId,
+      reason,
+      fromDate,
+      toDate,
+    } = req.body;
+
+    if (!courseId || !proposedRoomId || !reason) {
+      return res.status(400).json({
+        error: "Missing required fields: courseId, proposedRoomId, reason",
+      });
+    }
+
+    const parsedCourseId = Number(courseId);
+    const parsedRoomId = Number(proposedRoomId);
+    const parsedFromDate = fromDate ? parseDateOnly(fromDate) : null;
+    const parsedToDate = toDate ? parseDateOnly(toDate) : null;
+
+    if (isNaN(parsedCourseId) || isNaN(parsedRoomId)) {
+      return res.status(400).json({ error: "Invalid courseId or proposedRoomId" });
+    }
+
+    if ((fromDate && !parsedFromDate) || (toDate && !parsedToDate)) {
+      return res.status(400).json({ error: "Invalid date format. Use YYYY-MM-DD" });
+    }
+
+    const today = startOfDay(new Date());
+    const effectiveFromDate = parsedFromDate ? startOfDay(parsedFromDate) : today;
+    const effectiveToDate = parsedToDate ? endOfDay(parsedToDate) : null;
+
+    if (effectiveToDate && effectiveFromDate > effectiveToDate) {
+      return res.status(400).json({ error: "fromDate must be before or equal to toDate" });
+    }
+
+    try {
+      const authorized = await isAuthorizedForCourse(req.user!.id, parsedCourseId);
+      if (!authorized) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+
+      const whereConditions = [
+        eq(bookingCourseLink.courseId, parsedCourseId),
+        gte(bookings.startAt, effectiveFromDate),
+      ];
+
+      if (effectiveToDate) {
+        whereConditions.push(lte(bookings.startAt, effectiveToDate));
+      }
+
+      const targetBookings = await db
+        .select({
+          bookingId: bookings.id,
+          bookingStartAt: bookings.startAt,
+          bookingEndAt: bookings.endAt,
+        })
+        .from(bookingCourseLink)
+        .innerJoin(bookings, eq(bookingCourseLink.bookingId, bookings.id))
+        .where(and(...whereConditions))
+        .orderBy(bookings.startAt);
+
+      if (targetBookings.length === 0) {
+        return res.status(400).json({
+          error: "No linked bookings found in the selected date range",
+        });
+      }
+
+      const bookingIds = targetBookings.map((item) => item.bookingId);
+      const pendingRows = await db
+        .select({ bookingId: venueChangeRequests.currentBookingId })
+        .from(venueChangeRequests)
+        .where(
+          and(
+            inArray(venueChangeRequests.currentBookingId, bookingIds),
+            eq(venueChangeRequests.status, "PENDING")
+          )
+        );
+
+      const pendingBookingIds = new Set(pendingRows.map((row) => row.bookingId));
+
+      const created: Array<{ bookingId: number; requestId: number; warnings: string[] }> = [];
+      const failures: Array<{
+        bookingId: number;
+        bookingStartAt: Date;
+        bookingEndAt: Date;
+        errors: string[];
+        warnings: string[];
+      }> = [];
+
+      for (const booking of targetBookings) {
+        if (pendingBookingIds.has(booking.bookingId)) {
+          failures.push({
+            bookingId: booking.bookingId,
+            bookingStartAt: booking.bookingStartAt,
+            bookingEndAt: booking.bookingEndAt,
+            errors: ["A pending venue change request already exists for this booking"],
+            warnings: [],
+          });
+          continue;
+        }
+
+        const validation = await validateVenueChange({
+          courseId: parsedCourseId,
+          currentBookingId: booking.bookingId,
+          proposedRoomId: parsedRoomId,
+          requestedBy: req.user!.id,
+        });
+
+        if (!validation.valid) {
+          failures.push({
+            bookingId: booking.bookingId,
+            bookingStartAt: booking.bookingStartAt,
+            bookingEndAt: booking.bookingEndAt,
+            errors: validation.errors,
+            warnings: validation.warnings,
+          });
+          continue;
+        }
+
+        const inserted = await db
+          .insert(venueChangeRequests)
+          .values({
+            requestedBy: req.user!.id,
+            courseId: parsedCourseId,
+            currentBookingId: booking.bookingId,
+            proposedRoomId: parsedRoomId,
+            reason: reason.trim(),
+            status: "PENDING",
+          })
+          .returning({ id: venueChangeRequests.id });
+
+        if (inserted[0]) {
+          created.push({
+            bookingId: booking.bookingId,
+            requestId: inserted[0].id,
+            warnings: validation.warnings,
+          });
+        }
+      }
+
+      if (created.length > 0) {
+        const [courseRows, proposedRoomRows] = await Promise.all([
+          db
+            .select({ code: courses.code, name: courses.name })
+            .from(courses)
+            .where(eq(courses.id, parsedCourseId))
+            .limit(1),
+          db
+            .select({
+              roomName: rooms.name,
+              buildingName: buildings.name,
+              buildingId: rooms.buildingId,
+            })
+            .from(rooms)
+            .innerJoin(buildings, eq(rooms.buildingId, buildings.id))
+            .where(eq(rooms.id, parsedRoomId))
+            .limit(1),
+        ]);
+
+        if (proposedRoomRows[0]) {
+          const recipientIds = await getStaffAndAdminIds(proposedRoomRows[0].buildingId, [req.user!.id]);
+          const rangeLabel = `${formatDateOnly(effectiveFromDate)} to ${
+            effectiveToDate ? formatDateOnly(effectiveToDate) : "semester end"
+          }`;
+
+          const notifications: NotificationDraft[] = recipientIds.map((recipientId) => ({
+            recipientId,
+            type: "VENUE_CHANGE_REQUESTED",
+            subject: `Batch Venue Change Request: ${courseRows[0]?.code ?? "Course"}`,
+            message: `${created.length} venue change request(s) were submitted for ${courseRows[0]?.code ?? "Course"} - ${courseRows[0]?.name ?? ""} for date range ${rangeLabel}. Proposed room: ${proposedRoomRows[0]?.roomName} (${proposedRoomRows[0]?.buildingName}).`,
+          }));
+
+          await dispatchNotificationsSafely(notifications);
+        }
+      }
+
+      return res.status(created.length > 0 ? 201 : 200).json({
+        requestedCount: targetBookings.length,
+        createdCount: created.length,
+        skippedCount: targetBookings.length - created.length,
+        created,
+        failures,
+      });
+    } catch (error) {
+      logger.error("Failed to create batch venue change requests", error);
+      return res.status(500).json({ error: "Failed to create batch requests" });
+    }
+  }
+);
 
 /**
  * GET /venue-change-requests/:id
@@ -344,7 +655,7 @@ router.post(
         }
       }
 
-      const result = await db.transaction(async (tx: any) => {
+      const result = await db.transaction(async (tx) => {
         if (reviewNote) {
           await tx
             .update(venueChangeRequests)
@@ -482,6 +793,10 @@ router.post(
       }
 
       const req0 = request[0];
+      if (!req0) {
+        return res.status(404).json({ error: "Request not found" });
+      }
+
       if (req0.requestedBy !== req.user!.id) {
         return res.status(403).json({ error: "Forbidden" });
       }

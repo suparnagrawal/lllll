@@ -1,5 +1,5 @@
 import bcrypt from "bcrypt";
-import { Router } from "express";
+import { Router, type Request } from "express";
 import {
   and,
   asc,
@@ -14,7 +14,7 @@ import {
 import { authMiddleware } from "../middleware/auth";
 import { requireRole } from "../middleware/rbac";
 import { db } from "../db";
-import { buildings, staffBuildingAssignments, users, bookings, bookingRequests } from "../db/schema";
+import { buildings, staffBuildingAssignments, users, bookings, bookingRequests, userSessions } from "../db/schema";
 import logger from "../shared/utils/logger";
 
 type UserRole = "ADMIN" | "STAFF" | "FACULTY" | "STUDENT" | "PENDING_ROLE";
@@ -107,6 +107,79 @@ function isMissingAssignmentsTableError(error: unknown): boolean {
     (cause?.message ?? (error as { message?: string })?.message ?? "").toLowerCase();
 
   return cause?.code === "42P01" && message.includes("staff_building_assignments");
+}
+
+type SessionPayload = {
+  passport?: { user?: number | string };
+  cookie?: {
+    expires?: string;
+    originalMaxAge?: number;
+  };
+  ipAddress?: string;
+  ip?: string;
+  userAgent?: string;
+  device?: string;
+  deviceName?: string;
+  createdAt?: string;
+};
+
+function getSessionOwnerId(sessionPayload: unknown): number | null {
+  if (!sessionPayload || typeof sessionPayload !== "object") {
+    return null;
+  }
+
+  const candidate = (sessionPayload as SessionPayload).passport?.user;
+  const parsed = Number(candidate);
+
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function pickFirstString(...values: Array<unknown>): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+
+  return null;
+}
+
+function resolveSessionCreatedAt(payload: SessionPayload, expiresAt: Date): string {
+  const explicitCreatedAt = pickFirstString(payload.createdAt);
+
+  if (explicitCreatedAt) {
+    const parsed = new Date(explicitCreatedAt);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString();
+    }
+  }
+
+  const cookieExpiresRaw = pickFirstString(payload.cookie?.expires);
+  const originalMaxAge = payload.cookie?.originalMaxAge;
+
+  if (cookieExpiresRaw && typeof originalMaxAge === "number" && originalMaxAge > 0) {
+    const cookieExpires = new Date(cookieExpiresRaw);
+
+    if (!Number.isNaN(cookieExpires.getTime())) {
+      return new Date(cookieExpires.getTime() - originalMaxAge).toISOString();
+    }
+  }
+
+  return expiresAt.toISOString();
+}
+
+function getCurrentSessionId(req: Request): string | null {
+  const sessionId = (req as Request & { sessionID?: string }).sessionID;
+
+  if (typeof sessionId !== "string" || sessionId.trim().length === 0) {
+    return null;
+  }
+
+  return sessionId;
 }
 
 async function getActiveAdminCount(): Promise<number> {
@@ -473,6 +546,192 @@ router.get("/profile/export", authMiddleware, async (req, res) => {
   } catch (error) {
     logger.error(error);
     return res.status(500).json({ error: "Failed to export user data" });
+  }
+});
+
+// GET /users/profile/sessions
+// Returns active sessions from user_sessions table for current authenticated user
+router.get("/profile/sessions", authMiddleware, async (req, res) => {
+  try {
+    if (!req.user?.id) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const rows = await db
+      .select({
+        sid: userSessions.sid,
+        sess: userSessions.sess,
+        expire: userSessions.expire,
+      })
+      .from(userSessions)
+      .orderBy(desc(userSessions.expire))
+      .limit(200);
+
+    const currentSessionId = getCurrentSessionId(req);
+
+    const sessions = rows
+      .filter((row) => getSessionOwnerId(row.sess) === req.user!.id)
+      .map((row) => {
+        const payload = (row.sess ?? {}) as SessionPayload;
+
+        return {
+          id: row.sid,
+          deviceName: pickFirstString(payload.deviceName, payload.device, payload.userAgent) ?? "Unknown Device",
+          ipAddress: pickFirstString(payload.ipAddress, payload.ip),
+          createdAt: resolveSessionCreatedAt(payload, row.expire),
+          expiresAt: row.expire.toISOString(),
+          isCurrentSession: currentSessionId === row.sid,
+        };
+      });
+
+    return res.json(sessions);
+  } catch (error) {
+    logger.error(error);
+    return res.status(500).json({ error: "Failed to fetch sessions" });
+  }
+});
+
+// POST /users/profile/sessions/logout-others
+// Deletes all other sessions for the current user, preserving the current session when available
+router.post("/profile/sessions/logout-others", authMiddleware, async (req, res) => {
+  try {
+    if (!req.user?.id) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const rows = await db
+      .select({
+        sid: userSessions.sid,
+        sess: userSessions.sess,
+      })
+      .from(userSessions)
+      .limit(200);
+
+    const currentSessionId = getCurrentSessionId(req);
+
+    if (!currentSessionId) {
+      return res.json({ ok: true, terminatedSessions: 0 });
+    }
+
+    const otherSessionIds = rows
+      .filter((row) => getSessionOwnerId(row.sess) === req.user!.id)
+      .map((row) => row.sid)
+      .filter((sid) => sid !== currentSessionId);
+
+    if (otherSessionIds.length === 0) {
+      return res.json({ ok: true, terminatedSessions: 0 });
+    }
+
+    await db
+      .delete(userSessions)
+      .where(inArray(userSessions.sid, otherSessionIds));
+
+    return res.json({ ok: true, terminatedSessions: otherSessionIds.length });
+  } catch (error) {
+    logger.error(error);
+    return res.status(500).json({ error: "Failed to sign out other sessions" });
+  }
+});
+
+// GET /users/profile/activity
+// Returns recent booking/profile activity for current authenticated user
+router.get("/profile/activity", authMiddleware, async (req, res) => {
+  try {
+    if (!req.user?.id) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const limit = Math.min(parsePositiveInt(req.query.limit, 15), 20);
+
+    const requestRows = await db
+      .select({
+        id: bookingRequests.id,
+        roomId: bookingRequests.roomId,
+        eventType: bookingRequests.eventType,
+        purpose: bookingRequests.purpose,
+        status: bookingRequests.status,
+        createdAt: bookingRequests.createdAt,
+        decidedAt: bookingRequests.decidedAt,
+      })
+      .from(bookingRequests)
+      .where(
+        or(
+          eq(bookingRequests.userId, req.user.id),
+          eq(bookingRequests.facultyId, req.user.id),
+        ),
+      )
+      .orderBy(desc(bookingRequests.createdAt))
+      .limit(limit);
+
+    const bookingRows = await db
+      .select({
+        id: bookings.id,
+        roomId: bookings.roomId,
+        startAt: bookings.startAt,
+        endAt: bookings.endAt,
+        source: bookings.source,
+        approvedAt: bookings.approvedAt,
+        requestId: bookings.requestId,
+      })
+      .from(bookings)
+      .leftJoin(bookingRequests, eq(bookings.requestId, bookingRequests.id))
+      .where(
+        or(
+          eq(bookings.approvedBy, req.user.id),
+          eq(bookingRequests.userId, req.user.id),
+          eq(bookingRequests.facultyId, req.user.id),
+        ),
+      )
+      .orderBy(desc(bookings.startAt))
+      .limit(limit);
+
+    const bookingActivity = bookingRows.map((row) => ({
+      id: `booking-${row.id}`,
+      type: "BOOKING",
+      title: "Booking",
+      description: `Room #${row.roomId} from ${row.startAt.toISOString()} to ${row.endAt.toISOString()}`,
+      timestamp: (row.approvedAt ?? row.startAt).toISOString(),
+      metadata: {
+        bookingId: row.id,
+        requestId: row.requestId ?? undefined,
+        source: row.source,
+      },
+    }));
+
+    const requestActivity = requestRows.map((row) => ({
+      id: `request-${row.id}`,
+      type: "ACTION",
+      title: "Booking Request Submitted",
+      description: `Request #${row.id} (${row.eventType}) for room #${row.roomId}: ${row.purpose}`,
+      timestamp: row.createdAt.toISOString(),
+      metadata: {
+        requestId: row.id,
+        status: row.status,
+      },
+    }));
+
+    const decisionActivity = requestRows
+      .filter((row) => row.status === "APPROVED" || row.status === "REJECTED")
+      .map((row) => ({
+        id: `decision-${row.id}`,
+        type: "ACTION",
+        title: row.status === "APPROVED" ? "Booking Request Approved" : "Booking Request Rejected",
+        description: `Request #${row.id} was ${row.status.toLowerCase()}.`,
+        timestamp: (row.decidedAt ?? row.createdAt).toISOString(),
+        metadata: {
+          requestId: row.id,
+          status: row.status,
+        },
+      }));
+
+    const activity = [...bookingActivity, ...requestActivity, ...decisionActivity]
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, limit);
+
+    return res.json(activity);
+  } catch (error) {
+    logger.error(error);
+    return res.status(500).json({ error: "Failed to fetch activity" });
   }
 });
 

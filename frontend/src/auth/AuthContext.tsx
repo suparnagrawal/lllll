@@ -268,7 +268,7 @@ function SessionTimeoutModal({
   onLogout: () => void;
   onStayLoggedIn: () => void;
 }) {
-  const [timeLeft, setTimeLeft] = useState(5);
+  const [timeLeft, setTimeLeft] = useState(300); // 5 minutes in seconds
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -284,13 +284,19 @@ function SessionTimeoutModal({
     return () => clearInterval(interval);
   }, [onLogout]);
 
+  const minutesLeft = Math.floor(timeLeft / 60);
+  const secondsLeft = timeLeft % 60;
+  const displayTime = minutesLeft > 0
+    ? `${minutesLeft}:${String(secondsLeft).padStart(2, '0')}`
+    : `${secondsLeft}s`;
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg shadow-lg max-w-md w-full mx-4 p-6">
         <h2 className="text-xl font-bold text-slate-900 mb-2">Session Timeout</h2>
         <p className="text-slate-600 mb-6">
           You've been inactive for 30 minutes. You'll be logged out in{" "}
-          <span className="font-semibold text-red-600">{timeLeft} minute{timeLeft !== 1 ? "s" : ""}</span>.
+          <span className="font-semibold text-red-600">{displayTime}</span>.
         </p>
         <div className="flex gap-3">
           <button
