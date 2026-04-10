@@ -183,7 +183,7 @@ export async function checkStudentConflicts(
   }
 
   // Get bookings for those courses that overlap with proposed time
-  const otherCourseIds: number[] = [...new Set(otherEnrollments.map((e: { courseId: number }) => e.courseId))];
+  const otherCourseIds: number[] = [...new Set<number>(otherEnrollments.map((e: { courseId: number }) => e.courseId))];
 
   const conflictingBookings = await executor
     .select({

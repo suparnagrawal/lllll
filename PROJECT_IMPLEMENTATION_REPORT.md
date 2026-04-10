@@ -835,14 +835,14 @@ This system provides a complete solution for university room allocation with rob
 | Backend startup | `npm run dev` (backend) | Pass. Server starts on port `5000`; Redis connection established. |
 | Frontend startup | `npm run dev` (frontend) | Pass. Vite dev server starts and serves on `http://127.0.0.1:5173/`. |
 | Frontend production build | `npm run build` (frontend) | Pass. Build completes successfully. |
-| Backend TypeScript (project-wide) | `npx tsc --noEmit -p backend/tsconfig.json` | One remaining pre-existing error in `/backend/src/services/slotChangeService.ts:186` (outside this P0 file scope). |
+| Backend TypeScript (project-wide) | `npx tsc --noEmit -p backend/tsconfig.json` | Pass. Project type-check completes successfully. |
 
 ### Current Working Tree Notes
 
 - `HOW_TO_RUN.md` is aligned to backend default port `5000` and frontend `5173`.
 - Frontend API base URL supports `VITE_API_BASE_URL` override with `/api` fallback for local proxying.
 - Profile page security/activity views now use live backend data instead of placeholders.
-- A single pre-existing TypeScript issue remains in `/backend/src/services/slotChangeService.ts:186`.
+- Backend TypeScript validation now passes cleanly for the full backend project.
 
 ### Task Group 2 Stabilization (Refactor Branch)
 
@@ -877,4 +877,4 @@ This system provides a complete solution for university room allocation with rob
 | Backend tests (`npm test`) | Pass (22/22) |
 | Frontend build (`npm run build`) | Pass |
 | Profile route smoke (`/api/users/profile/sessions`, `/api/users/profile/activity`, `/api/users/profile/sessions/logout-others` without auth) | Pass (`401` as expected for unauthenticated requests) |
-| Backend TypeScript (`npx tsc --noEmit -p backend/tsconfig.json`) | One pre-existing error remains in `/backend/src/services/slotChangeService.ts:186` |
+| Backend TypeScript (`npx tsc --noEmit -p backend/tsconfig.json`) | Pass |
