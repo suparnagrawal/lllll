@@ -31,6 +31,7 @@ import {
 	handlePreviewSlotSystemChanges,
 	handleApplySlotSystemChanges,
 	handleStartCommitSession,
+	handleStartEditCommitSession,
 	handleExternalCommitCheck,
 	handleExternalCommitResolve,
 	handleInternalCommitCheck,
@@ -121,6 +122,7 @@ router.get("/imports/:id/freeze-status", timetableImportReadLimiter, handleGetFr
 
 // New staged commit session flow (external -> internal -> freeze -> runtime -> finalize)
 router.post("/commit/start", timetableImportCommitLimiter, handleStartCommitSession);
+router.post("/edit/start", timetableImportCommitLimiter, handleStartEditCommitSession);
 router.post(
 	"/commit/external-check",
 	timetableImportCommitLimiter,

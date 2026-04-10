@@ -25,6 +25,8 @@ import type {
   CommitSessionResolutionDecision,
   CommitSessionFinalizeReport,
   CommitSessionCancelResponse,
+  EditCommitSessionStartResponse,
+  TimetableSnapshotState,
   SlotSystemChanges,
   ChangePreviewResult,
   ChangeApplyResult,
@@ -334,6 +336,18 @@ export async function startCommitSession(
       batchId,
       decisions,
     }),
+  });
+}
+
+export async function startEditCommitSession(input: {
+  slotSystemId: number;
+  expectedVersion: number;
+  newState: TimetableSnapshotState;
+  pruneBookings?: boolean;
+}): Promise<EditCommitSessionStartResponse> {
+  return request<EditCommitSessionStartResponse>("/timetable/edit/start", {
+    method: "POST",
+    body: JSON.stringify(input),
   });
 }
 

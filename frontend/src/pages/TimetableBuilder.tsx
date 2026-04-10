@@ -4,7 +4,6 @@ import {
   addDayLane as apiAddDayLane,
   createBooking as apiCreateBooking,
 
-  deleteTimetableImportBatch as apiDeleteTimetableImportBatch,
   getTimetableImportBatch as apiGetTimetableImportBatch,
   getTimetableImportBatches as apiGetTimetableImportBatches,
   deleteBooking as apiDeleteBooking,
@@ -27,10 +26,10 @@ import {
   getTimetableImportProcessedRows as apiGetTimetableImportProcessedRows,
   previewTimetableImport as apiPreviewTimetableImport,
   saveTimetableImportDecisions as apiSaveTimetableImportDecisions,
-  transferTimetableImportRow as apiTransferTimetableImportRow,
   updateBooking as apiUpdateBooking,
   updateTimeBand as apiUpdateTimeBand,
   startCommitSession as apiStartCommitSession,
+  startEditCommitSession as apiStartEditCommitSession,
   runExternalCommitCheck as apiRunExternalCommitCheck,
   resolveExternalCommitConflicts as apiResolveExternalCommitConflicts,
   runInternalCommitCheck as apiRunInternalCommitCheck,
@@ -66,11 +65,14 @@ import type {
   CommitSessionStage,
   FreezeStatusResponse,
   ChangePreviewResult,
+  EditCommitSessionStartResponse,
+  TimetableSnapshotState,
 
 } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { formatDateDDMMYYYY } from "../utils/datetime";
 import { DateInput } from "../components/DateInput";
+import { formatEditDiffSummary } from "./timetableEditUtils";
 
 const DAY_OF_WEEK_OPTIONS: DayOfWeek[] = [
   "MON",
@@ -338,6 +340,32 @@ function toConflictWindowRange(startAt: string, endAt: string): string {
   return `${start.toLocaleString()} - ${end.toLocaleString()}`;
 }
 
+function toSnapshotStateFromGrid(grid: SlotFullGrid): TimetableSnapshotState {
+  return {
+    slotSystemId: grid.slotSystem.id,
+    days: grid.days.map((day) => ({
+      id: day.id,
+      dayOfWeek: day.dayOfWeek,
+      orderIndex: day.orderIndex,
+      laneCount: day.laneCount,
+    })),
+    timeBands: grid.timeBands.map((band) => ({
+      id: band.id,
+      startTime: String(band.startTime),
+      endTime: String(band.endTime),
+      orderIndex: band.orderIndex,
+    })),
+    blocks: grid.blocks.map((block) => ({
+      id: block.id,
+      dayId: block.dayId,
+      startBandId: block.startBandId,
+      laneIndex: block.laneIndex,
+      rowSpan: block.rowSpan,
+      label: block.label,
+    })),
+  };
+}
+
 function showConflictingBookingsPopup(
   report: TimetableImportCommitReport,
   operationLabel: string,
@@ -426,7 +454,7 @@ export function TimetableBuilderPage() {
   const [commitLoading, setCommitLoading] = useState(false);
   const [saveDecisionsLoading, setSaveDecisionsLoading] = useState(false);
   const [reallocateLoading, setReallocateLoading] = useState(false);
-  const [deleteBatchLoading, setDeleteBatchLoading] = useState(false);
+  const [deleteBatchLoading] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [importInfo, setImportInfo] = useState<string | null>(null);
 
@@ -449,9 +477,7 @@ export function TimetableBuilderPage() {
   const [deletingBookingId, setDeletingBookingId] = useState<number | null>(null);
   const [creatingRowId, setCreatingRowId] = useState<number | null>(null);
   const [creatingResolveSlotRowId, setCreatingResolveSlotRowId] = useState<number | null>(null);
-  const [movingRowId, setMovingRowId] = useState<number | null>(null);
   const [rowDecisions, setRowDecisions] = useState<Record<number, RowDecisionState>>({});
-  const [rowMoveTargetById, setRowMoveTargetById] = useState<Record<number, number | "">>({});
 
   const [dragSelection, setDragSelection] = useState<DragSelection | null>(null);
 
@@ -465,6 +491,8 @@ export function TimetableBuilderPage() {
   const [conflictLoading, setConflictLoading] = useState(false);
   const [showConflictDialog, setShowConflictDialog] = useState(false);
   const [freezeInfo, setFreezeInfo] = useState<FreezeStatusResponse | null>(null);
+  const [commitFlowContext, setCommitFlowContext] = useState<"import" | "edit" | null>(null);
+  const [commitTargetSlotSystemId, setCommitTargetSlotSystemId] = useState<number | null>(null);
 
   // Change workspace state
   const [showChangeWorkspace, setShowChangeWorkspace] = useState(false);
@@ -472,6 +500,11 @@ export function TimetableBuilderPage() {
   const [changeLoading, setChangeLoading] = useState(false);
   const [changeError, setChangeError] = useState<string | null>(null);
   const [changeSuccess, setChangeSuccess] = useState<string | null>(null);
+  const [editPruneBookings, setEditPruneBookings] = useState(true);
+  const [editStartLoading, setEditStartLoading] = useState(false);
+  const [editStartResult, setEditStartResult] =
+    useState<EditCommitSessionStartResponse | null>(null);
+  const [editDraftJson, setEditDraftJson] = useState("");
 
   const days: SlotDay[] = grid?.days ?? [];
   const timeBands: SlotTimeBand[] = grid?.timeBands ?? [];
@@ -484,8 +517,7 @@ export function TimetableBuilderPage() {
     saveDecisionsLoading ||
     reallocateLoading ||
     deleteBatchLoading ||
-    creatingResolveSlotRowId !== null ||
-    movingRowId !== null;
+    creatingResolveSlotRowId !== null;
 
   const slotLabelOptions = useMemo(() => {
     const labels = Array.from(
@@ -762,7 +794,6 @@ export function TimetableBuilderPage() {
   const hydratePreviewFromBatch = (report: TimetableImportPreviewReport) => {
     setPreviewReport(report);
     setRowDecisions(buildRowDecisionsFromReport(report));
-    setRowMoveTargetById({});
     setImportTermStart(toDateOnlyInputValue(report.termStartDate));
     setImportTermEnd(toDateOnlyInputValue(report.termEndDate));
     setSelectedBatchId(report.batchId);
@@ -1481,104 +1512,6 @@ export function TimetableBuilderPage() {
     }
   };
 
-  const loadImportBatchForEditing = async (batchId: number) => {
-    setImportLoading(true);
-    setImportError(null);
-    setImportInfo(null);
-    setCommitReport(null);
-
-    try {
-      const report = await apiGetTimetableImportBatch(batchId);
-
-      hydratePreviewFromBatch(report);
-
-      if (selectedSystemId !== report.slotSystemId) {
-        setSelectedSystemId(report.slotSystemId);
-      }
-
-      await loadProcessedRows(report.batchId);
-    } catch (e) {
-      setImportError(e instanceof Error ? e.message : "Failed to load import batch");
-    } finally {
-      setImportLoading(false);
-    }
-  };
-
-  const handleLoadSelectedBatch = async () => {
-    if (selectedBatchId === "") {
-      setImportError("Choose a batch to load");
-      return;
-    }
-
-    await loadImportBatchForEditing(selectedBatchId);
-  };
-
-  const handleRefreshBatchContext = async () => {
-    if (selectedSystemId === "") {
-      return;
-    }
-
-    const loadedBatchId = previewReport?.batchId;
-    const activeBatchId =
-      loadedBatchId ?? (selectedBatchId !== "" ? selectedBatchId : undefined);
-
-    setImportBatchesLoading(true);
-    setImportBatchesError(null);
-    setImportError(null);
-
-    try {
-      const batches = await apiGetTimetableImportBatches({
-        slotSystemId: selectedSystemId,
-        limit: 50,
-      });
-
-      setImportBatches(batches);
-
-      const activeBatchExists =
-        typeof activeBatchId === "number" &&
-        batches.some((batch) => batch.batchId === activeBatchId);
-
-      setSelectedBatchId((current) => {
-        if (current !== "" && batches.some((batch) => batch.batchId === current)) {
-          return current;
-        }
-
-        if (
-          typeof loadedBatchId === "number" &&
-          batches.some((batch) => batch.batchId === loadedBatchId)
-        ) {
-          return loadedBatchId;
-        }
-
-        return "";
-      });
-
-      if (!activeBatchExists) {
-        if (previewReport && activeBatchId === previewReport.batchId) {
-          setPreviewReport(null);
-          setRowDecisions({});
-          setCommitReport(null);
-          setProcessedRowsReport(null);
-          setProcessedRowsError(null);
-        }
-
-        return;
-      }
-
-      const refreshedReport = await apiGetTimetableImportBatch(activeBatchId);
-      hydratePreviewFromBatch(refreshedReport);
-
-      await loadGrid(refreshedReport.slotSystemId);
-      await loadProcessedRows(refreshedReport.batchId);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "Failed to refresh batch data";
-      setImportBatchesError(message);
-      setImportError(message);
-    } finally {
-      setImportBatchesLoading(false);
-    }
-  };
-
   const updateRowDecision = (rowId: number, patch: Partial<RowDecisionState>) => {
     setRowDecisions((current) => {
       const existing = current[rowId] ?? createEmptyDecisionState();
@@ -1750,68 +1683,6 @@ export function TimetableBuilderPage() {
     }
   };
 
-  const updateRowMoveTarget = (rowId: number, targetSlotSystemId: number | "") => {
-    setRowMoveTargetById((current) => ({
-      ...current,
-      [rowId]: targetSlotSystemId,
-    }));
-  };
-
-  const handleMoveRowToAnotherSlotSystem = async (row: TimetableImportPreviewRow) => {
-    if (!previewReport) {
-      return;
-    }
-
-    const targetSlotSystemId = rowMoveTargetById[row.rowId] ?? "";
-
-    if (targetSlotSystemId === "" || !Number.isInteger(targetSlotSystemId)) {
-      setImportError("Select a target slot system before transferring the row");
-      return;
-    }
-
-    if (targetSlotSystemId === previewReport.slotSystemId) {
-      setImportError("Choose a different slot system for transfer");
-      return;
-    }
-
-    const targetSlotSystem = slotSystems.find((system) => system.id === targetSlotSystemId);
-
-    if (!targetSlotSystem) {
-      setImportError("Target slot system no longer exists");
-      return;
-    }
-
-    const sourceBatchId = previewReport.batchId;
-    const sourceSlotSystemId = previewReport.slotSystemId;
-
-    setMovingRowId(row.rowId);
-    setImportError(null);
-    setImportInfo(null);
-
-    try {
-      await apiTransferTimetableImportRow(
-        sourceBatchId,
-        row.rowId,
-        targetSlotSystemId,
-      );
-
-      const refreshedSourceReport = await apiGetTimetableImportBatch(sourceBatchId);
-      hydratePreviewFromBatch(refreshedSourceReport);
-
-      await loadProcessedRows(sourceBatchId);
-      await loadImportBatches(sourceSlotSystemId);
-
-      setImportInfo(
-        `Transferred row ${row.rowIndex} to ${targetSlotSystem.name}. Row has been transferred. Source row is marked Skip (Ignore semantics).`,
-      );
-    } catch (e) {
-      setImportError(e instanceof Error ? e.message : "Failed to transfer row to another slot system");
-    } finally {
-      setMovingRowId(null);
-      updateRowMoveTarget(row.rowId, "");
-    }
-  };
-
   const handleSaveImportDecisions = async () => {
     if (!previewReport) {
       return;
@@ -1879,56 +1750,6 @@ export function TimetableBuilderPage() {
     }
   };
 
-  const handleDeleteSelectedBatch = async () => {
-    const activeBatchId = selectedBatchId !== "" ? selectedBatchId : previewReport?.batchId;
-
-    if (!activeBatchId) {
-      setImportError("Choose or load a batch first");
-      return;
-    }
-
-    const approved =
-      typeof window === "undefined"
-        ? true
-        : window.confirm(
-            `Delete this allocation? This will remove all linked imported bookings and cannot be undone.`,
-          );
-
-    if (!approved) {
-      return;
-    }
-
-    setDeleteBatchLoading(true);
-    setImportError(null);
-    setImportInfo(null);
-
-    try {
-      const result = await apiDeleteTimetableImportBatch(activeBatchId);
-
-      if (previewReport?.batchId === activeBatchId) {
-        setPreviewReport(null);
-        setRowDecisions({});
-        setCommitReport(null);
-        setProcessedRowsReport(null);
-        setProcessedRowsError(null);
-        setProcessedBookingEdits({});
-        setNewRowBookingDrafts({});
-      }
-
-      setSelectedBatchId("");
-      await loadImportBatches(selectedSystemId);
-
-      const bookingLabel = result.deletedBookings === 1 ? "booking" : "bookings";
-      setImportInfo(
-        `Allocation deleted and removed ${result.deletedBookings} linked ${bookingLabel}.`,
-      );
-    } catch (e) {
-      setImportError(e instanceof Error ? e.message : "Failed to delete import batch");
-    } finally {
-      setDeleteBatchLoading(false);
-    }
-  };
-
   const clearCommitConflictState = () => {
     setShowConflictDialog(false);
     setConflictReport(null);
@@ -1936,6 +1757,8 @@ export function TimetableBuilderPage() {
     setConflictStage(null);
     setCommitSessionId(null);
     setFreezeInfo(null);
+    setCommitFlowContext(null);
+    setCommitTargetSlotSystemId(null);
   };
 
   const hydrateAfterFinalize = async (batchId: number) => {
@@ -1997,6 +1820,53 @@ export function TimetableBuilderPage() {
     await runFreezeRuntimeAndFinalize(activeCommitSessionId, batchId);
   };
 
+  const runFreezeRuntimeAndFinalizeForEdit = async (
+    activeCommitSessionId: number,
+    slotSystemId: number,
+  ) => {
+    await apiStartCommitFreeze(activeCommitSessionId);
+
+    const runtimeReport = await apiRunRuntimeCommitCheck(activeCommitSessionId);
+
+    if (runtimeReport.conflictCount > 0) {
+      setConflictStage("runtime");
+      setConflictReport(runtimeReport);
+      setConflictResolutions({});
+      setShowConflictDialog(true);
+      return;
+    }
+
+    const finalizeReport = await apiFinalizeCommitSession(activeCommitSessionId);
+    setCommitReport(null);
+    clearCommitConflictState();
+    setEditStartResult(null);
+    setChangeSuccess(
+      `Edit commit completed. Created ${finalizeReport.createdBookings} bookings and removed ${finalizeReport.deletedConflictingBookings} obsolete booking(s).`,
+    );
+    setShowChangeWorkspace(false);
+
+    await loadGrid(slotSystemId);
+    await loadSlotSystems();
+    await loadImportBatches(slotSystemId);
+  };
+
+  const runInternalThenFinalizeForEdit = async (
+    activeCommitSessionId: number,
+    slotSystemId: number,
+  ) => {
+    const internalReport = await apiRunInternalCommitCheck(activeCommitSessionId);
+
+    if (internalReport.conflictCount > 0) {
+      setConflictStage("internal");
+      setConflictReport(internalReport);
+      setConflictResolutions({});
+      setShowConflictDialog(true);
+      return;
+    }
+
+    await runFreezeRuntimeAndFinalizeForEdit(activeCommitSessionId, slotSystemId);
+  };
+
   const handleCommitImport = async () => {
     if (!previewReport) {
       return;
@@ -2016,6 +1886,8 @@ export function TimetableBuilderPage() {
       const session = await apiStartCommitSession(previewReport.batchId, decisions);
 
       setCommitSessionId(session.commitSessionId);
+      setCommitFlowContext("import");
+      setCommitTargetSlotSystemId(previewReport.slotSystemId);
 
       const externalReport = await apiRunExternalCommitCheck(session.commitSessionId);
 
@@ -2036,7 +1908,7 @@ export function TimetableBuilderPage() {
   };
 
   const handleResolveConflicts = async () => {
-    if (!previewReport || !conflictReport || !conflictStage || !commitSessionId) {
+    if (!conflictReport || !conflictStage || !commitSessionId) {
       return;
     }
 
@@ -2095,7 +1967,21 @@ export function TimetableBuilderPage() {
         }
 
         setShowConflictDialog(false);
-        await runInternalThenFinalize(commitSessionId, previewReport.batchId);
+
+        if (commitFlowContext === "edit") {
+          if (!commitTargetSlotSystemId) {
+            throw new Error("Missing target slot system for edit commit");
+          }
+
+          await runInternalThenFinalizeForEdit(commitSessionId, commitTargetSlotSystemId);
+        } else {
+          if (!previewReport) {
+            throw new Error("Missing import context for staged commit");
+          }
+
+          await runInternalThenFinalize(commitSessionId, previewReport.batchId);
+        }
+
         return;
       }
 
@@ -2110,7 +1996,21 @@ export function TimetableBuilderPage() {
         }
 
         setShowConflictDialog(false);
-        await runFreezeRuntimeAndFinalize(commitSessionId, previewReport.batchId);
+
+        if (commitFlowContext === "edit") {
+          if (!commitTargetSlotSystemId) {
+            throw new Error("Missing target slot system for edit commit");
+          }
+
+          await runFreezeRuntimeAndFinalizeForEdit(commitSessionId, commitTargetSlotSystemId);
+        } else {
+          if (!previewReport) {
+            throw new Error("Missing import context for staged commit");
+          }
+
+          await runFreezeRuntimeAndFinalize(commitSessionId, previewReport.batchId);
+        }
+
         return;
       }
 
@@ -2126,10 +2026,33 @@ export function TimetableBuilderPage() {
       const finalizeReport = await apiFinalizeCommitSession(commitSessionId);
       setCommitReport(null);
       clearCommitConflictState();
-      setImportInfo(
-        `Commit completed. Created ${finalizeReport.createdBookings} bookings and skipped ${finalizeReport.skippedOperations} operation(s).`,
-      );
-      await hydrateAfterFinalize(previewReport.batchId);
+
+      if (commitFlowContext === "edit") {
+        const targetSlotSystemId = commitTargetSlotSystemId;
+
+        if (!targetSlotSystemId) {
+          throw new Error("Missing target slot system for edit commit");
+        }
+
+        setEditStartResult(null);
+        setChangeSuccess(
+          `Edit commit completed. Created ${finalizeReport.createdBookings} bookings and removed ${finalizeReport.deletedConflictingBookings} obsolete booking(s).`,
+        );
+        setShowChangeWorkspace(false);
+
+        await loadGrid(targetSlotSystemId);
+        await loadSlotSystems();
+        await loadImportBatches(targetSlotSystemId);
+      } else {
+        if (!previewReport) {
+          throw new Error("Missing import context for staged commit");
+        }
+
+        setImportInfo(
+          `Commit completed. Created ${finalizeReport.createdBookings} bookings and skipped ${finalizeReport.skippedOperations} operation(s).`,
+        );
+        await hydrateAfterFinalize(previewReport.batchId);
+      }
     } catch (e) {
       setImportError(e instanceof Error ? e.message : "Failed to resolve staged conflicts");
     } finally {
@@ -2145,8 +2068,14 @@ export function TimetableBuilderPage() {
 
     try {
       await apiCancelCommitSession(commitSessionId);
+      const cancelledEditFlow = commitFlowContext === "edit";
       clearCommitConflictState();
-      setImportInfo("Commit session cancelled. Booking operations resumed.");
+
+      if (cancelledEditFlow) {
+        setChangeSuccess("Edit commit session cancelled. Booking operations resumed.");
+      } else {
+        setImportInfo("Commit session cancelled. Booking operations resumed.");
+      }
     } catch (e) {
       setImportError(e instanceof Error ? e.message : "Failed to cancel commit session");
     }
@@ -2158,15 +2087,80 @@ export function TimetableBuilderPage() {
 
     setChangeLoading(true);
     setChangeError(null);
+    setEditStartResult(null);
 
     try {
       const preview = await apiPreviewSlotSystemChanges(Number(selectedSystemId), {});
       setChangePreview(preview);
+      if (grid && grid.slotSystem.id === Number(selectedSystemId)) {
+        setEditDraftJson(JSON.stringify(toSnapshotStateFromGrid(grid), null, 2));
+      } else {
+        setEditDraftJson("");
+      }
       setShowChangeWorkspace(true);
     } catch (e) {
       setChangeError(e instanceof Error ? e.message : "Failed to preview changes");
     } finally {
       setChangeLoading(false);
+    }
+  };
+
+  const handleStartEditCommit = async () => {
+    if (selectedSystemId === "" || !grid || !selectedSystem) {
+      setChangeError("Select a locked slot system with loaded grid before starting edit mode");
+      return;
+    }
+
+    if (!selectedSystem.isLocked) {
+      setChangeError("Edit mode is only available for locked slot systems");
+      return;
+    }
+
+    setEditStartLoading(true);
+    setChangeError(null);
+    setChangeSuccess(null);
+    setImportError(null);
+
+    try {
+      let snapshot = toSnapshotStateFromGrid(grid);
+
+      if (editDraftJson.trim().length > 0) {
+        try {
+          const parsed = JSON.parse(editDraftJson) as TimetableSnapshotState;
+          snapshot = parsed;
+        } catch {
+          setChangeError("Edit draft JSON is invalid. Fix the JSON before starting commit.");
+          return;
+        }
+      }
+
+      const result = await apiStartEditCommitSession({
+        slotSystemId: selectedSystemId,
+        expectedVersion: selectedSystem.version,
+        newState: snapshot,
+        pruneBookings: editPruneBookings,
+      });
+
+      setEditStartResult(result);
+      setCommitSessionId(result.session.commitSessionId);
+      setCommitFlowContext("edit");
+      setCommitTargetSlotSystemId(selectedSystemId);
+
+      const externalReport = await apiRunExternalCommitCheck(result.session.commitSessionId);
+
+      if (externalReport.conflictCount > 0) {
+        setConflictStage("external");
+        setConflictReport(externalReport);
+        setConflictResolutions({});
+        setShowConflictDialog(true);
+        return;
+      }
+
+      await runInternalThenFinalizeForEdit(result.session.commitSessionId, selectedSystemId);
+    } catch (e) {
+      setChangeError(e instanceof Error ? e.message : "Failed to start edit commit");
+    } finally {
+      setEditStartLoading(false);
     }
   };
 
@@ -2303,83 +2297,23 @@ export function TimetableBuilderPage() {
           )}
         </div>
 
-        <div className="form-row">
-          <div className="form-field">
-            <label htmlFor="importBatchSelect">Open existing batch</label>
-            <select
-              id="importBatchSelect"
-              className="input"
-              value={selectedBatchId}
-              onChange={(e) =>
-                setSelectedBatchId(e.target.value === "" ? "" : Number(e.target.value))
-              }
-              disabled={
-                selectedSystemId === "" ||
-                importLoading ||
-                commitLoading ||
-                saveDecisionsLoading ||
-                importBatchesLoading
-              }
-            >
-              <option value="">Select a batch</option>
-              {importBatches.map((batch) => (
-                <option key={batch.batchId} value={batch.batchId}>
-                  {batch.status} · Valid {batch.validRows} · Resolved {batch.resolvedRows} · Unresolved {batch.unresolvedRows} · {formatDateDDMMYYYY(batch.termStartDate)} to {formatDateDDMMYYYY(batch.termEndDate)} · {batch.fileName}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="form-field">
-            <label>Batch actions</label>
-            <div className="btn-group">
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => void handleLoadSelectedBatch()}
-                disabled={
-                  selectedBatchId === "" ||
-                  importLoading ||
-                  commitLoading ||
-                  saveDecisionsLoading ||
-                  reallocateLoading ||
-                  deleteBatchLoading
-                }
-              >
-                {importLoading ? "Loading..." : "Load Selected Batch"}
-              </button>
-              <button
-                type="button"
-                className="btn btn-danger"
-                onClick={() => void handleDeleteSelectedBatch()}
-                disabled={
-                  (selectedBatchId === "" && !previewReport) ||
-                  importLoading ||
-                  commitLoading ||
-                  saveDecisionsLoading ||
-                  reallocateLoading ||
-                  deleteBatchLoading
-                }
-              >
-                {deleteBatchLoading ? "Deleting..." : "Delete Batch"}
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={() => void handleRefreshBatchContext()}
-                disabled={
-                  selectedSystemId === "" ||
-                  importLoading ||
-                  commitLoading ||
-                  saveDecisionsLoading ||
-                  reallocateLoading ||
-                  deleteBatchLoading ||
-                  importBatchesLoading
-                }
-              >
-                {importBatchesLoading ? "Refreshing..." : "Refresh Batch + List"}
-              </button>
+        <div className="alert mb-4">
+          Single-sheet mode is active: each slot system uses one classroom allocation sheet.
+          Uploading a new file replaces older batch context for the selected slot system.
+          {selectedSystemId !== "" && (
+            <div className="mt-1 text-xs text-muted-foreground">
+              {importBatchesLoading
+                ? "Checking active sheet context..."
+                : `Known sheets for selected slot system: ${importBatches.length}${
+                    selectedBatchId !== "" ? ` · Active batch id: ${selectedBatchId}` : ""
+                  }`}
             </div>
-          </div>
+          )}
+          {previewReport && (
+            <div className="mt-1 text-xs text-muted-foreground">
+              Active sheet: Batch #{previewReport.batchId} · {formatDateDDMMYYYY(previewReport.termStartDate)} to {formatDateDDMMYYYY(previewReport.termEndDate)}
+            </div>
+          )}
         </div>
 
         {importBatchesError && (
@@ -2550,10 +2484,6 @@ export function TimetableBuilderPage() {
               {previewReport.rows.map((row) => {
                 const decision = rowDecisions[row.rowId] ?? createDecisionForPreviewRow(row);
                 const isAutoAllowed = row.classification === "VALID_AND_AUTOMATABLE";
-                const moveTargetSlotSystems = slotSystems.filter(
-                  (system) => system.id !== previewReport.slotSystemId,
-                );
-                const selectedMoveTargetSlotSystemId = rowMoveTargetById[row.rowId] ?? "";
 
                 const selectedStartBandIndex =
                   decision.createSlotStartBandId === ""
@@ -2635,49 +2565,6 @@ export function TimetableBuilderPage() {
                             </div>
                           )}
                         </div>
-
-                        <>
-                          <div className="form-field">
-                            <label>Transfer To Slot System</label>
-                            <select
-                              className="input"
-                              value={selectedMoveTargetSlotSystemId}
-                              onChange={(e) =>
-                                updateRowMoveTarget(
-                                  row.rowId,
-                                  e.target.value === "" ? "" : Number(e.target.value),
-                                )
-                              }
-                              disabled={isDecisionEditingLocked || moveTargetSlotSystems.length === 0}
-                            >
-                              <option value="">
-                                {moveTargetSlotSystems.length > 0
-                                  ? "Select slot system"
-                                  : "No other slot systems"}
-                              </option>
-                              {moveTargetSlotSystems.map((system) => (
-                                <option key={system.id} value={system.id}>
-                                  {system.name}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                          <div className="form-field">
-                            <label>Transfer</label>
-                            <button
-                              type="button"
-                              className="btn btn-ghost btn-sm"
-                              onClick={() => void handleMoveRowToAnotherSlotSystem(row)}
-                              disabled={
-                                isDecisionEditingLocked ||
-                                moveTargetSlotSystems.length === 0 ||
-                                selectedMoveTargetSlotSystemId === ""
-                              }
-                            >
-                              {movingRowId === row.rowId ? "Transferring..." : "Transfer Row"}
-                            </button>
-                          </div>
-                        </>
 
                         {decision.action === "RESOLVE" && (
                           <>
@@ -3807,11 +3694,63 @@ export function TimetableBuilderPage() {
             )}
 
             <div className="text-sm text-gray-500 mb-4">
-              To make structural changes (add/remove days, time bands, blocks), use the standard controls in the main builder.
-              The change workspace will apply them under a booking freeze.
+              Edit mode computes a deterministic diff from the latest committed snapshot, then runs staged conflict checks only for affected rows.
             </div>
 
+            <div className="mb-4">
+              <label className="block text-sm font-medium mb-2" htmlFor="editDraftJson">
+                Proposed Snapshot (JSON)
+              </label>
+              <textarea
+                id="editDraftJson"
+                className="input"
+                rows={10}
+                value={editDraftJson}
+                onChange={(event) => setEditDraftJson(event.target.value)}
+                placeholder="Paste or edit snapshot JSON..."
+                disabled={editStartLoading}
+              />
+            </div>
+
+            <label className="flex items-center gap-2 text-sm mb-4">
+              <input
+                type="checkbox"
+                checked={editPruneBookings}
+                onChange={(event) => setEditPruneBookings(event.target.checked)}
+                disabled={editStartLoading}
+              />
+              <span>Prune obsolete bookings for changed rows during finalize</span>
+            </label>
+
+            {editStartResult && (
+              <div className="border rounded p-4 mb-4 bg-gray-50">
+                <h4 className="font-medium mb-2">Last Edit Diff</h4>
+                <p className="text-sm text-gray-700">
+                  Changed labels: {editStartResult.diff.changedLabels.length} · Affected rows: {editStartResult.diff.affectedRows} · Unchanged rows: {editStartResult.diff.unchangedRows}
+                </p>
+                <p className="text-sm text-gray-600 mt-1">
+                  {formatEditDiffSummary(editStartResult.diff)}
+                </p>
+                {editStartResult.diff.operations.length > 0 && (
+                  <div className="mt-2 max-h-40 overflow-y-auto border rounded bg-white p-2">
+                    {editStartResult.diff.operations.map((operation, index) => (
+                      <div key={`${operation.type}-${operation.label}-${index}`} className="text-xs py-1 border-b last:border-b-0">
+                        <strong>{operation.type}</strong> · {operation.label} · {operation.oldDescriptorCount} → {operation.newDescriptorCount}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="flex gap-3 justify-end">
+              <button
+                className="btn btn-primary"
+                onClick={() => void handleStartEditCommit()}
+                disabled={editStartLoading || changeLoading || selectedSystemId === ""}
+              >
+                {editStartLoading ? "Starting..." : "Start Edit Commit"}
+              </button>
               <button
                 className="btn btn-ghost"
                 onClick={() => {
@@ -3819,6 +3758,8 @@ export function TimetableBuilderPage() {
                   setChangePreview(null);
                   setChangeError(null);
                   setChangeSuccess(null);
+                  setEditStartResult(null);
+                  setEditDraftJson("");
                 }}
               >
                 Close

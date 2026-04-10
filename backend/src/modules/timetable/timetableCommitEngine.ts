@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { and, asc, eq, gt, inArray, lt, ne } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, like, lt, ne, sql } from "drizzle-orm";
 import { db } from "../../db";
 import {
   bookings,
@@ -11,6 +11,14 @@ import {
 } from "../../db/schema";
 import { saveTimetableImportDecisions } from "./importService";
 import { slotBlocks, slotDays, slotSystems, slotTimeBands } from "./schema";
+import {
+  computeTimetableDiff,
+  normalizeSnapshotState,
+  type TimetableDayOfWeek,
+  type TimetableDiffOperationType,
+  type TimetableSnapshotState,
+  type TimetableSlotDescriptor,
+} from "./timetableDiffEngine";
 import {
   freezeBookings,
   getBookingFreezeState,
@@ -79,10 +87,44 @@ export type CommitSessionSummary = {
   updatedAt: string;
 };
 
+export type EditCommitDiffSummary = {
+  total: number;
+  added: number;
+  removed: number;
+  changedSlot: number;
+  changedVenue: number;
+};
+
+export type EditCommitDiffOperationPreview = {
+  type: TimetableDiffOperationType;
+  label: string;
+  oldDescriptorCount: number;
+  newDescriptorCount: number;
+  oldRoomId: number | null;
+  newRoomId: number | null;
+};
+
+export type EditCommitSessionStartResponse = {
+  session: CommitSessionSummary;
+  diff: {
+    summary: EditCommitDiffSummary;
+    changedLabels: string[];
+    operations: EditCommitDiffOperationPreview[];
+    affectedRows: number;
+    unchangedRows: number;
+    expectedVersion: number;
+    currentVersion: number;
+  };
+};
+
 type ServiceError = Error & { status: number };
+
+type SessionOperationKind = "UPSERT" | "DELETE_ONLY";
 
 type SessionOperation = {
   operationId: string;
+  kind: SessionOperationKind;
+  operationType?: TimetableDiffOperationType;
   rowId: number;
   rowIndex: number;
   courseCode: string;
@@ -94,6 +136,7 @@ type SessionOperation = {
   sourceRef: string;
   status: "ACTIVE" | "SKIPPED";
   forceOverwriteBookingIds: number[];
+  cleanupBookingIds: number[];
 };
 
 type SlotDescriptor = {
@@ -102,6 +145,42 @@ type SlotDescriptor = {
   startTime: string;
   endTime: string;
   blockId: number;
+};
+
+type EditSessionMetadata = {
+  mode: "EDIT";
+  pruneBookings: boolean;
+  expectedVersion: number;
+  changedLabels: string[];
+  diffSummary: EditCommitDiffSummary;
+  affectedRows: number;
+  unchangedRows: number;
+  newSnapshot: TimetableSnapshotState;
+};
+
+type CommittedRowForEdit = {
+  batchId: number;
+  termStartDate: Date;
+  termEndDate: Date;
+  rowId: number;
+  rowIndex: number;
+  classification:
+    | "VALID_AND_AUTOMATABLE"
+    | "UNRESOLVED_SLOT"
+    | "UNRESOLVED_ROOM"
+    | "AMBIGUOUS_CLASSROOM"
+    | "DUPLICATE_ROW"
+    | "CONFLICTING_MAPPING"
+    | "MISSING_REQUIRED_FIELD"
+    | "OTHER_PROCESSING_ERROR";
+  rawCourseCode: string | null;
+  rawSlot: string | null;
+  rawClassroom: string | null;
+  resolvedSlotLabel: string | null;
+  resolvedRoomId: number | null;
+  resolutionAction: "AUTO" | "RESOLVE" | "SKIP" | null;
+  resolutionSlotLabel: string | null;
+  resolutionRoomId: number | null;
 };
 
 function createServiceError(status: number, message: string): ServiceError {
@@ -207,6 +286,551 @@ function parseOptionalDate(value: string | undefined): Date | null {
   }
 
   return parsed;
+}
+
+function parseEditSessionMetadata(raw: unknown): EditSessionMetadata | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+
+  const source = raw as Record<string, unknown>;
+
+  if (source.mode !== "EDIT") {
+    return null;
+  }
+
+  const expectedVersion = Number(source.expectedVersion);
+  const pruneBookings = source.pruneBookings === true;
+  const changedLabels = Array.isArray(source.changedLabels)
+    ? source.changedLabels.filter((value): value is string => typeof value === "string")
+    : [];
+
+  const diffSummarySource =
+    source.diffSummary && typeof source.diffSummary === "object"
+      ? (source.diffSummary as Record<string, unknown>)
+      : {};
+
+  const newSnapshot = parseSnapshotState(source.newSnapshot, Number(source.slotSystemId ?? 0));
+
+  if (!newSnapshot || !Number.isInteger(expectedVersion) || expectedVersion <= 0) {
+    return null;
+  }
+
+  return {
+    mode: "EDIT",
+    pruneBookings,
+    expectedVersion,
+    changedLabels,
+    diffSummary: {
+      total: Number(diffSummarySource.total ?? 0),
+      added: Number(diffSummarySource.added ?? 0),
+      removed: Number(diffSummarySource.removed ?? 0),
+      changedSlot: Number(diffSummarySource.changedSlot ?? 0),
+      changedVenue: Number(diffSummarySource.changedVenue ?? 0),
+    },
+    affectedRows: Number(source.affectedRows ?? 0),
+    unchangedRows: Number(source.unchangedRows ?? 0),
+    newSnapshot,
+  };
+}
+
+function parseSnapshotState(
+  raw: unknown,
+  fallbackSlotSystemId: number,
+): TimetableSnapshotState | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+
+  const source = raw as Partial<TimetableSnapshotState>;
+
+  if (!Array.isArray(source.days) || !Array.isArray(source.timeBands) || !Array.isArray(source.blocks)) {
+    return null;
+  }
+
+  const snapshotInput: TimetableSnapshotState = {
+    slotSystemId:
+      Number.isInteger(Number(source.slotSystemId)) && Number(source.slotSystemId) > 0
+        ? Number(source.slotSystemId)
+        : fallbackSlotSystemId,
+    days: source.days,
+    timeBands: source.timeBands,
+    blocks: source.blocks,
+    ...(source.roomAssignments && typeof source.roomAssignments === "object"
+      ? { roomAssignments: source.roomAssignments as Record<string, number> }
+      : {}),
+  };
+
+  const parsed = normalizeSnapshotState(snapshotInput);
+
+  if (parsed.days.length === 0 || parsed.timeBands.length === 0) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function normalizeLabel(value: string): string {
+  return normalizeSpace(value).toLowerCase();
+}
+
+function buildSnapshotDescriptorLookup(
+  snapshot: TimetableSnapshotState,
+): Map<string, TimetableSlotDescriptor[]> {
+  const dayById = new Map(snapshot.days.map((day) => [day.id, day]));
+  const timeBands = [...snapshot.timeBands].sort((a, b) => {
+    if (a.orderIndex !== b.orderIndex) {
+      return a.orderIndex - b.orderIndex;
+    }
+
+    if (a.startTime !== b.startTime) {
+      return a.startTime.localeCompare(b.startTime);
+    }
+
+    if (a.endTime !== b.endTime) {
+      return a.endTime.localeCompare(b.endTime);
+    }
+
+    return a.id - b.id;
+  });
+
+  const bandIndexById = new Map<number, number>();
+  timeBands.forEach((band, index) => {
+    bandIndexById.set(band.id, index);
+  });
+
+  const output = new Map<string, TimetableSlotDescriptor[]>();
+
+  for (const block of snapshot.blocks) {
+    const normalizedLabel = normalizeLabel(block.label);
+    const day = dayById.get(block.dayId);
+    const startBandIndex = bandIndexById.get(block.startBandId);
+
+    if (!normalizedLabel || !day || startBandIndex === undefined) {
+      continue;
+    }
+
+    const endBandIndex = startBandIndex + Math.max(1, block.rowSpan) - 1;
+    const startBand = timeBands[startBandIndex];
+    const endBand = timeBands[endBandIndex];
+
+    if (!startBand || !endBand) {
+      continue;
+    }
+
+    const descriptor: TimetableSlotDescriptor = {
+      dayOfWeek: day.dayOfWeek,
+      startTime: startBand.startTime,
+      endTime: endBand.endTime,
+      laneIndex: Math.max(0, block.laneIndex),
+    };
+
+    const existing = output.get(normalizedLabel) ?? [];
+    existing.push(descriptor);
+    output.set(normalizedLabel, existing);
+  }
+
+  for (const [label, descriptors] of output.entries()) {
+    descriptors.sort((a, b) => {
+      if (a.dayOfWeek !== b.dayOfWeek) {
+        return a.dayOfWeek.localeCompare(b.dayOfWeek);
+      }
+
+      if (a.startTime !== b.startTime) {
+        return a.startTime.localeCompare(b.startTime);
+      }
+
+      if (a.endTime !== b.endTime) {
+        return a.endTime.localeCompare(b.endTime);
+      }
+
+      return a.laneIndex - b.laneIndex;
+    });
+
+    output.set(label, descriptors);
+  }
+
+  return output;
+}
+
+async function loadLiveSnapshot(slotSystemId: number): Promise<TimetableSnapshotState> {
+  const [days, timeBands, blocks] = await Promise.all([
+    db
+      .select({
+        id: slotDays.id,
+        dayOfWeek: slotDays.dayOfWeek,
+        orderIndex: slotDays.orderIndex,
+        laneCount: slotDays.laneCount,
+      })
+      .from(slotDays)
+      .where(eq(slotDays.slotSystemId, slotSystemId))
+      .orderBy(asc(slotDays.orderIndex), asc(slotDays.id)),
+    db
+      .select({
+        id: slotTimeBands.id,
+        startTime: slotTimeBands.startTime,
+        endTime: slotTimeBands.endTime,
+        orderIndex: slotTimeBands.orderIndex,
+      })
+      .from(slotTimeBands)
+      .where(eq(slotTimeBands.slotSystemId, slotSystemId))
+      .orderBy(asc(slotTimeBands.orderIndex), asc(slotTimeBands.id)),
+    db
+      .select({
+        id: slotBlocks.id,
+        dayId: slotBlocks.dayId,
+        startBandId: slotBlocks.startBandId,
+        laneIndex: slotBlocks.laneIndex,
+        rowSpan: slotBlocks.rowSpan,
+        label: slotBlocks.label,
+      })
+      .from(slotBlocks)
+      .where(eq(slotBlocks.slotSystemId, slotSystemId))
+      .orderBy(asc(slotBlocks.dayId), asc(slotBlocks.startBandId), asc(slotBlocks.id)),
+  ]);
+
+  return normalizeSnapshotState({
+    slotSystemId,
+    days,
+    timeBands: timeBands.map((band) => ({
+      id: band.id,
+      startTime: String(band.startTime),
+      endTime: String(band.endTime),
+      orderIndex: band.orderIndex,
+    })),
+    blocks,
+  });
+}
+
+async function getExistingRowBookings(batchId: number, rowId: number): Promise<
+  Array<{
+    id: number;
+    startAt: Date;
+    endAt: Date;
+  }>
+> {
+  return db
+    .select({
+      id: bookings.id,
+      startAt: bookings.startAt,
+      endAt: bookings.endAt,
+    })
+    .from(bookings)
+    .where(
+      and(
+        eq(bookings.source, "TIMETABLE_ALLOCATION"),
+        like(bookings.sourceRef, `batch:${batchId}:row:${rowId}:%`),
+      ),
+    );
+}
+
+async function getCommittedRowsForEdit(slotSystemId: number): Promise<CommittedRowForEdit[]> {
+  const rows = await db
+    .select({
+      batchId: timetableImportBatches.id,
+      termStartDate: timetableImportBatches.termStartDate,
+      termEndDate: timetableImportBatches.termEndDate,
+      rowId: timetableImportRows.id,
+      rowIndex: timetableImportRows.rowIndex,
+      classification: timetableImportRows.classification,
+      rawCourseCode: timetableImportRows.rawCourseCode,
+      rawSlot: timetableImportRows.rawSlot,
+      rawClassroom: timetableImportRows.rawClassroom,
+      resolvedSlotLabel: timetableImportRows.resolvedSlotLabel,
+      resolvedRoomId: timetableImportRows.resolvedRoomId,
+      resolutionAction: timetableImportRowResolutions.action,
+      resolutionSlotLabel: timetableImportRowResolutions.resolvedSlotLabel,
+      resolutionRoomId: timetableImportRowResolutions.resolvedRoomId,
+    })
+    .from(timetableImportBatches)
+    .innerJoin(timetableImportRows, eq(timetableImportRows.batchId, timetableImportBatches.id))
+    .leftJoin(
+      timetableImportRowResolutions,
+      and(
+        eq(timetableImportRowResolutions.batchId, timetableImportBatches.id),
+        eq(timetableImportRowResolutions.rowId, timetableImportRows.id),
+      ),
+    )
+    .where(
+      and(
+        eq(timetableImportBatches.slotSystemId, slotSystemId),
+        eq(timetableImportBatches.status, "COMMITTED"),
+      ),
+    )
+    .orderBy(asc(timetableImportBatches.id), asc(timetableImportRows.rowIndex));
+
+  return rows;
+}
+
+function overlaps(input: {
+  startAt: Date;
+  endAt: Date;
+  existingStartAt: Date;
+  existingEndAt: Date;
+}): boolean {
+  return input.startAt < input.existingEndAt && input.endAt > input.existingStartAt;
+}
+
+async function createSyntheticEditBatch(input: {
+  slotSystemId: number;
+  userId: number;
+}): Promise<number> {
+  const token = `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+  const now = new Date();
+
+  const [createdBatch] = await db
+    .insert(timetableImportBatches)
+    .values({
+      batchKey: `edit-session:${input.slotSystemId}:${token}`,
+      slotSystemId: input.slotSystemId,
+      termStartDate: now,
+      termEndDate: now,
+      fileName: `edit-session-${input.slotSystemId}.json`,
+      fileHash: hashValue(token),
+      fingerprint: hashValue(`edit-session|${input.slotSystemId}|${token}`),
+      status: "COMMITTED",
+      createdBy: input.userId,
+      committedAt: now,
+    })
+    .returning({ id: timetableImportBatches.id });
+
+  if (!createdBatch) {
+    throw createServiceError(500, "Failed to create synthetic edit batch");
+  }
+
+  return createdBatch.id;
+}
+
+async function buildEditOperations(input: {
+  slotSystemId: number;
+  changedLabels: Set<string>;
+  operationTypeByLabel: Map<string, TimetableDiffOperationType>;
+  newSnapshot: TimetableSnapshotState;
+  pruneBookings: boolean;
+}): Promise<{
+  operations: SessionOperation[];
+  affectedRows: number;
+  unchangedRows: number;
+}> {
+  const committedRows = await getCommittedRowsForEdit(input.slotSystemId);
+  const descriptorsByLabel = buildSnapshotDescriptorLookup(input.newSnapshot);
+
+  const operations: SessionOperation[] = [];
+  let actionableRows = 0;
+  let affectedRows = 0;
+
+  for (const row of committedRows) {
+    const action =
+      row.resolutionAction ??
+      (row.classification === "VALID_AND_AUTOMATABLE" ? "AUTO" : "SKIP");
+
+    if (action === "SKIP") {
+      continue;
+    }
+
+    const effectiveSlotLabel = normalizeSpace(
+      row.resolutionSlotLabel ?? row.resolvedSlotLabel ?? row.rawSlot ?? "",
+    );
+    const normalizedLabel = normalizeLabel(effectiveSlotLabel);
+    const effectiveRoomId = Number(row.resolutionRoomId ?? row.resolvedRoomId ?? 0);
+
+    if (!normalizedLabel || !Number.isInteger(effectiveRoomId) || effectiveRoomId <= 0) {
+      continue;
+    }
+
+    actionableRows += 1;
+
+    if (!input.changedLabels.has(normalizedLabel)) {
+      continue;
+    }
+
+    const operationTypeByLabel =
+      input.operationTypeByLabel.get(normalizedLabel) ?? "CHANGE_SLOT";
+
+    affectedRows += 1;
+
+    const descriptors = descriptorsByLabel.get(normalizedLabel) ?? [];
+    const existingRowBookings = await getExistingRowBookings(row.batchId, row.rowId);
+    const allExistingBookingIds = existingRowBookings.map((booking) => booking.id);
+
+    if (descriptors.length === 0) {
+      if (input.pruneBookings && allExistingBookingIds.length > 0) {
+        operations.push({
+          operationId: hashValue(`edit|delete-only|${row.batchId}|${row.rowId}`),
+          kind: "DELETE_ONLY",
+          operationType:
+            operationTypeByLabel === "REMOVE_SLOT" ? "REMOVE_SLOT" : operationTypeByLabel,
+          rowId: row.rowId,
+          rowIndex: row.rowIndex,
+          courseCode: row.rawCourseCode ?? "",
+          slot: row.rawSlot ?? "",
+          classroom: row.rawClassroom ?? "",
+          roomId: effectiveRoomId,
+          startAt: row.termStartDate.toISOString(),
+          endAt: row.termEndDate.toISOString(),
+          sourceRef: `batch:${row.batchId}:row:${row.rowId}:edit-delete-only`,
+          status: "ACTIVE",
+          forceOverwriteBookingIds: [],
+          cleanupBookingIds: allExistingBookingIds,
+        });
+      }
+
+      continue;
+    }
+
+    for (const descriptor of descriptors) {
+      const intervals = buildOccurrenceIntervals({
+        termStartDate: row.termStartDate,
+        termEndDate: row.termEndDate,
+        dayOfWeek: descriptor.dayOfWeek,
+        startTime: descriptor.startTime,
+        endTime: descriptor.endTime,
+      });
+
+      for (const interval of intervals) {
+        const overlapBookingIds = input.pruneBookings
+          ? allExistingBookingIds
+          : existingRowBookings
+              .filter((booking) =>
+                overlaps({
+                  startAt: interval.startAt,
+                  endAt: interval.endAt,
+                  existingStartAt: booking.startAt,
+                  existingEndAt: booking.endAt,
+                }),
+              )
+              .map((booking) => booking.id);
+
+        operations.push({
+          operationId: hashValue(
+            `edit|${row.batchId}|${row.rowId}|${effectiveRoomId}|${interval.startAt.toISOString()}|${interval.endAt.toISOString()}`,
+          ),
+          kind: "UPSERT",
+          operationType: operationTypeByLabel,
+          rowId: row.rowId,
+          rowIndex: row.rowIndex,
+          courseCode: row.rawCourseCode ?? "",
+          slot: row.rawSlot ?? "",
+          classroom: row.rawClassroom ?? "",
+          roomId: effectiveRoomId,
+          startAt: interval.startAt.toISOString(),
+          endAt: interval.endAt.toISOString(),
+          sourceRef: `batch:${row.batchId}:row:${row.rowId}:edit:${descriptor.dayOfWeek}:${descriptor.startTime}-${descriptor.endTime}:${descriptor.laneIndex}`,
+          status: "ACTIVE",
+          forceOverwriteBookingIds: overlapBookingIds,
+          cleanupBookingIds: [],
+        });
+      }
+    }
+  }
+
+  return {
+    operations,
+    affectedRows,
+    unchangedRows: Math.max(0, actionableRows - affectedRows),
+  };
+}
+
+async function applySnapshotToSlotSystem(input: {
+  tx: any;
+  slotSystemId: number;
+  snapshot: TimetableSnapshotState;
+}) {
+  await input.tx
+    .delete(slotBlocks)
+    .where(eq(slotBlocks.slotSystemId, input.slotSystemId));
+
+  await input.tx
+    .delete(slotDays)
+    .where(eq(slotDays.slotSystemId, input.slotSystemId));
+
+  await input.tx
+    .delete(slotTimeBands)
+    .where(eq(slotTimeBands.slotSystemId, input.slotSystemId));
+
+  const dayIdMap = new Map<number, number>();
+  const sortedDays = [...input.snapshot.days].sort((a, b) => {
+    if (a.orderIndex !== b.orderIndex) {
+      return a.orderIndex - b.orderIndex;
+    }
+
+    if (a.dayOfWeek !== b.dayOfWeek) {
+      return a.dayOfWeek.localeCompare(b.dayOfWeek);
+    }
+
+    return a.id - b.id;
+  });
+
+  for (const day of sortedDays) {
+    const [createdDay] = await input.tx
+      .insert(slotDays)
+      .values({
+        slotSystemId: input.slotSystemId,
+        dayOfWeek: day.dayOfWeek,
+        orderIndex: day.orderIndex,
+        laneCount: Math.max(1, day.laneCount),
+      })
+      .returning({ id: slotDays.id });
+
+    if (!createdDay) {
+      throw createServiceError(500, "Failed to create day while applying edit snapshot");
+    }
+
+    dayIdMap.set(day.id, createdDay.id);
+  }
+
+  const bandIdMap = new Map<number, number>();
+  const sortedBands = [...input.snapshot.timeBands].sort((a, b) => {
+    if (a.orderIndex !== b.orderIndex) {
+      return a.orderIndex - b.orderIndex;
+    }
+
+    if (a.startTime !== b.startTime) {
+      return a.startTime.localeCompare(b.startTime);
+    }
+
+    if (a.endTime !== b.endTime) {
+      return a.endTime.localeCompare(b.endTime);
+    }
+
+    return a.id - b.id;
+  });
+
+  for (const band of sortedBands) {
+    const [createdBand] = await input.tx
+      .insert(slotTimeBands)
+      .values({
+        slotSystemId: input.slotSystemId,
+        startTime: band.startTime,
+        endTime: band.endTime,
+        orderIndex: band.orderIndex,
+      })
+      .returning({ id: slotTimeBands.id });
+
+    if (!createdBand) {
+      throw createServiceError(500, "Failed to create time band while applying edit snapshot");
+    }
+
+    bandIdMap.set(band.id, createdBand.id);
+  }
+
+  for (const block of input.snapshot.blocks) {
+    const mappedDayId = dayIdMap.get(block.dayId);
+    const mappedStartBandId = bandIdMap.get(block.startBandId);
+
+    if (!mappedDayId || !mappedStartBandId) {
+      continue;
+    }
+
+    await input.tx.insert(slotBlocks).values({
+      slotSystemId: input.slotSystemId,
+      dayId: mappedDayId,
+      startBandId: mappedStartBandId,
+      laneIndex: Math.max(0, block.laneIndex),
+      rowSpan: Math.max(1, block.rowSpan),
+      label: normalizeSpace(block.label),
+    });
+  }
 }
 
 function toSummary(row: {
@@ -405,6 +1029,7 @@ async function buildOperations(batchId: number): Promise<{ operations: SessionOp
 
         operations.push({
           operationId,
+          kind: "UPSERT",
           rowId: row.id,
           rowIndex: row.rowIndex,
           courseCode: row.rawCourseCode ?? "",
@@ -416,6 +1041,7 @@ async function buildOperations(batchId: number): Promise<{ operations: SessionOp
           sourceRef: `batch:${batch.id}:row:${row.id}:block:${descriptor.blockId}`,
           status: "ACTIVE",
           forceOverwriteBookingIds: [],
+          cleanupBookingIds: [],
         });
       }
     }
@@ -432,6 +1058,7 @@ function buildSnapshot(operations: SessionOperation[]): string {
     .sort((a, b) => a.operationId.localeCompare(b.operationId))
     .map((item) => ({
       operationId: item.operationId,
+      kind: item.kind,
       rowId: item.rowId,
       rowIndex: item.rowIndex,
       roomId: item.roomId,
@@ -479,6 +1106,7 @@ function parseOperations(raw: unknown): SessionOperation[] {
     const endAt = typeof source.endAt === "string" ? source.endAt : "";
     const sourceRef = typeof source.sourceRef === "string" ? source.sourceRef : "";
     const status = source.status === "SKIPPED" ? "SKIPPED" : "ACTIVE";
+    const kind = source.kind === "DELETE_ONLY" ? "DELETE_ONLY" : "UPSERT";
 
     if (!operationId || !Number.isInteger(rowId) || !Number.isInteger(rowIndex) || !Number.isInteger(roomId)) {
       continue;
@@ -494,8 +1122,24 @@ function parseOperations(raw: unknown): SessionOperation[] {
           .filter((value) => Number.isInteger(value) && value > 0)
       : [];
 
+    const cleanupBookingIds = Array.isArray(source.cleanupBookingIds)
+      ? source.cleanupBookingIds
+          .map((value) => Number(value))
+          .filter((value) => Number.isInteger(value) && value > 0)
+      : [];
+
+    const operationType =
+      source.operationType === "ADD_SLOT" ||
+      source.operationType === "REMOVE_SLOT" ||
+      source.operationType === "CHANGE_SLOT" ||
+      source.operationType === "CHANGE_VENUE"
+        ? source.operationType
+        : undefined;
+
     output.push({
       operationId,
+      kind,
+      ...(operationType ? { operationType } : {}),
       rowId,
       rowIndex,
       courseCode: typeof source.courseCode === "string" ? source.courseCode : "",
@@ -507,6 +1151,7 @@ function parseOperations(raw: unknown): SessionOperation[] {
       sourceRef,
       status,
       forceOverwriteBookingIds,
+      cleanupBookingIds,
     });
   }
 
@@ -702,7 +1347,9 @@ function applyConflictResolutions(input: {
 }
 
 async function computeExternalConflicts(batchId: number, operations: SessionOperation[]): Promise<TimetableCommitConflict[]> {
-  const activeOperations = operations.filter((operation) => operation.status === "ACTIVE");
+  const activeOperations = operations.filter(
+    (operation) => operation.status === "ACTIVE" && operation.kind === "UPSERT",
+  );
   const conflicts: TimetableCommitConflict[] = [];
 
   for (const operation of activeOperations) {
@@ -728,6 +1375,10 @@ async function computeExternalConflicts(batchId: number, operations: SessionOper
       );
 
     for (const overlap of overlaps) {
+      if (operation.forceOverwriteBookingIds.includes(overlap.id)) {
+        continue;
+      }
+
       if (typeof overlap.sourceRef === "string" && overlap.sourceRef.startsWith(`batch:${batchId}:`)) {
         continue;
       }
@@ -759,7 +1410,9 @@ async function computeExternalConflicts(batchId: number, operations: SessionOper
 }
 
 function computeInternalConflicts(operations: SessionOperation[]): TimetableCommitConflict[] {
-  const activeOperations = operations.filter((operation) => operation.status === "ACTIVE");
+  const activeOperations = operations.filter(
+    (operation) => operation.status === "ACTIVE" && operation.kind === "UPSERT",
+  );
   const conflicts: TimetableCommitConflict[] = [];
   const emittedPairs = new Set<string>();
 
@@ -820,7 +1473,9 @@ function computeInternalConflicts(operations: SessionOperation[]): TimetableComm
 }
 
 async function computeRuntimeConflicts(operations: SessionOperation[]): Promise<TimetableCommitConflict[]> {
-  const activeOperations = operations.filter((operation) => operation.status === "ACTIVE");
+  const activeOperations = operations.filter(
+    (operation) => operation.status === "ACTIVE" && operation.kind === "UPSERT",
+  );
   const conflicts: TimetableCommitConflict[] = [];
 
   for (const operation of activeOperations) {
@@ -926,6 +1581,153 @@ export async function startCommitSession(input: {
   }
 
   return toSummary(created);
+}
+
+export async function startEditCommitSession(input: {
+  slotSystemId: number;
+  expectedVersion: number;
+  newState: unknown;
+  pruneBookings?: boolean;
+  userId: number;
+}): Promise<EditCommitSessionStartResponse> {
+  const slotSystemId = Number(input.slotSystemId);
+  const expectedVersion = Number(input.expectedVersion);
+
+  if (!Number.isInteger(slotSystemId) || slotSystemId <= 0) {
+    throw createServiceError(400, "Invalid slotSystemId");
+  }
+
+  if (!Number.isInteger(expectedVersion) || expectedVersion <= 0) {
+    throw createServiceError(400, "expectedVersion must be a positive integer");
+  }
+
+  const [slotSystem] = await db
+    .select({
+      id: slotSystems.id,
+      isLocked: slotSystems.isLocked,
+      version: slotSystems.version,
+      committedSnapshotJson: slotSystems.committedSnapshotJson,
+    })
+    .from(slotSystems)
+    .where(eq(slotSystems.id, slotSystemId))
+    .limit(1);
+
+  if (!slotSystem) {
+    throw createServiceError(404, "Slot system not found");
+  }
+
+  if (!slotSystem.isLocked) {
+    throw createServiceError(409, "Edit mode is only available for locked slot systems");
+  }
+
+  if (slotSystem.version !== expectedVersion) {
+    throw createServiceError(
+      409,
+      `Version mismatch. Expected ${expectedVersion}, found ${slotSystem.version}`,
+    );
+  }
+
+  await ensureNoActiveSession(slotSystemId);
+
+  const oldSnapshot =
+    parseSnapshotState(slotSystem.committedSnapshotJson, slotSystemId) ??
+    (await loadLiveSnapshot(slotSystemId));
+
+  const newSnapshot = parseSnapshotState(input.newState, slotSystemId);
+
+  if (!newSnapshot) {
+    throw createServiceError(400, "newState must include days, timeBands, and blocks");
+  }
+
+  const diff = computeTimetableDiff({
+    oldSnapshot,
+    newState: newSnapshot,
+  });
+
+  const editOperationBuild = await buildEditOperations({
+    slotSystemId,
+    changedLabels: new Set(diff.changedLabels),
+    operationTypeByLabel: new Map(
+      diff.operations.map((operation) => [operation.normalizedLabel, operation.type]),
+    ),
+    newSnapshot: diff.newSnapshot,
+    pruneBookings: input.pruneBookings === true,
+  });
+
+  const operations = editOperationBuild.operations;
+  const payloadSnapshot = buildSnapshot(operations);
+  const syntheticBatchId = await createSyntheticEditBatch({
+    slotSystemId,
+    userId: input.userId,
+  });
+
+  const metadata: EditSessionMetadata = {
+    mode: "EDIT",
+    pruneBookings: input.pruneBookings === true,
+    expectedVersion,
+    changedLabels: diff.changedLabels,
+    diffSummary: {
+      total: diff.summary.total,
+      added: diff.summary.added,
+      removed: diff.summary.removed,
+      changedSlot: diff.summary.changedSlot,
+      changedVenue: diff.summary.changedVenue,
+    },
+    affectedRows: editOperationBuild.affectedRows,
+    unchangedRows: editOperationBuild.unchangedRows,
+    newSnapshot: diff.newSnapshot,
+  };
+
+  const [created] = await db
+    .insert(commitSessions)
+    .values({
+      batchId: syntheticBatchId,
+      slotSystemId,
+      status: "STARTED",
+      payloadSnapshot,
+      operations,
+      resolutions: metadata,
+      createdBy: input.userId,
+    })
+    .returning({
+      id: commitSessions.id,
+      batchId: commitSessions.batchId,
+      slotSystemId: commitSessions.slotSystemId,
+      status: commitSessions.status,
+      payloadSnapshot: commitSessions.payloadSnapshot,
+      createdAt: commitSessions.createdAt,
+      updatedAt: commitSessions.updatedAt,
+    });
+
+  if (!created) {
+    throw createServiceError(500, "Failed to start edit commit session");
+  }
+
+  return {
+    session: toSummary(created),
+    diff: {
+      summary: {
+        total: diff.summary.total,
+        added: diff.summary.added,
+        removed: diff.summary.removed,
+        changedSlot: diff.summary.changedSlot,
+        changedVenue: diff.summary.changedVenue,
+      },
+      changedLabels: diff.changedLabels,
+      operations: diff.operations.map((operation) => ({
+        type: operation.type,
+        label: operation.label,
+        oldDescriptorCount: operation.oldDescriptors.length,
+        newDescriptorCount: operation.newDescriptors.length,
+        oldRoomId: operation.oldRoomId,
+        newRoomId: operation.newRoomId,
+      })),
+      affectedRows: editOperationBuild.affectedRows,
+      unchangedRows: editOperationBuild.unchangedRows,
+      expectedVersion,
+      currentVersion: slotSystem.version,
+    },
+  };
 }
 
 export async function runExternalCheck(commitSessionId: number): Promise<CommitStageReport> {
@@ -1219,12 +2021,22 @@ export async function finalizeCommitSession(input: {
     );
   }
 
+  const editMetadata = parseEditSessionMetadata(session.resolutions);
   const activeOperations = operations.filter((operation) => operation.status === "ACTIVE");
+  const activeUpsertOperations = activeOperations.filter(
+    (operation) => operation.kind === "UPSERT",
+  );
+  const activeDeleteOnlyOperations = activeOperations.filter(
+    (operation) => operation.kind === "DELETE_ONLY",
+  );
   const skippedOperations = operations.filter((operation) => operation.status === "SKIPPED").length;
 
   const deleteBookingIds = Array.from(
     new Set(
-      activeOperations.flatMap((operation) => operation.forceOverwriteBookingIds),
+      [
+        ...activeUpsertOperations.flatMap((operation) => operation.forceOverwriteBookingIds),
+        ...activeDeleteOnlyOperations.flatMap((operation) => operation.cleanupBookingIds),
+      ],
     ),
   );
 
@@ -1234,7 +2046,23 @@ export async function finalizeCommitSession(input: {
         await tx.delete(bookings).where(inArray(bookings.id, deleteBookingIds));
       }
 
-      for (const operation of activeOperations) {
+      if (editMetadata) {
+        await applySnapshotToSlotSystem({
+          tx,
+          slotSystemId: session.slotSystemId,
+          snapshot: editMetadata.newSnapshot,
+        });
+
+        await tx
+          .update(slotSystems)
+          .set({
+            committedSnapshotJson: editMetadata.newSnapshot,
+            version: sql`${slotSystems.version} + 1`,
+          })
+          .where(eq(slotSystems.id, session.slotSystemId));
+      }
+
+      for (const operation of activeUpsertOperations) {
         const startAt = new Date(operation.startAt);
         const endAt = new Date(operation.endAt);
 
@@ -1313,6 +2141,25 @@ export async function finalizeCommitSession(input: {
       });
     }
 
+    if (!editMetadata) {
+      try {
+        const latestSnapshot = await loadLiveSnapshot(session.slotSystemId);
+        await db
+          .update(slotSystems)
+          .set({
+            committedSnapshotJson: latestSnapshot,
+            version: sql`${slotSystems.version} + 1`,
+          })
+          .where(eq(slotSystems.id, session.slotSystemId));
+      } catch (snapshotError) {
+        logger.warn("Failed to update slot system snapshot after finalize", {
+          commitSessionId: session.id,
+          slotSystemId: session.slotSystemId,
+          error: snapshotError,
+        });
+      }
+    }
+
     await updateSessionPatch(input.commitSessionId, {
       status: "COMPLETED",
       runtimeConflicts: [],
@@ -1323,7 +2170,7 @@ export async function finalizeCommitSession(input: {
     return {
       commitSessionId: session.id,
       batchId: session.batchId,
-      createdBookings: activeOperations.length,
+      createdBookings: activeUpsertOperations.length,
       skippedOperations,
       deletedConflictingBookings: deleteBookingIds.length,
     };

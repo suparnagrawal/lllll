@@ -397,6 +397,7 @@ export type SlotSystem = {
   id: number;
   name: string;
   isLocked: boolean;
+  version: number;
   createdAt: string;
 };
 
@@ -812,6 +813,65 @@ export type CommitSessionFinalizeReport = {
 export type CommitSessionCancelResponse = {
   commitSessionId: number;
   status: "CANCELLED";
+};
+
+export type TimetableSnapshotDay = {
+  id: number;
+  dayOfWeek: DayOfWeek;
+  orderIndex: number;
+  laneCount: number;
+};
+
+export type TimetableSnapshotTimeBand = {
+  id: number;
+  startTime: string;
+  endTime: string;
+  orderIndex: number;
+};
+
+export type TimetableSnapshotBlock = {
+  id: number;
+  dayId: number;
+  startBandId: number;
+  laneIndex: number;
+  rowSpan: number;
+  label: string;
+};
+
+export type TimetableSnapshotState = {
+  slotSystemId: number;
+  days: TimetableSnapshotDay[];
+  timeBands: TimetableSnapshotTimeBand[];
+  blocks: TimetableSnapshotBlock[];
+  roomAssignments?: Record<string, number>;
+};
+
+export type EditCommitDiffOperationPreview = {
+  type: "ADD_SLOT" | "REMOVE_SLOT" | "CHANGE_SLOT" | "CHANGE_VENUE";
+  label: string;
+  oldDescriptorCount: number;
+  newDescriptorCount: number;
+  oldRoomId: number | null;
+  newRoomId: number | null;
+};
+
+export type EditCommitSessionStartResponse = {
+  session: CommitSessionSummary;
+  diff: {
+    summary: {
+      total: number;
+      added: number;
+      removed: number;
+      changedSlot: number;
+      changedVenue: number;
+    };
+    changedLabels: string[];
+    operations: EditCommitDiffOperationPreview[];
+    affectedRows: number;
+    unchangedRows: number;
+    expectedVersion: number;
+    currentVersion: number;
+  };
 };
 
 // ============================================================================

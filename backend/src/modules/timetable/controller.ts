@@ -47,6 +47,7 @@ import {
   runInternalCheck,
   runRuntimeCheck,
   startCommitSession,
+  startEditCommitSession,
   startFrozenApply,
 } from "./timetableCommitEngine";
 import logger from "../../shared/utils/logger";
@@ -766,6 +767,39 @@ export async function handleStartCommitSession(req: Request, res: Response) {
     return res.status(201).json(session);
   } catch (error) {
     return sendError(res, error, "Failed to start commit session");
+  }
+}
+
+export async function handleStartEditCommitSession(req: Request, res: Response) {
+  try {
+    const slotSystemId = parsePositiveInteger(req.body?.slotSystemId);
+    const expectedVersion = Number(req.body?.expectedVersion);
+
+    if (!slotSystemId) {
+      return res.status(400).json({ error: "slotSystemId is required" });
+    }
+
+    if (!Number.isInteger(expectedVersion) || expectedVersion <= 0) {
+      return res.status(400).json({ error: "expectedVersion must be a positive integer" });
+    }
+
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const result = await startEditCommitSession({
+      slotSystemId,
+      expectedVersion,
+      newState: req.body?.newState,
+      pruneBookings: req.body?.pruneBookings === true,
+      userId,
+    });
+
+    return res.status(201).json(result);
+  } catch (error) {
+    return sendError(res, error, "Failed to start edit commit session");
   }
 }
 
