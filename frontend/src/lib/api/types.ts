@@ -853,10 +853,14 @@ export type EditCommitDiffOperationPreview = {
   newDescriptorCount: number;
   oldRoomId: number | null;
   newRoomId: number | null;
+  operationGroupId: string;
+  affectedBookings: number;
 };
 
 export type EditCommitSessionStartResponse = {
-  session: CommitSessionSummary;
+  session?: CommitSessionSummary;
+  noChanges?: boolean;
+  message?: string;
   diff: {
     summary: {
       total: number;
@@ -871,6 +875,13 @@ export type EditCommitSessionStartResponse = {
     unchangedRows: number;
     expectedVersion: number;
     currentVersion: number;
+    bookingImpact: {
+      totalAffectedBookings: number;
+      byOperation: {
+        operationId: string;
+        affectedBookings: number;
+      }[];
+    };
   };
 };
 

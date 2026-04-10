@@ -789,15 +789,45 @@ export async function handleStartEditCommitSession(req: Request, res: Response) 
       return res.status(401).json({ error: "User not authenticated" });
     }
 
-    const result = await startEditCommitSession({
-      slotSystemId,
-      expectedVersion,
-      newState: req.body?.newState,
-      pruneBookings: req.body?.pruneBookings === true,
-      userId,
-    });
+    try {
+      const result = await startEditCommitSession({
+        slotSystemId,
+        expectedVersion,
+        newState: req.body?.newState,
+        pruneBookings: req.body?.pruneBookings === true,
+        userId,
+      });
 
-    return res.status(201).json(result);
+      if (result.noChanges === true) {
+        return res.status(200).json(result);
+      }
+
+      return res.status(201).json(result);
+    } catch (startEditError) {
+      // Handle specific error codes
+      if (startEditError instanceof Error) {
+        if (
+          startEditError.message.includes("Version mismatch") ||
+          startEditError.message.includes("Expected")
+        ) {
+          return res.status(409).json({
+            code: "VERSION_CONFLICT",
+            error: "Timetable updated by another user. Please reload.",
+            message: startEditError.message,
+          });
+        }
+
+        if (startEditError.message.includes("No changes detected")) {
+          return res.status(200).json({
+            code: "NO_CHANGES",
+            error: "No changes detected",
+            message: startEditError.message,
+          });
+        }
+      }
+
+      return sendError(res, startEditError, "Failed to start edit commit session");
+    }
   } catch (error) {
     return sendError(res, error, "Failed to start edit commit session");
   }

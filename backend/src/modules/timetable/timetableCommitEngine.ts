@@ -102,10 +102,14 @@ export type EditCommitDiffOperationPreview = {
   newDescriptorCount: number;
   oldRoomId: number | null;
   newRoomId: number | null;
+  operationGroupId: string;
+  affectedBookings: number;
 };
 
 export type EditCommitSessionStartResponse = {
-  session: CommitSessionSummary;
+  session?: CommitSessionSummary;
+  noChanges?: boolean;
+  message?: string;
   diff: {
     summary: EditCommitDiffSummary;
     changedLabels: string[];
@@ -114,6 +118,13 @@ export type EditCommitSessionStartResponse = {
     unchangedRows: number;
     expectedVersion: number;
     currentVersion: number;
+    bookingImpact: {
+      totalAffectedBookings: number;
+      byOperation: Array<{
+        operationId: string;
+        affectedBookings: number;
+      }>;
+    };
   };
 };
 
@@ -1583,6 +1594,59 @@ export async function startCommitSession(input: {
   return toSummary(created);
 }
 
+async function findBookingsAffectedByOperations(
+  operations: SessionOperation[],
+): Promise<Map<string, number>> {
+  const bookingsByOperationId = new Map<string, number>();
+
+  for (const operation of operations) {
+    if (operation.kind !== "UPSERT") {
+      continue;
+    }
+
+    const opStart = new Date(operation.startAt);
+    const opEnd = new Date(operation.endAt);
+
+    const overlaps = await db
+      .select({ id: bookings.id })
+      .from(bookings)
+      .where(
+        and(
+          eq(bookings.roomId, operation.roomId),
+          lt(bookings.startAt, opEnd),
+          gt(bookings.endAt, opStart),
+          ne(bookings.sourceRef, operation.sourceRef),
+        ),
+      );
+
+    bookingsByOperationId.set(operation.operationId, overlaps.length);
+  }
+
+  return bookingsByOperationId;
+}
+
+function computeOperationGroupId(
+  operationType: TimetableDiffOperationType,
+  attributes: {
+    oldRoomId: number | null;
+    newRoomId: number | null;
+  },
+): string {
+  let groupKey: string = operationType;
+
+  if (operationType === "CHANGE_SLOT") {
+    groupKey = `${operationType}`;
+  } else if (operationType === "CHANGE_VENUE") {
+    groupKey = `${operationType}_${attributes.oldRoomId}_to_${attributes.newRoomId}`;
+  } else if (operationType === "ADD_SLOT") {
+    groupKey = `${operationType}_${attributes.newRoomId}`;
+  } else if (operationType === "REMOVE_SLOT") {
+    groupKey = `${operationType}`;
+  }
+
+  return hashValue(groupKey);
+}
+
 export async function startEditCommitSession(input: {
   slotSystemId: number;
   expectedVersion: number;
@@ -1644,6 +1708,33 @@ export async function startEditCommitSession(input: {
     newState: newSnapshot,
   });
 
+  // Safety check for empty diff (no changes detected)
+  if (diff.summary.total === 0) {
+    return {
+      noChanges: true,
+      message: "No changes detected",
+      diff: {
+        summary: {
+          total: 0,
+          added: 0,
+          removed: 0,
+          changedSlot: 0,
+          changedVenue: 0,
+        },
+        changedLabels: [],
+        operations: [],
+        affectedRows: 0,
+        unchangedRows: 0,
+        expectedVersion,
+        currentVersion: slotSystem.version,
+        bookingImpact: {
+          totalAffectedBookings: 0,
+          byOperation: [],
+        },
+      },
+    };
+  }
+
   const editOperationBuild = await buildEditOperations({
     slotSystemId,
     changedLabels: new Set(diff.changedLabels),
@@ -1655,6 +1746,14 @@ export async function startEditCommitSession(input: {
   });
 
   const operations = editOperationBuild.operations;
+
+  // Calculate booking impacts per operation
+  const bookingsByOperationId = await findBookingsAffectedByOperations(operations);
+  const totalAffectedBookings = Array.from(bookingsByOperationId.values()).reduce(
+    (sum, count) => sum + count,
+    0,
+  );
+
   const payloadSnapshot = buildSnapshot(operations);
   const syntheticBatchId = await createSyntheticEditBatch({
     slotSystemId,
@@ -1703,6 +1802,34 @@ export async function startEditCommitSession(input: {
     throw createServiceError(500, "Failed to start edit commit session");
   }
 
+  // Compute operation groupIds and build preview with booking impact
+  const operationsPreview = diff.operations.map((operation) => {
+    const operationGroupId = computeOperationGroupId(operation.type, {
+      oldRoomId: operation.oldRoomId,
+      newRoomId: operation.newRoomId,
+    });
+
+    // Find matching session operation to get operationId
+    const matchingSessionOp = operations.find(
+      (op) => op.courseCode === operation.label,
+    );
+
+    const affectedBookings = matchingSessionOp
+      ? bookingsByOperationId.get(matchingSessionOp.operationId) ?? 0
+      : 0;
+
+    return {
+      type: operation.type,
+      label: operation.label,
+      oldDescriptorCount: operation.oldDescriptors.length,
+      newDescriptorCount: operation.newDescriptors.length,
+      oldRoomId: operation.oldRoomId,
+      newRoomId: operation.newRoomId,
+      operationGroupId,
+      affectedBookings,
+    };
+  });
+
   return {
     session: toSummary(created),
     diff: {
@@ -1714,18 +1841,20 @@ export async function startEditCommitSession(input: {
         changedVenue: diff.summary.changedVenue,
       },
       changedLabels: diff.changedLabels,
-      operations: diff.operations.map((operation) => ({
-        type: operation.type,
-        label: operation.label,
-        oldDescriptorCount: operation.oldDescriptors.length,
-        newDescriptorCount: operation.newDescriptors.length,
-        oldRoomId: operation.oldRoomId,
-        newRoomId: operation.newRoomId,
-      })),
+      operations: operationsPreview,
       affectedRows: editOperationBuild.affectedRows,
       unchangedRows: editOperationBuild.unchangedRows,
       expectedVersion,
       currentVersion: slotSystem.version,
+      bookingImpact: {
+        totalAffectedBookings,
+        byOperation: operations
+          .filter((op) => op.kind === "UPSERT")
+          .map((operation) => ({
+            operationId: operation.operationId,
+            affectedBookings: bookingsByOperationId.get(operation.operationId) ?? 0,
+          })),
+      },
     },
   };
 }
