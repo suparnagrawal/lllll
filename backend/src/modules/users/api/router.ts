@@ -14,7 +14,7 @@ import {
 import { authMiddleware } from "../../../middleware/auth";
 import { requireRole } from "../../../middleware/rbac";
 import { db } from "../../../db";
-import { buildings, staffBuildingAssignments, users, bookings, bookingRequests, userSessions } from "../../../db/schema";
+import { buildings, rooms, staffBuildingAssignments, users, bookings, bookingRequests, userSessions } from "../../../db/schema";
 import logger from "../../../shared/utils/logger";
 
 type UserRole = "ADMIN" | "STAFF" | "FACULTY" | "STUDENT" | "PENDING_ROLE";
@@ -647,6 +647,8 @@ router.get("/profile/activity", authMiddleware, async (req, res) => {
       .select({
         id: bookingRequests.id,
         roomId: bookingRequests.roomId,
+        roomName: rooms.name,
+        buildingName: buildings.name,
         eventType: bookingRequests.eventType,
         purpose: bookingRequests.purpose,
         status: bookingRequests.status,
@@ -654,6 +656,8 @@ router.get("/profile/activity", authMiddleware, async (req, res) => {
         decidedAt: bookingRequests.decidedAt,
       })
       .from(bookingRequests)
+      .innerJoin(rooms, eq(bookingRequests.roomId, rooms.id))
+      .innerJoin(buildings, eq(rooms.buildingId, buildings.id))
       .where(
         or(
           eq(bookingRequests.userId, req.user.id),
@@ -667,6 +671,8 @@ router.get("/profile/activity", authMiddleware, async (req, res) => {
       .select({
         id: bookings.id,
         roomId: bookings.roomId,
+        roomName: rooms.name,
+        buildingName: buildings.name,
         startAt: bookings.startAt,
         endAt: bookings.endAt,
         source: bookings.source,
@@ -674,6 +680,8 @@ router.get("/profile/activity", authMiddleware, async (req, res) => {
         requestId: bookings.requestId,
       })
       .from(bookings)
+      .innerJoin(rooms, eq(bookings.roomId, rooms.id))
+      .innerJoin(buildings, eq(rooms.buildingId, buildings.id))
       .leftJoin(bookingRequests, eq(bookings.requestId, bookingRequests.id))
       .where(
         or(
@@ -685,44 +693,56 @@ router.get("/profile/activity", authMiddleware, async (req, res) => {
       .orderBy(desc(bookings.startAt))
       .limit(limit);
 
-    const bookingActivity = bookingRows.map((row) => ({
-      id: `booking-${row.id}`,
-      type: "BOOKING",
-      title: "Booking",
-      description: `Room #${row.roomId} from ${row.startAt.toISOString()} to ${row.endAt.toISOString()}`,
-      timestamp: (row.approvedAt ?? row.startAt).toISOString(),
-      metadata: {
-        bookingId: row.id,
-        requestId: row.requestId ?? undefined,
-        source: row.source,
-      },
-    }));
+    const bookingActivity = bookingRows.map((row) => {
+      const roomLabel = `${row.roomName} (${row.buildingName})`;
 
-    const requestActivity = requestRows.map((row) => ({
-      id: `request-${row.id}`,
-      type: "ACTION",
-      title: "Booking Request Submitted",
-      description: `Request #${row.id} (${row.eventType}) for room #${row.roomId}: ${row.purpose}`,
-      timestamp: row.createdAt.toISOString(),
-      metadata: {
-        requestId: row.id,
-        status: row.status,
-      },
-    }));
+      return {
+        id: `booking-${row.id}`,
+        type: "BOOKING",
+        title: "Booking",
+        description: `${roomLabel} from ${row.startAt.toISOString()} to ${row.endAt.toISOString()}`,
+        timestamp: (row.approvedAt ?? row.startAt).toISOString(),
+        metadata: {
+          bookingId: row.id,
+          requestId: row.requestId ?? undefined,
+          source: row.source,
+        },
+      };
+    });
 
-    const decisionActivity = requestRows
-      .filter((row) => row.status === "APPROVED" || row.status === "REJECTED")
-      .map((row) => ({
-        id: `decision-${row.id}`,
+    const requestActivity = requestRows.map((row) => {
+      const roomLabel = `${row.roomName} (${row.buildingName})`;
+
+      return {
+        id: `request-${row.id}`,
         type: "ACTION",
-        title: row.status === "APPROVED" ? "Booking Request Approved" : "Booking Request Rejected",
-        description: `Request #${row.id} was ${row.status.toLowerCase()}.`,
-        timestamp: (row.decidedAt ?? row.createdAt).toISOString(),
+        title: "Booking Request Submitted",
+        description: `${row.eventType} request for ${roomLabel}: ${row.purpose}`,
+        timestamp: row.createdAt.toISOString(),
         metadata: {
           requestId: row.id,
           status: row.status,
         },
-      }));
+      };
+    });
+
+    const decisionActivity = requestRows
+      .filter((row) => row.status === "APPROVED" || row.status === "REJECTED")
+      .map((row) => {
+        const roomLabel = `${row.roomName} (${row.buildingName})`;
+
+        return {
+          id: `decision-${row.id}`,
+          type: "ACTION",
+          title: row.status === "APPROVED" ? "Booking Request Approved" : "Booking Request Rejected",
+          description: `${row.eventType} request for ${roomLabel} was ${row.status.toLowerCase()}.`,
+          timestamp: (row.decidedAt ?? row.createdAt).toISOString(),
+          metadata: {
+            requestId: row.id,
+            status: row.status,
+          },
+        };
+      });
 
     const activity = [...bookingActivity, ...requestActivity, ...decisionActivity]
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())

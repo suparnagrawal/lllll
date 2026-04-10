@@ -360,7 +360,7 @@ export default function VenueChangePage() {
                       <SelectContent>
                         {filteredBookings.map((booking) => (
                           <SelectItem key={`${booking.id}-${booking.courseId}`} value={String(booking.id)}>
-                            #{booking.id} • {booking.courseCode} • {booking.roomName} ({formatDateTimeDDMMYYYY(booking.startAt)} - {formatDateTimeDDMMYYYY(booking.endAt)})
+                            {booking.courseCode} • {booking.roomName} ({formatDateTimeDDMMYYYY(booking.startAt)} - {formatDateTimeDDMMYYYY(booking.endAt)})
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -501,7 +501,7 @@ export default function VenueChangePage() {
               <p className="font-medium">Skipped/failed entries:</p>
               {batchSummary.failures.slice(0, 5).map((failure) => (
                 <p key={failure.bookingId}>
-                  Booking #{failure.bookingId} ({formatDateTimeDDMMYYYY(failure.bookingStartAt)} - {formatDateTimeDDMMYYYY(failure.bookingEndAt)}): {failure.errors.join("; ")}
+                  Booking on {formatDateTimeDDMMYYYY(failure.bookingStartAt)} - {formatDateTimeDDMMYYYY(failure.bookingEndAt)}: {failure.errors.join("; ")}
                 </p>
               ))}
               {batchSummary.failures.length > 5 && (
@@ -526,7 +526,7 @@ export default function VenueChangePage() {
           {!isRequestsLoading &&
             requests.map((row) => {
               const request = row.request;
-              const currentRoomLabel = roomLabelById.get(row.currentBooking.roomId) ?? `Room #${row.currentBooking.roomId}`;
+              const currentRoomLabel = roomLabelById.get(row.currentBooking.roomId) ?? "Selected room";
               const proposedRoomLabel = `${row.proposedRoom.name} (${row.proposedRoom.buildingName})`;
               const reviewNote = reviewNotes[request.id] ?? "";
               const isPending = request.status === "PENDING";
@@ -543,7 +543,7 @@ export default function VenueChangePage() {
 
                   <div className="text-sm text-gray-700 space-y-1">
                     <p><strong>Requester:</strong> {row.requestedByUser.name} ({row.requestedByUser.email})</p>
-                    <p><strong>Current Booking:</strong> #{request.currentBookingId} • {currentRoomLabel}</p>
+                    <p><strong>Current Booking:</strong> {currentRoomLabel}</p>
                     <p><strong>Current Time:</strong> {formatDateTimeDDMMYYYY(row.currentBooking.startAt)} - {formatDateTimeDDMMYYYY(row.currentBooking.endAt)}</p>
                     <p><strong>Proposed Room:</strong> {proposedRoomLabel}</p>
                     <p><strong>Reason:</strong> {request.reason}</p>

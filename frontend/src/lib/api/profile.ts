@@ -107,7 +107,7 @@ export async function exportUserData(_userId: number): Promise<UserData> {
     user: data.user,
     bookings: data.approvedBookings.map(b => ({
       id: b.id,
-      title: `Room ${b.roomId}`,
+      title: "Approved Room Booking",
       status: 'APPROVED',
       createdAt: b.approvedAt,
     })),

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "../../../db";
-import { eq, lt, gt, and, or, isNull, inArray } from "drizzle-orm";
-import { bookingRequests, users, rooms } from "../../../db/schema";
+import { eq, lt, gt, and, or, isNull, inArray, ne } from "drizzle-orm";
+import { bookingRequests, users, rooms, bookings, buildings } from "../../../db/schema";
 import { authMiddleware } from "../../../middleware/auth";
 import { requireRole } from "../../../middleware/rbac";
 import { requireBookingsUnfrozen } from "../../../middleware/bookingFreeze";
@@ -60,6 +60,8 @@ type PgCauseError = {
     code?: string;
   };
 };
+
+type ChangeCapableRole = "ADMIN" | "STAFF" | "FACULTY" | "STUDENT";
 
 async function getRequestWithBuilding(requestId: number) {
   const rows = await db
@@ -123,6 +125,26 @@ function formatRequestWindow(startAt: Date, endAt: Date): string {
   return `${formatDateTimeForNotification(startAt)} to ${formatDateTimeForNotification(endAt)}`;
 }
 
+async function getRoomDisplayLabel(roomId: number): Promise<string> {
+  const rows = await db
+    .select({
+      roomName: rooms.name,
+      buildingName: buildings.name,
+    })
+    .from(rooms)
+    .innerJoin(buildings, eq(rooms.buildingId, buildings.id))
+    .where(eq(rooms.id, roomId))
+    .limit(1);
+
+  const room = rows[0];
+
+  if (!room) {
+    return "the selected room";
+  }
+
+  return `${room.roomName} (${room.buildingName})`;
+}
+
 function uniqueRecipientIds(
   rawIds: Array<number | null | undefined>,
   excludedIds: number[] = [],
@@ -161,6 +183,168 @@ async function getPendingStaffAndAdminRecipientIds(
   ]);
 
   return uniqueRecipientIds([...staffIds, ...adminIds], excludedIds);
+}
+
+function parseOptionalPositiveInteger(value: unknown): number | null {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    return null;
+  }
+
+  const parsed = Number(value);
+
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function canReferenceRequestForChange(
+  role: ChangeCapableRole,
+  userId: number,
+  request: {
+    userId: number | null;
+    facultyId: number | null;
+  },
+): boolean {
+  if (role === "ADMIN" || role === "STAFF") {
+    return true;
+  }
+
+  if (role === "STUDENT") {
+    return request.userId === userId;
+  }
+
+  return request.userId === userId || request.facultyId === userId;
+}
+
+function canApplyDirectChangeToRequest(
+  role: ChangeCapableRole,
+  userId: number,
+  request: {
+    userId: number | null;
+    facultyId: number | null;
+    status: BookingRequestStatus;
+  },
+): boolean {
+  if (request.status !== "PENDING_FACULTY") {
+    return false;
+  }
+
+  if (role === "STUDENT") {
+    return request.userId === userId;
+  }
+
+  if (role === "FACULTY") {
+    return request.userId === userId || request.facultyId === userId;
+  }
+
+  return false;
+}
+
+async function isActiveFacultyUser(userId: number): Promise<boolean> {
+  const rows = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(
+      and(
+        eq(users.id, userId),
+        eq(users.role, "FACULTY"),
+        eq(users.isActive, true),
+      ),
+    )
+    .limit(1);
+
+  return rows.length > 0;
+}
+
+async function createBookingRequestWithNotifications(input: {
+  actorId: number;
+  roomId: number;
+  buildingId: number;
+  startAt: Date;
+  endAt: Date;
+  eventType: BookingEventType;
+  purpose: string;
+  participantCount: number | null;
+  facultyId: number | null;
+  status: "PENDING_FACULTY" | "PENDING_STAFF";
+  bookingId?: number | null;
+}) {
+  const result = await db
+    .insert(bookingRequests)
+    .values({
+      userId: input.actorId,
+      facultyId: input.facultyId,
+      roomId: input.roomId,
+      startAt: input.startAt,
+      endAt: input.endAt,
+      eventType: input.eventType,
+      purpose: input.purpose,
+      participantCount: input.participantCount,
+      status: input.status,
+      bookingId: input.bookingId ?? null,
+    })
+    .returning();
+
+  const created = result[0];
+
+  if (!created) {
+    throw new Error("Insert failed");
+  }
+
+  const windowText = formatRequestWindow(created.startAt, created.endAt);
+  const roomLabel = await getRoomDisplayLabel(created.roomId);
+
+  if (created.status === "PENDING_FACULTY") {
+    const facultyRecipients = uniqueRecipientIds([created.facultyId], [input.actorId]);
+    const requesterRecipients = uniqueRecipientIds([created.userId]);
+
+    await dispatchNotificationsSafely(
+      [
+        ...facultyRecipients.map<NotificationDraft>((recipientId) => ({
+          recipientId,
+          type: "BOOKING_REQUEST_CREATED",
+          subject: "Booking request awaiting faculty review",
+          message: `Booking request for ${roomLabel} (${windowText}) requires your faculty approval.`,
+        })),
+        ...requesterRecipients.map<NotificationDraft>((recipientId) => ({
+          recipientId,
+          type: "BOOKING_REQUEST_CREATED",
+          subject: "Booking request submitted",
+          message: `Your booking request for ${roomLabel} (${windowText}) has been submitted for faculty approval.`,
+        })),
+      ],
+    );
+  }
+
+  if (created.status === "PENDING_STAFF") {
+    const staffAdminRecipients = await getPendingStaffAndAdminRecipientIds(
+      input.buildingId,
+      [input.actorId],
+    );
+    const requesterRecipients = uniqueRecipientIds([created.userId, created.facultyId]);
+
+    await dispatchNotificationsSafely(
+      [
+        ...staffAdminRecipients.map<NotificationDraft>((recipientId) => ({
+          recipientId,
+          type: "BOOKING_REQUEST_CREATED",
+          subject: "Booking request awaiting staff approval",
+          message: `Booking request for ${roomLabel} (${windowText}) is awaiting staff/admin review.`,
+          skipEmail: true,
+        })),
+        ...requesterRecipients.map<NotificationDraft>((recipientId) => ({
+          recipientId,
+          type: "BOOKING_REQUEST_CREATED",
+          subject: "Booking request submitted",
+          message: `Your booking request for ${roomLabel} (${windowText}) has been submitted for staff/admin approval.`,
+        })),
+      ],
+    );
+  }
+
+  return created;
 }
 
 // GET /booking-requests/:id
@@ -350,20 +534,21 @@ router.post("/:id/reject", authMiddleware, requireRole(["FACULTY", "STAFF"]), re
         : [];
 
     const windowText = formatRequestWindow(request.startAt, request.endAt);
+    const roomLabel = await getRoomDisplayLabel(request.roomId);
 
     await dispatchNotificationsSafely(
       [
         ...participantRecipients.map<NotificationDraft>((recipientId) => ({
           recipientId,
           type: "BOOKING_REQUEST_REJECTED",
-          subject: `Booking request #${request.id} rejected`,
-          message: `Booking request #${request.id} for room #${request.roomId} (${windowText}) was rejected.`,
+          subject: "Booking request rejected",
+          message: `Booking request for ${roomLabel} (${windowText}) was rejected.`,
         })),
         ...reviewerRecipients.map<NotificationDraft>((recipientId) => ({
           recipientId,
           type: "BOOKING_REQUEST_REJECTED",
-          subject: `Booking request #${request.id} rejected`,
-          message: `Booking request #${request.id} for room #${request.roomId} (${windowText}) has been rejected.`,
+          subject: "Booking request rejected",
+          message: `Booking request for ${roomLabel} (${windowText}) has been rejected.`,
           skipEmail: true, // Staff/Admin get in-app notification only
         })),
       ],
@@ -521,20 +706,21 @@ router.post("/:id/approve", authMiddleware, requireRole("STAFF"), requireBooking
       approvalResult.request.startAt,
       approvalResult.request.endAt,
     );
+    const roomLabel = await getRoomDisplayLabel(approvalResult.request.roomId);
 
     await dispatchNotificationsSafely(
       [
         ...participantRecipients.map<NotificationDraft>((recipientId) => ({
           recipientId,
           type: "BOOKING_REQUEST_APPROVED",
-          subject: `Booking request #${approvalResult.request.id} approved`,
-          message: `Booking request #${approvalResult.request.id} for room #${approvalResult.request.roomId} (${approvalWindowText}) has been approved.`,
+          subject: "Booking request approved",
+          message: `Booking request for ${roomLabel} (${approvalWindowText}) has been approved.`,
         })),
         ...reviewerRecipients.map<NotificationDraft>((recipientId) => ({
           recipientId,
           type: "BOOKING_REQUEST_APPROVED",
-          subject: `Booking request #${approvalResult.request.id} approved`,
-          message: `Booking request #${approvalResult.request.id} for room #${approvalResult.request.roomId} (${approvalWindowText}) was approved and converted to a booking.`,
+          subject: "Booking request approved",
+          message: `Booking request for ${roomLabel} (${approvalWindowText}) was approved and converted to a booking.`,
           skipEmail: true, // Staff/Admin get in-app notification only
         })),
       ],
@@ -630,20 +816,21 @@ router.post("/:id/forward", authMiddleware, requireRole("FACULTY"), async (req, 
     );
 
     const windowText = formatRequestWindow(request.startAt, request.endAt);
+    const roomLabel = await getRoomDisplayLabel(request.roomId);
 
     const drafts: NotificationDraft[] = [
       ...reviewRecipients.map<NotificationDraft>((recipientId) => ({
         recipientId,
         type: "BOOKING_REQUEST_FORWARDED",
-        subject: `Booking request #${request.id} awaiting staff approval`,
-        message: `Booking request #${request.id} for room #${request.roomId} (${windowText}) is awaiting staff/admin review.`,
+        subject: "Booking request awaiting staff approval",
+        message: `Booking request for ${roomLabel} (${windowText}) is awaiting staff/admin review.`,
         skipEmail: true, // Staff/Admin get in-app notification only
       })),
       ...notifyRequesterRecipients.map<NotificationDraft>((recipientId) => ({
         recipientId,
         type: "BOOKING_REQUEST_FORWARDED",
-        subject: `Booking request #${request.id} moved to staff review`,
-        message: `Booking request #${request.id} for room #${request.roomId} (${windowText}) has been forwarded for staff/admin approval.`,
+        subject: "Booking request moved to staff review",
+        message: `Booking request for ${roomLabel} (${windowText}) has been forwarded for staff/admin approval.`,
       })),
     ];
 
@@ -657,7 +844,7 @@ router.post("/:id/forward", authMiddleware, requireRole("FACULTY"), async (req, 
   }
 });
 
-router.post("/:id/cancel",authMiddleware, async (req, res) => {
+router.post("/:id/cancel",authMiddleware, requireBookingsUnfrozen(), async (req, res) => {
   const id = Number(req.params.id);
 
   // Validate id
@@ -673,19 +860,40 @@ router.post("/:id/cancel",authMiddleware, async (req, res) => {
       return res.status(404).json({ error: "Request not found" });
     }
 
-    if (req.user!.role !== "ADMIN") {
-      if (existing.userId !== req.user!.id) {
-        return res.status(403).json({ error: "Forbidden" });
-      }
+    const actorRole = req.user!.role;
+    const actorId = req.user!.id;
+
+    const canCancelAsOwner =
+      actorRole === "ADMIN" ||
+      existing.userId === actorId ||
+      (actorRole === "FACULTY" && existing.facultyId === actorId);
+
+    if (!canCancelAsOwner) {
+      return res.status(403).json({ error: "Forbidden" });
     }
 
     if (
       existing.status !== "PENDING_FACULTY" &&
-      existing.status !== "PENDING_STAFF"
+      existing.status !== "PENDING_STAFF" &&
+      existing.status !== "APPROVED"
     ) {
       return res.status(400).json({
-        error: "Only pending requests can be cancelled",
+        error: "Only pending or approved requests can be cancelled",
       });
+    }
+
+    if (existing.status === "APPROVED") {
+      const linkedBookingRows = await db
+        .select({ id: bookings.id })
+        .from(bookings)
+        .where(eq(bookings.requestId, existing.id))
+        .limit(1);
+
+      const linkedBookingId = linkedBookingRows[0]?.id ?? existing.bookingId;
+
+      if (linkedBookingId !== null && linkedBookingId !== undefined) {
+        await db.delete(bookings).where(eq(bookings.id, linkedBookingId));
+      }
     }
 
     // Update status to CANCELLED
@@ -698,7 +906,6 @@ router.post("/:id/cancel",authMiddleware, async (req, res) => {
     // Determine email recipients based on who cancelled:
     // - Student cancels their own request: no email (student is excluded as actor)
     // - Admin cancels: student + faculty get email
-    const actorRole = req.user!.role;
     const skipEmailForParticipants = actorRole === "STUDENT";
 
     const participantRecipients = uniqueRecipientIds(
@@ -707,25 +914,26 @@ router.post("/:id/cancel",authMiddleware, async (req, res) => {
     );
 
     const reviewerRecipients =
-      existing.status === "PENDING_STAFF"
+      existing.status === "PENDING_STAFF" || existing.status === "APPROVED"
         ? await getPendingStaffAndAdminRecipientIds(existingRow!.buildingId, [req.user!.id])
         : [];
 
     const windowText = formatRequestWindow(existing.startAt, existing.endAt);
+    const roomLabel = await getRoomDisplayLabel(existing.roomId);
 
     const cancellationDrafts: NotificationDraft[] = [
       ...participantRecipients.map<NotificationDraft>((recipientId) => ({
         recipientId,
         type: "BOOKING_REQUEST_CANCELLED",
-        subject: `Booking request #${existing.id} cancelled`,
-        message: `Booking request #${existing.id} for room #${existing.roomId} (${windowText}) was cancelled.`,
+        subject: "Booking request cancelled",
+        message: `Booking request for ${roomLabel} (${windowText}) was cancelled.`,
         skipEmail: skipEmailForParticipants,
       })),
       ...reviewerRecipients.map<NotificationDraft>((recipientId) => ({
         recipientId,
         type: "BOOKING_REQUEST_CANCELLED",
-        subject: `Booking request #${existing.id} cancelled`,
-        message: `Booking request #${existing.id} for room #${existing.roomId} (${windowText}) was cancelled by the requester/admin.`,
+        subject: "Booking request cancelled",
+        message: `Booking request for ${roomLabel} (${windowText}) was cancelled by the requester/admin.`,
         skipEmail: true, // Staff/Admin never get emails for cancellations
       })),
     ];
@@ -738,6 +946,370 @@ router.post("/:id/cancel",authMiddleware, async (req, res) => {
     return res.status(500).json({ error: "Failed to cancel request" });
   }
 });
+
+router.post(
+  "/change",
+  authMiddleware,
+  requireRole(["STUDENT", "FACULTY", "STAFF", "ADMIN"]),
+  async (req, res) => {
+    try {
+      const actorId = req.user!.id;
+      const actorRole = req.user!.role as ChangeCapableRole;
+
+      const sourceRequestId = parseOptionalPositiveInteger(req.body?.sourceRequestId);
+      const sourceBookingId = parseOptionalPositiveInteger(req.body?.sourceBookingId);
+
+      if (
+        (sourceRequestId === null && sourceBookingId === null) ||
+        (sourceRequestId !== null && sourceBookingId !== null)
+      ) {
+        return res.status(400).json({
+          error: "Provide exactly one source: sourceRequestId or sourceBookingId",
+        });
+      }
+
+      let sourceRequest: (typeof bookingRequests.$inferSelect) | null = null;
+      let sourceBooking: (typeof bookings.$inferSelect) | null = null;
+      let bookingLinkedRequest: (typeof bookingRequests.$inferSelect) | null = null;
+
+      if (sourceRequestId !== null) {
+        const sourceRow = await getRequestWithBuilding(sourceRequestId);
+
+        if (!sourceRow) {
+          return res.status(404).json({ error: "Source request not found" });
+        }
+
+        sourceRequest = sourceRow.request;
+
+        if (!canReferenceRequestForChange(actorRole, actorId, sourceRequest)) {
+          return res.status(403).json({ error: "Forbidden" });
+        }
+
+        if (actorRole === "STAFF") {
+          const assignedBuildingIds = await getAssignedBuildingIdsForStaff(actorId);
+
+          if (
+            assignedBuildingIds.length === 0 ||
+            !assignedBuildingIds.includes(sourceRow.buildingId)
+          ) {
+            return res.status(403).json({ error: "Forbidden" });
+          }
+        }
+      }
+
+      if (sourceBookingId !== null) {
+        const bookingRows = await db
+          .select({
+            booking: bookings,
+            linkedRequest: bookingRequests,
+            buildingId: rooms.buildingId,
+          })
+          .from(bookings)
+          .innerJoin(rooms, eq(bookings.roomId, rooms.id))
+          .leftJoin(bookingRequests, eq(bookings.requestId, bookingRequests.id))
+          .where(eq(bookings.id, sourceBookingId))
+          .limit(1);
+
+        const bookingRow = bookingRows[0];
+
+        if (!bookingRow) {
+          return res.status(404).json({ error: "Source booking not found" });
+        }
+
+        sourceBooking = bookingRow.booking;
+        bookingLinkedRequest = bookingRow.linkedRequest;
+
+        if (actorRole === "STUDENT") {
+          if (!bookingLinkedRequest || bookingLinkedRequest.userId !== actorId) {
+            return res.status(403).json({ error: "Forbidden" });
+          }
+        }
+
+        if (actorRole === "FACULTY") {
+          if (
+            !bookingLinkedRequest ||
+            (bookingLinkedRequest.userId !== actorId &&
+              bookingLinkedRequest.facultyId !== actorId)
+          ) {
+            return res.status(403).json({ error: "Forbidden" });
+          }
+        }
+
+        if (actorRole === "STAFF") {
+          const assignedBuildingIds = await getAssignedBuildingIdsForStaff(actorId);
+
+          if (
+            assignedBuildingIds.length === 0 ||
+            !assignedBuildingIds.includes(bookingRow.buildingId)
+          ) {
+            return res.status(403).json({ error: "Forbidden" });
+          }
+        }
+      }
+
+      const parsedRoomId = parseOptionalPositiveInteger(req.body?.roomId);
+      const roomId = parsedRoomId ?? sourceRequest?.roomId ?? sourceBooking?.roomId ?? null;
+
+      if (roomId === null) {
+        return res.status(400).json({ error: "roomId is required" });
+      }
+
+      const startAtRaw = req.body?.startAt ?? sourceRequest?.startAt ?? sourceBooking?.startAt;
+      const endAtRaw = req.body?.endAt ?? sourceRequest?.endAt ?? sourceBooking?.endAt;
+
+      if (!startAtRaw || !endAtRaw) {
+        return res.status(400).json({ error: "startAt and endAt are required" });
+      }
+
+      const start = new Date(startAtRaw);
+      const end = new Date(endAtRaw);
+
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+        return res.status(400).json({ error: "Invalid datetime format" });
+      }
+
+      if (start >= end) {
+        return res.status(400).json({ error: "startAt must be before endAt" });
+      }
+
+      const roomRows = await db
+        .select({
+          id: rooms.id,
+          buildingId: rooms.buildingId,
+          accessible: rooms.accessible,
+        })
+        .from(rooms)
+        .where(eq(rooms.id, roomId))
+        .limit(1);
+
+      const room = roomRows[0];
+
+      if (!room) {
+        return res.status(404).json({ error: "Room not found" });
+      }
+
+      if (room.accessible === false) {
+        return res.status(400).json({
+          error: "This room is currently not accessible and cannot accept bookings",
+        });
+      }
+
+      const eventTypeRaw = req.body?.eventType;
+      let eventTypeOverride: BookingEventType | null = null;
+
+      if (eventTypeRaw !== undefined && eventTypeRaw !== null && String(eventTypeRaw).trim() !== "") {
+        if (!isBookingEventType(eventTypeRaw)) {
+          return res.status(400).json({ error: "Invalid eventType" });
+        }
+
+        eventTypeOverride = eventTypeRaw;
+      }
+
+      const eventType = eventTypeOverride ?? sourceRequest?.eventType ?? "OTHER";
+
+      const providedPurpose =
+        typeof req.body?.purpose === "string" ? req.body.purpose.trim() : "";
+      const purpose = providedPurpose || sourceRequest?.purpose || "";
+
+      if (!purpose) {
+        return res.status(400).json({ error: "Purpose is required" });
+      }
+
+      let participantCount = sourceRequest?.participantCount ?? null;
+      const participantCountRaw = req.body?.participantCount;
+
+      if (participantCountRaw !== undefined && participantCountRaw !== null) {
+        if (String(participantCountRaw).trim() === "") {
+          participantCount = null;
+        } else {
+          const parsedParticipantCount = Number(participantCountRaw);
+
+          if (!Number.isInteger(parsedParticipantCount) || parsedParticipantCount <= 0) {
+            return res.status(400).json({
+              error: "participantCount must be a positive integer",
+            });
+          }
+
+          participantCount = parsedParticipantCount;
+        }
+      }
+
+      const selectedFacultyId = parseOptionalPositiveInteger(req.body?.facultyId);
+      let facultyId: number | null = null;
+
+      if (actorRole === "STUDENT") {
+        facultyId =
+          selectedFacultyId ??
+          sourceRequest?.facultyId ??
+          bookingLinkedRequest?.facultyId ??
+          null;
+
+        if (facultyId === null) {
+          return res.status(400).json({ error: "facultyId is required for student requests" });
+        }
+      } else if (actorRole === "FACULTY") {
+        facultyId = actorId;
+      } else {
+        facultyId =
+          selectedFacultyId ??
+          sourceRequest?.facultyId ??
+          bookingLinkedRequest?.facultyId ??
+          null;
+      }
+
+      if (facultyId !== null) {
+        const validFaculty = await isActiveFacultyUser(facultyId);
+
+        if (!validFaculty) {
+          return res.status(400).json({ error: "Selected faculty is invalid" });
+        }
+      }
+
+      let linkedBookingId = sourceBooking?.id ?? null;
+
+      if (linkedBookingId === null && sourceRequest) {
+        linkedBookingId = sourceRequest.bookingId;
+
+        if (linkedBookingId === null) {
+          const linkedBookingRows = await db
+            .select({ id: bookings.id })
+            .from(bookings)
+            .where(eq(bookings.requestId, sourceRequest.id))
+            .limit(1);
+
+          linkedBookingId = linkedBookingRows[0]?.id ?? null;
+        }
+      }
+
+      if (linkedBookingId !== null && sourceBooking === null) {
+        const linkedRows = await db
+          .select()
+          .from(bookings)
+          .where(eq(bookings.id, linkedBookingId))
+          .limit(1);
+
+        sourceBooking = linkedRows[0] ?? null;
+      }
+
+      if (
+        sourceBooking &&
+        sourceBooking.roomId === roomId &&
+        sourceBooking.startAt.getTime() === start.getTime() &&
+        sourceBooking.endAt.getTime() === end.getTime()
+      ) {
+        return res.status(400).json({ error: "No changes detected" });
+      }
+
+      const hasOverlap = await hasBookingOverlap(
+        roomId,
+        start,
+        end,
+        db,
+        linkedBookingId ?? undefined,
+      );
+
+      if (hasOverlap) {
+        return res.status(409).json({
+          error: "Room is not available in the selected time range",
+        });
+      }
+
+      const pendingConditions = [
+        eq(bookingRequests.userId, actorId),
+        eq(bookingRequests.roomId, roomId),
+        or(
+          eq(bookingRequests.status, "PENDING_FACULTY"),
+          eq(bookingRequests.status, "PENDING_STAFF"),
+        ),
+        lt(bookingRequests.startAt, end),
+        gt(bookingRequests.endAt, start),
+      ];
+
+      if (sourceRequest) {
+        pendingConditions.push(ne(bookingRequests.id, sourceRequest.id));
+      }
+
+      const pendingOverlap = await db
+        .select({ id: bookingRequests.id })
+        .from(bookingRequests)
+        .where(and(...pendingConditions))
+        .limit(1);
+
+      if (pendingOverlap.length > 0) {
+        return res.status(409).json({
+          error: "A pending request already exists for this time range",
+        });
+      }
+
+      if (
+        sourceRequest &&
+        canApplyDirectChangeToRequest(actorRole, actorId, sourceRequest)
+      ) {
+        const updatedRows = await db
+          .update(bookingRequests)
+          .set({
+            roomId,
+            startAt: start,
+            endAt: end,
+            eventType,
+            purpose,
+            participantCount,
+            facultyId,
+          })
+          .where(
+            and(
+              eq(bookingRequests.id, sourceRequest.id),
+              eq(bookingRequests.status, "PENDING_FACULTY"),
+            ),
+          )
+          .returning();
+
+        const updated = updatedRows[0];
+
+        if (!updated) {
+          return res.status(409).json({
+            error: "Request is no longer editable",
+          });
+        }
+
+        return res.json({
+          mode: "UPDATED_EXISTING_REQUEST",
+          request: updated,
+        });
+      }
+
+      const targetStatus = actorRole === "STUDENT" ? "PENDING_FACULTY" : "PENDING_STAFF";
+
+      const created = await createBookingRequestWithNotifications({
+        actorId,
+        roomId,
+        buildingId: room.buildingId,
+        startAt: start,
+        endAt: end,
+        eventType,
+        purpose,
+        participantCount,
+        facultyId,
+        status: targetStatus,
+        bookingId: linkedBookingId,
+      });
+
+      return res.status(201).json({
+        mode: "CREATED_CHANGE_REQUEST",
+        request: created,
+      });
+    } catch (error: unknown) {
+      const pgError = error as PgCauseError;
+
+      if (pgError.cause?.code === "23503") {
+        return res.status(404).json({ error: "Room not found" });
+      }
+
+      logger.error(error);
+      return res.status(500).json({ error: "Failed to process booking change" });
+    }
+  },
+);
 
 router.post("/", authMiddleware, requireRole(["STUDENT", "FACULTY"]), async (req, res) => {
   try {
@@ -918,6 +1490,7 @@ router.post("/", authMiddleware, requireRole(["STUDENT", "FACULTY"]), async (req
     }
 
     const windowText = formatRequestWindow(created.startAt, created.endAt);
+    const roomLabel = await getRoomDisplayLabel(created.roomId);
 
     if (created.status === "PENDING_FACULTY") {
       const facultyRecipients = uniqueRecipientIds([created.facultyId], [req.user!.id]);
@@ -928,14 +1501,14 @@ router.post("/", authMiddleware, requireRole(["STUDENT", "FACULTY"]), async (req
           ...facultyRecipients.map<NotificationDraft>((recipientId) => ({
             recipientId,
             type: "BOOKING_REQUEST_CREATED",
-            subject: `Booking request #${created.id} awaiting faculty review`,
-            message: `Booking request #${created.id} for room #${created.roomId} (${windowText}) requires your faculty approval.`,
+            subject: "Booking request awaiting faculty review",
+            message: `Booking request for ${roomLabel} (${windowText}) requires your faculty approval.`,
           })),
           ...requesterRecipients.map<NotificationDraft>((recipientId) => ({
             recipientId,
             type: "BOOKING_REQUEST_CREATED",
-            subject: `Booking request #${created.id} submitted`,
-            message: `Your booking request #${created.id} for room #${created.roomId} (${windowText}) has been submitted for faculty approval.`,
+            subject: "Booking request submitted",
+            message: `Your booking request for ${roomLabel} (${windowText}) has been submitted for faculty approval.`,
           })),
         ],
       );
@@ -951,15 +1524,15 @@ router.post("/", authMiddleware, requireRole(["STUDENT", "FACULTY"]), async (req
           ...staffAdminRecipients.map<NotificationDraft>((recipientId) => ({
             recipientId,
             type: "BOOKING_REQUEST_CREATED",
-            subject: `Booking request #${created.id} awaiting staff approval`,
-            message: `Booking request #${created.id} for room #${created.roomId} (${windowText}) is awaiting staff/admin review.`,
+            subject: "Booking request awaiting staff approval",
+            message: `Booking request for ${roomLabel} (${windowText}) is awaiting staff/admin review.`,
             skipEmail: true, // Staff/Admin get in-app notification only
           })),
           ...requesterRecipients.map<NotificationDraft>((recipientId) => ({
             recipientId,
             type: "BOOKING_REQUEST_CREATED",
-            subject: `Booking request #${created.id} submitted`,
-            message: `Your booking request #${created.id} for room #${created.roomId} (${windowText}) has been submitted for staff/admin approval.`,
+            subject: "Booking request submitted",
+            message: `Your booking request for ${roomLabel} (${windowText}) has been submitted for staff/admin approval.`,
           })),
         ],
       );
