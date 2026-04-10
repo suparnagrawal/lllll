@@ -3855,6 +3855,11 @@ export function TimetableBuilderPage() {
               />
               <span>Prune obsolete bookings for changed rows during finalize</span>
             </label>
+            {editPruneBookings && editStartResult && editStartResult.diff.bookingImpact.totalAffectedBookings > 0 && (
+              <p className="text-sm text-red-600 mb-4">
+                Step 1: {editStartResult.diff.bookingImpact.totalAffectedBookings} bookings will be removed.
+              </p>
+            )}
 
             {editStartResult && (
               <div className="border rounded p-4 mb-4 bg-gray-50">
@@ -3909,6 +3914,7 @@ export function TimetableBuilderPage() {
               </button>
               <button
                 className="btn btn-ghost"
+                 disabled={editSessionStatus === "COMMITTING"}
                 onClick={() => {
                   setShowChangeWorkspace(false);
                   setChangePreview(null);
