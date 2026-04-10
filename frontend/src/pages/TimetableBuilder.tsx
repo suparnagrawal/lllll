@@ -30,9 +30,16 @@ import {
   transferTimetableImportRow as apiTransferTimetableImportRow,
   updateBooking as apiUpdateBooking,
   updateTimeBand as apiUpdateTimeBand,
-  detectCommitConflicts as apiDetectCommitConflicts,
-  commitWithResolutions as apiCommitWithResolutions,
-  cancelCommit as apiCancelCommit,
+  startCommitSession as apiStartCommitSession,
+  runExternalCommitCheck as apiRunExternalCommitCheck,
+  resolveExternalCommitConflicts as apiResolveExternalCommitConflicts,
+  runInternalCommitCheck as apiRunInternalCommitCheck,
+  resolveInternalCommitConflicts as apiResolveInternalCommitConflicts,
+  startCommitFreeze as apiStartCommitFreeze,
+  runRuntimeCommitCheck as apiRunRuntimeCommitCheck,
+  resolveRuntimeCommitConflicts as apiResolveRuntimeCommitConflicts,
+  finalizeCommitSession as apiFinalizeCommitSession,
+  cancelCommitSession as apiCancelCommitSession,
   getFreezeStatus as apiGetFreezeStatus,
   previewSlotSystemChanges as apiPreviewSlotSystemChanges,
 
@@ -53,10 +60,10 @@ import type {
   TimetableImportPreviewRow,
   TimetableImportPreviewReport,
   TimetableImportSavedDecision,
-  ConflictDetectionReport,
-
-  ConflictResolutionDecision,
-  ConflictResolutionAction,
+  CommitStageReport,
+  CommitSessionResolutionDecision,
+  CommitResolutionAction,
+  CommitSessionStage,
   FreezeStatusResponse,
   ChangePreviewResult,
 
@@ -360,6 +367,29 @@ function showConflictingBookingsPopup(
   );
 }
 
+function toCommitStageLabel(stage: CommitSessionStage): string {
+  if (stage === "external") {
+    return "External";
+  }
+
+  if (stage === "internal") {
+    return "Internal";
+  }
+
+  return "Runtime";
+}
+
+function readMetadataNumber(metadata: Record<string, unknown>, key: string): number | null {
+  const value = metadata[key];
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function readMetadataString(metadata: Record<string, unknown>, key: string): string | null {
+  const value = metadata[key];
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
 export function TimetableBuilderPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === "ADMIN";
@@ -426,9 +456,11 @@ export function TimetableBuilderPage() {
   const [dragSelection, setDragSelection] = useState<DragSelection | null>(null);
 
   // Conflict-aware commit state
-  const [conflictReport, setConflictReport] = useState<ConflictDetectionReport | null>(null);
+  const [commitSessionId, setCommitSessionId] = useState<number | null>(null);
+  const [conflictStage, setConflictStage] = useState<CommitSessionStage | null>(null);
+  const [conflictReport, setConflictReport] = useState<CommitStageReport | null>(null);
   const [conflictResolutions, setConflictResolutions] = useState<
-    Record<number, { action: ConflictResolutionAction; alternativeRoomId?: number }>
+    Record<string, { action: CommitResolutionAction; roomId?: number }>
   >({});
   const [conflictLoading, setConflictLoading] = useState(false);
   const [showConflictDialog, setShowConflictDialog] = useState(false);
@@ -1897,6 +1929,74 @@ export function TimetableBuilderPage() {
     }
   };
 
+  const clearCommitConflictState = () => {
+    setShowConflictDialog(false);
+    setConflictReport(null);
+    setConflictResolutions({});
+    setConflictStage(null);
+    setCommitSessionId(null);
+    setFreezeInfo(null);
+  };
+
+  const hydrateAfterFinalize = async (batchId: number) => {
+    const refreshedReport = await apiGetTimetableImportBatch(batchId);
+    hydratePreviewFromBatch(refreshedReport);
+
+    await loadGrid(refreshedReport.slotSystemId);
+    await loadProcessedRows(batchId);
+    await loadImportBatches(refreshedReport.slotSystemId);
+    await loadSlotSystems();
+  };
+
+  const runFreezeRuntimeAndFinalize = async (
+    activeCommitSessionId: number,
+    batchId: number,
+  ) => {
+    await apiStartCommitFreeze(activeCommitSessionId);
+
+    try {
+      const freeze = await apiGetFreezeStatus(batchId);
+      setFreezeInfo(freeze);
+    } catch {
+      // Freeze banner is informational.
+    }
+
+    const runtimeReport = await apiRunRuntimeCommitCheck(activeCommitSessionId);
+
+    if (runtimeReport.conflictCount > 0) {
+      setConflictStage("runtime");
+      setConflictReport(runtimeReport);
+      setConflictResolutions({});
+      setShowConflictDialog(true);
+      return;
+    }
+
+    const finalizeReport = await apiFinalizeCommitSession(activeCommitSessionId);
+    setCommitReport(null);
+    clearCommitConflictState();
+    setImportInfo(
+      `Commit completed. Created ${finalizeReport.createdBookings} bookings and skipped ${finalizeReport.skippedOperations} operation(s).`,
+    );
+    await hydrateAfterFinalize(batchId);
+  };
+
+  const runInternalThenFinalize = async (
+    activeCommitSessionId: number,
+    batchId: number,
+  ) => {
+    const internalReport = await apiRunInternalCommitCheck(activeCommitSessionId);
+
+    if (internalReport.conflictCount > 0) {
+      setConflictStage("internal");
+      setConflictReport(internalReport);
+      setConflictResolutions({});
+      setShowConflictDialog(true);
+      return;
+    }
+
+    await runFreezeRuntimeAndFinalize(activeCommitSessionId, batchId);
+  };
+
   const handleCommitImport = async () => {
     if (!previewReport) {
       return;
@@ -1913,66 +2013,59 @@ export function TimetableBuilderPage() {
 
     try {
       const decisions = buildImportDecisionsPayload();
+      const session = await apiStartCommitSession(previewReport.batchId, decisions);
 
-      // Step 1: Detect conflicts first
-      const conflictResult = await apiDetectCommitConflicts(previewReport.batchId, decisions);
+      setCommitSessionId(session.commitSessionId);
 
-      if (conflictResult.status === "NO_CONFLICTS" || conflictResult.conflicts.length === 0) {
-        // No conflicts — commit directly with empty resolutions
-        const report = await apiCommitWithResolutions(previewReport.batchId, []);
-        setCommitReport(report as unknown as TimetableImportCommitReport);
+      const externalReport = await apiRunExternalCommitCheck(session.commitSessionId);
 
-        const refreshedReport = await apiGetTimetableImportBatch(previewReport.batchId);
-        hydratePreviewFromBatch(refreshedReport);
-
-        await loadGrid(refreshedReport.slotSystemId);
-        await loadProcessedRows(previewReport.batchId);
-        await loadImportBatches(refreshedReport.slotSystemId);
-        await loadSlotSystems(); // Refresh to pick up isLocked change
-      } else {
-        // Conflicts found — show resolution dialog
-        setConflictReport(conflictResult);
+      if (externalReport.conflictCount > 0) {
+        setConflictStage("external");
+        setConflictReport(externalReport);
         setConflictResolutions({});
         setShowConflictDialog(true);
-
-        // Load freeze status
-        try {
-          const freeze = await apiGetFreezeStatus(previewReport.batchId);
-          setFreezeInfo(freeze);
-        } catch {
-          // Freeze status is informational, don't block
-        }
+        return;
       }
+
+      await runInternalThenFinalize(session.commitSessionId, previewReport.batchId);
     } catch (e) {
-      setImportError(e instanceof Error ? e.message : "Failed to detect conflicts");
+      setImportError(e instanceof Error ? e.message : "Failed to start staged commit");
     } finally {
       setCommitLoading(false);
     }
   };
 
   const handleResolveConflicts = async () => {
-    if (!previewReport || !conflictReport) {
+    if (!previewReport || !conflictReport || !conflictStage || !commitSessionId) {
       return;
     }
 
-    // Validate that all conflicts have resolutions
     const unresolved = conflictReport.conflicts.filter(
-      (c) => !conflictResolutions[c.occurrenceId],
+      (conflict) => !conflictResolutions[conflict.id],
     );
 
     if (unresolved.length > 0) {
-      setImportError(`Please resolve all ${unresolved.length} conflict(s) before committing`);
+      setImportError(
+        `Please resolve all ${unresolved.length} conflict(s) before continuing`,
+      );
       return;
     }
 
-    // Validate ALTERNATIVE_ROOM has room selected
-    const missingRoom = conflictReport.conflicts.filter((c) => {
-      const resolution = conflictResolutions[c.occurrenceId];
-      return resolution?.action === "ALTERNATIVE_ROOM" && !resolution.alternativeRoomId;
+    const missingRoom = conflictReport.conflicts.filter((conflict) => {
+      const resolution = conflictResolutions[conflict.id];
+      if (!resolution) {
+        return true;
+      }
+
+      if (conflictStage === "runtime") {
+        return resolution.action === "ALTERNATIVE_ROOM" && !resolution.roomId;
+      }
+
+      return resolution.action === "CHANGE_ROOM" && !resolution.roomId;
     });
 
     if (missingRoom.length > 0) {
-      setImportError("Please select a room for all ALTERNATIVE_ROOM resolutions");
+      setImportError("Please select a room for all room-change resolutions");
       return;
     }
 
@@ -1980,52 +2073,82 @@ export function TimetableBuilderPage() {
     setImportError(null);
 
     try {
-      const resolutions: ConflictResolutionDecision[] = conflictReport.conflicts.map((c) => {
-        const res = conflictResolutions[c.occurrenceId]!;
-        return {
-          occurrenceId: c.occurrenceId,
-          action: res.action,
-          ...(res.action === "ALTERNATIVE_ROOM" && res.alternativeRoomId
-            ? { alternativeRoomId: res.alternativeRoomId }
-            : {}),
-        };
-      });
+      const resolutions: CommitSessionResolutionDecision[] = conflictReport.conflicts.map(
+        (conflict) => {
+          const resolution = conflictResolutions[conflict.id]!;
+          return {
+            conflictId: conflict.id,
+            action: resolution.action,
+            ...(resolution.roomId ? { roomId: resolution.roomId } : {}),
+          };
+        },
+      );
 
-      const report = await apiCommitWithResolutions(previewReport.batchId, resolutions);
-      setCommitReport(report as unknown as TimetableImportCommitReport);
-      setShowConflictDialog(false);
-      setConflictReport(null);
-      setConflictResolutions({});
-      setFreezeInfo(null);
+      if (conflictStage === "external") {
+        await apiResolveExternalCommitConflicts(commitSessionId, resolutions);
+        const externalReport = await apiRunExternalCommitCheck(commitSessionId);
 
-      const refreshedReport = await apiGetTimetableImportBatch(previewReport.batchId);
-      hydratePreviewFromBatch(refreshedReport);
+        if (externalReport.conflictCount > 0) {
+          setConflictReport(externalReport);
+          setConflictResolutions({});
+          return;
+        }
 
-      await loadGrid(refreshedReport.slotSystemId);
-      await loadProcessedRows(previewReport.batchId);
-      await loadImportBatches(refreshedReport.slotSystemId);
-      await loadSlotSystems(); // Refresh to pick up isLocked change
+        setShowConflictDialog(false);
+        await runInternalThenFinalize(commitSessionId, previewReport.batchId);
+        return;
+      }
+
+      if (conflictStage === "internal") {
+        await apiResolveInternalCommitConflicts(commitSessionId, resolutions);
+        const internalReport = await apiRunInternalCommitCheck(commitSessionId);
+
+        if (internalReport.conflictCount > 0) {
+          setConflictReport(internalReport);
+          setConflictResolutions({});
+          return;
+        }
+
+        setShowConflictDialog(false);
+        await runFreezeRuntimeAndFinalize(commitSessionId, previewReport.batchId);
+        return;
+      }
+
+      await apiResolveRuntimeCommitConflicts(commitSessionId, resolutions);
+      const runtimeReport = await apiRunRuntimeCommitCheck(commitSessionId);
+
+      if (runtimeReport.conflictCount > 0) {
+        setConflictReport(runtimeReport);
+        setConflictResolutions({});
+        return;
+      }
+
+      const finalizeReport = await apiFinalizeCommitSession(commitSessionId);
+      setCommitReport(null);
+      clearCommitConflictState();
+      setImportInfo(
+        `Commit completed. Created ${finalizeReport.createdBookings} bookings and skipped ${finalizeReport.skippedOperations} operation(s).`,
+      );
+      await hydrateAfterFinalize(previewReport.batchId);
     } catch (e) {
-      setImportError(e instanceof Error ? e.message : "Failed to commit with resolutions");
+      setImportError(e instanceof Error ? e.message : "Failed to resolve staged conflicts");
     } finally {
       setConflictLoading(false);
     }
   };
 
   const handleCancelCommit = async () => {
-    if (!previewReport) {
+    if (!commitSessionId) {
+      clearCommitConflictState();
       return;
     }
 
     try {
-      await apiCancelCommit(previewReport.batchId);
-      setShowConflictDialog(false);
-      setConflictReport(null);
-      setConflictResolutions({});
-      setFreezeInfo(null);
-      setImportInfo("Commit cancelled. Booking operations resumed.");
+      await apiCancelCommitSession(commitSessionId);
+      clearCommitConflictState();
+      setImportInfo("Commit session cancelled. Booking operations resumed.");
     } catch (e) {
-      setImportError(e instanceof Error ? e.message : "Failed to cancel commit");
+      setImportError(e instanceof Error ? e.message : "Failed to cancel commit session");
     }
   };
 
@@ -3468,90 +3591,125 @@ export function TimetableBuilderPage() {
             id="conflictResolutionDialog"
           >
             <h3 className="text-xl font-bold mb-4">
-              ⚠️ Booking Conflicts Detected ({conflictReport.conflicts.length})
+              ⚠️ {toCommitStageLabel(conflictStage ?? "runtime")} Conflicts ({conflictReport.conflictCount})
             </h3>
             <p className="text-gray-600 mb-4">
-              The following occurrences conflict with existing bookings. Choose a resolution strategy for each.
+              {conflictStage === "runtime"
+                ? "Resolve runtime clashes while freeze is active."
+                : "Resolve pre-freeze clashes before moving to the next stage."}
             </p>
 
             <div className="space-y-4">
               {conflictReport.conflicts.map((conflict) => {
-                const resolution = conflictResolutions[conflict.occurrenceId];
-                const conflictRoomLabel =
-                  conflict.roomName || roomLabelById.get(conflict.roomId) || "Assigned room";
-                const conflictingRoomLabel =
-                  roomLabelById.get(conflict.conflictingBooking.roomId) || "Existing booking room";
+                const resolution = conflictResolutions[conflict.id];
+                const conflictRoomLabel = roomLabelById.get(conflict.roomId) || `Room #${conflict.roomId}`;
+                const metadata = conflict.metadata ?? {};
+                const conflictingBookingId = readMetadataNumber(metadata, "conflictingBookingId");
+                const conflictingStartAt = readMetadataString(metadata, "conflictingStartAt");
+                const conflictingEndAt = readMetadataString(metadata, "conflictingEndAt");
+                const secondaryRowIndex = readMetadataNumber(metadata, "secondaryRowIndex");
+
                 return (
                   <div
-                    key={conflict.occurrenceId}
+                    key={conflict.id}
                     className="border rounded p-4"
                     style={{ borderColor: resolution ? "#28a745" : "#ffc107" }}
                   >
                     <div className="font-medium mb-2">
-                      Requested Slot — Room: {conflictRoomLabel},{" "}
+                      Requested Slot - Room: {conflictRoomLabel},{" "}
                       {new Date(conflict.startAt).toLocaleString()} → {new Date(conflict.endAt).toLocaleString()}
                     </div>
                     <div className="text-sm text-gray-500 mb-2">
-                      Conflicts with: {conflictingRoomLabel} ({new Date(conflict.conflictingBooking.startAt).toLocaleString()} → {new Date(conflict.conflictingBooking.endAt).toLocaleString()})
+                      {conflict.reason}
+                      {conflictingBookingId !== null ? ` (Booking #${conflictingBookingId})` : ""}
+                      {secondaryRowIndex !== null ? ` (Also overlaps with row ${secondaryRowIndex})` : ""}
                     </div>
+                    {conflictingStartAt && conflictingEndAt && (
+                      <div className="text-xs text-gray-500 mb-3">
+                        Existing overlap window: {new Date(conflictingStartAt).toLocaleString()} →{" "}
+                        {new Date(conflictingEndAt).toLocaleString()}
+                      </div>
+                    )}
 
                     <div className="flex gap-3 flex-wrap items-center">
-                      <label className="flex items-center gap-1 cursor-pointer">
-                        <input
-                          type="radio"
-                          name={`resolution-${conflict.occurrenceId}`}
-                          checked={resolution?.action === "FORCE_OVERWRITE"}
-                          onChange={() =>
-                            setConflictResolutions((prev) => ({
-                              ...prev,
-                              [conflict.occurrenceId]: { action: "FORCE_OVERWRITE" },
-                            }))
-                          }
-                        />
-                        <span className="text-sm font-medium">Force Overwrite</span>
-                      </label>
+                      {conflictStage === "runtime" && (
+                        <label className="flex items-center gap-1 cursor-pointer">
+                          <input
+                            type="radio"
+                            name={`resolution-${conflict.id}`}
+                            checked={resolution?.action === "FORCE_OVERWRITE"}
+                            onChange={() =>
+                              setConflictResolutions((prev) => ({
+                                ...prev,
+                                [conflict.id]: { action: "FORCE_OVERWRITE" },
+                              }))
+                            }
+                          />
+                          <span className="text-sm font-medium">Force Overwrite</span>
+                        </label>
+                      )}
+
+                      {conflictStage !== "runtime" && (
+                        <label className="flex items-center gap-1 cursor-pointer">
+                          <input
+                            type="radio"
+                            name={`resolution-${conflict.id}`}
+                            checked={resolution?.action === "CHANGE_ROOM"}
+                            onChange={() =>
+                              setConflictResolutions((prev) => ({
+                                ...prev,
+                                [conflict.id]: { action: "CHANGE_ROOM" },
+                              }))
+                            }
+                          />
+                          <span className="text-sm font-medium">Change Room</span>
+                        </label>
+                      )}
 
                       <label className="flex items-center gap-1 cursor-pointer">
                         <input
                           type="radio"
-                          name={`resolution-${conflict.occurrenceId}`}
+                          name={`resolution-${conflict.id}`}
                           checked={resolution?.action === "SKIP"}
                           onChange={() =>
                             setConflictResolutions((prev) => ({
                               ...prev,
-                              [conflict.occurrenceId]: { action: "SKIP" },
+                              [conflict.id]: { action: "SKIP" },
                             }))
                           }
                         />
                         <span className="text-sm font-medium">Skip</span>
                       </label>
 
-                      <label className="flex items-center gap-1 cursor-pointer">
-                        <input
-                          type="radio"
-                          name={`resolution-${conflict.occurrenceId}`}
-                          checked={resolution?.action === "ALTERNATIVE_ROOM"}
-                          onChange={() =>
-                            setConflictResolutions((prev) => ({
-                              ...prev,
-                              [conflict.occurrenceId]: { action: "ALTERNATIVE_ROOM" },
-                            }))
-                          }
-                        />
-                        <span className="text-sm font-medium">Alternative Room</span>
-                      </label>
+                      {conflictStage === "runtime" && (
+                        <label className="flex items-center gap-1 cursor-pointer">
+                          <input
+                            type="radio"
+                            name={`resolution-${conflict.id}`}
+                            checked={resolution?.action === "ALTERNATIVE_ROOM"}
+                            onChange={() =>
+                              setConflictResolutions((prev) => ({
+                                ...prev,
+                                [conflict.id]: { action: "ALTERNATIVE_ROOM" },
+                              }))
+                            }
+                          />
+                          <span className="text-sm font-medium">Alternative Room</span>
+                        </label>
+                      )}
 
-                      {resolution?.action === "ALTERNATIVE_ROOM" && (
+                      {(resolution?.action === "ALTERNATIVE_ROOM" ||
+                        resolution?.action === "CHANGE_ROOM") && (
                         <select
                           className="input"
                           style={{ maxWidth: "200px" }}
-                          value={resolution.alternativeRoomId ?? ""}
+                          value={resolution.roomId ?? ""}
                           onChange={(e) =>
                             setConflictResolutions((prev) => ({
                               ...prev,
-                              [conflict.occurrenceId]: {
-                                action: "ALTERNATIVE_ROOM",
-                                alternativeRoomId: Number(e.target.value) || undefined,
+                              [conflict.id]: {
+                                action: resolution.action,
+                                roomId: Number(e.target.value) || undefined,
                               },
                             }))
                           }
@@ -3559,7 +3717,7 @@ export function TimetableBuilderPage() {
                           <option value="">Select room...</option>
                           {rooms.map((room: Room) => (
                             <option key={room.id} value={room.id}>
-                              {room.name}
+                              {roomLabelById.get(room.id) ?? room.name}
                             </option>
                           ))}
                         </select>
@@ -3583,7 +3741,11 @@ export function TimetableBuilderPage() {
                 onClick={() => void handleResolveConflicts()}
                 disabled={conflictLoading}
               >
-                {conflictLoading ? "Committing..." : "Commit with Resolutions"}
+                {conflictLoading
+                  ? "Applying..."
+                  : conflictStage === "runtime"
+                    ? "Apply Runtime Resolutions"
+                    : "Apply and Continue"}
               </button>
             </div>
           </div>

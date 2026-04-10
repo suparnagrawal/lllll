@@ -739,6 +739,82 @@ export type BookingFreezeErrorResponse = {
 };
 
 // ============================================================================
+// Staged Commit Session Types
+// ============================================================================
+
+export type CommitSessionStatus =
+  | "STARTED"
+  | "EXTERNAL_DONE"
+  | "INTERNAL_DONE"
+  | "FROZEN"
+  | "COMPLETED"
+  | "CANCELLED"
+  | "FAILED";
+
+export type CommitSessionStage = "external" | "internal" | "runtime";
+
+export type CommitResolutionAction =
+  | "SKIP"
+  | "CHANGE_ROOM"
+  | "CHANGE_SLOT_EXISTING"
+  | "CREATE_SLOT_AND_USE"
+  | "FORCE_OVERWRITE"
+  | "ALTERNATIVE_ROOM";
+
+export type CommitSessionSummary = {
+  commitSessionId: number;
+  batchId: number;
+  slotSystemId: number;
+  status: CommitSessionStatus;
+  payloadSnapshot: string;
+  isFrozen: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CommitSessionConflict = {
+  id: string;
+  stage: CommitSessionStage;
+  type: CommitSessionStage;
+  operationId: string;
+  rowId: number;
+  rowIndex: number;
+  roomId: number;
+  startAt: string;
+  endAt: string;
+  reason: string;
+  metadata: Record<string, unknown>;
+};
+
+export type CommitStageReport = {
+  commitSessionId: number;
+  stage: CommitSessionStage;
+  conflictCount: number;
+  conflicts: CommitSessionConflict[];
+};
+
+export type CommitSessionResolutionDecision = {
+  conflictId: string;
+  action: CommitResolutionAction;
+  roomId?: number;
+  startAt?: string;
+  endAt?: string;
+};
+
+export type CommitSessionFinalizeReport = {
+  commitSessionId: number;
+  batchId: number;
+  createdBookings: number;
+  skippedOperations: number;
+  deletedConflictingBookings: number;
+};
+
+export type CommitSessionCancelResponse = {
+  commitSessionId: number;
+  status: "CANCELLED";
+};
+
+// ============================================================================
 // Change Workspace Types
 // ============================================================================
 

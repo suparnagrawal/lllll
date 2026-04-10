@@ -20,6 +20,11 @@ import type {
   CommitWithResolutionsReport,
   CancelCommitResponse,
   FreezeStatusResponse,
+  CommitSessionSummary,
+  CommitStageReport,
+  CommitSessionResolutionDecision,
+  CommitSessionFinalizeReport,
+  CommitSessionCancelResponse,
   SlotSystemChanges,
   ChangePreviewResult,
   ChangeApplyResult,
@@ -315,6 +320,111 @@ export async function getFreezeStatus(
   return request<FreezeStatusResponse>(
     `/timetable/imports/${batchId}/freeze-status`,
   );
+}
+
+// Staged Commit Session Flow
+
+export async function startCommitSession(
+  batchId: number,
+  decisions: TimetableImportCommitDecision[],
+): Promise<CommitSessionSummary> {
+  return request<CommitSessionSummary>("/timetable/commit/start", {
+    method: "POST",
+    body: JSON.stringify({
+      batchId,
+      decisions,
+    }),
+  });
+}
+
+export async function runExternalCommitCheck(
+  commitSessionId: number,
+): Promise<CommitStageReport> {
+  return request<CommitStageReport>("/timetable/commit/external-check", {
+    method: "POST",
+    body: JSON.stringify({ commitSessionId }),
+  });
+}
+
+export async function resolveExternalCommitConflicts(
+  commitSessionId: number,
+  resolutions: CommitSessionResolutionDecision[],
+): Promise<CommitSessionSummary> {
+  return request<CommitSessionSummary>("/timetable/commit/external-resolve", {
+    method: "POST",
+    body: JSON.stringify({ commitSessionId, resolutions }),
+  });
+}
+
+export async function runInternalCommitCheck(
+  commitSessionId: number,
+): Promise<CommitStageReport> {
+  return request<CommitStageReport>("/timetable/commit/internal-check", {
+    method: "POST",
+    body: JSON.stringify({ commitSessionId }),
+  });
+}
+
+export async function resolveInternalCommitConflicts(
+  commitSessionId: number,
+  resolutions: CommitSessionResolutionDecision[],
+): Promise<CommitSessionSummary> {
+  return request<CommitSessionSummary>("/timetable/commit/internal-resolve", {
+    method: "POST",
+    body: JSON.stringify({ commitSessionId, resolutions }),
+  });
+}
+
+export async function startCommitFreeze(
+  commitSessionId: number,
+): Promise<CommitSessionSummary> {
+  return request<CommitSessionSummary>("/timetable/commit/freeze", {
+    method: "POST",
+    body: JSON.stringify({ commitSessionId }),
+  });
+}
+
+export async function runRuntimeCommitCheck(
+  commitSessionId: number,
+): Promise<CommitStageReport> {
+  return request<CommitStageReport>("/timetable/commit/runtime-check", {
+    method: "POST",
+    body: JSON.stringify({ commitSessionId }),
+  });
+}
+
+export async function resolveRuntimeCommitConflicts(
+  commitSessionId: number,
+  resolutions: CommitSessionResolutionDecision[],
+): Promise<CommitSessionSummary> {
+  return request<CommitSessionSummary>("/timetable/commit/runtime-resolve", {
+    method: "POST",
+    body: JSON.stringify({ commitSessionId, resolutions }),
+  });
+}
+
+export async function finalizeCommitSession(
+  commitSessionId: number,
+): Promise<CommitSessionFinalizeReport> {
+  return request<CommitSessionFinalizeReport>("/timetable/commit/finalize", {
+    method: "POST",
+    body: JSON.stringify({ commitSessionId }),
+  });
+}
+
+export async function cancelCommitSession(
+  commitSessionId: number,
+): Promise<CommitSessionCancelResponse> {
+  return request<CommitSessionCancelResponse>("/timetable/commit/cancel", {
+    method: "POST",
+    body: JSON.stringify({ commitSessionId }),
+  });
+}
+
+export async function getCommitSessionStatus(
+  commitSessionId: number,
+): Promise<CommitSessionSummary> {
+  return request<CommitSessionSummary>(`/timetable/commit/${commitSessionId}/status`);
 }
 
 // Slot System Change Workspace

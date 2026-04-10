@@ -138,6 +138,19 @@ export const timetableImportDecisionActionEnum = pgEnum(
   ["AUTO", "RESOLVE", "SKIP"],
 );
 
+export const timetableCommitSessionStatusEnum = pgEnum(
+  "timetable_commit_session_status",
+  [
+    "STARTED",
+    "EXTERNAL_DONE",
+    "INTERNAL_DONE",
+    "FROZEN",
+    "COMPLETED",
+    "CANCELLED",
+    "FAILED",
+  ],
+);
+
 export type TimetableImportCreateSlotPayload = {
   dayId: number;
   startBandId: number;
@@ -361,6 +374,72 @@ export const timetableImportRowResolutions = pgTable(
     batchRowUnique: uniqueIndex(
       "timetable_import_row_resolutions_batch_row_unique",
     ).on(table.batchId, table.rowId),
+  }),
+);
+
+export const commitSessions = pgTable(
+  "commit_sessions",
+  {
+    id: serial("id").primaryKey(),
+
+    batchId: integer("batch_id")
+      .notNull()
+      .references(() => timetableImportBatches.id, { onDelete: "cascade" }),
+
+    slotSystemId: integer("slot_system_id")
+      .notNull()
+      .references(() => slotSystems.id, { onDelete: "cascade" }),
+
+    status: timetableCommitSessionStatusEnum("status")
+      .notNull()
+      .default("STARTED"),
+
+    payloadSnapshot: text("payload_snapshot").notNull(),
+
+    operations: jsonb("operations")
+      .$type<unknown[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+
+    externalConflicts: jsonb("external_conflicts")
+      .$type<unknown[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+
+    internalConflicts: jsonb("internal_conflicts")
+      .$type<unknown[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+
+    runtimeConflicts: jsonb("runtime_conflicts")
+      .$type<unknown[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+
+    resolutions: jsonb("resolutions")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+
+    createdBy: integer("created_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+
+    frozenAt: timestamp("frozen_at", { withTimezone: false }),
+
+    createdAt: timestamp("created_at", { withTimezone: false })
+      .notNull()
+      .defaultNow(),
+
+    updatedAt: timestamp("updated_at", { withTimezone: false })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    batchIdIdx: index("commit_sessions_batch_id_idx").on(table.batchId),
+    slotSystemIdIdx: index("commit_sessions_slot_system_id_idx").on(table.slotSystemId),
+    statusIdx: index("commit_sessions_status_idx").on(table.status),
+    createdAtIdx: index("commit_sessions_created_at_idx").on(table.createdAt),
   }),
 );
 
