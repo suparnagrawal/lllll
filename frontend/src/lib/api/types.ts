@@ -240,11 +240,29 @@ export type SlotChangeCreateInput = {
   reason: string;
 };
 
+export type SlotChangeBatchCreateInput = {
+  courseId: number;
+  proposedRoomId?: number;
+  proposedStartTime: string;
+  proposedEndTime: string;
+  reason: string;
+  fromDate?: string;
+  toDate?: string;
+};
+
 export type VenueChangeCreateInput = {
   courseId: number;
   currentBookingId: number;
   proposedRoomId: number;
   reason: string;
+};
+
+export type VenueChangeBatchCreateInput = {
+  courseId: number;
+  proposedRoomId: number;
+  reason: string;
+  fromDate?: string;
+  toDate?: string;
 };
 
 export type SlotChangeCreateResponse = {
@@ -255,6 +273,28 @@ export type SlotChangeCreateResponse = {
 export type VenueChangeCreateResponse = {
   request: VenueChangeRequestRecord;
   warnings: string[];
+};
+
+export type ChangeRequestBatchSuccess = {
+  bookingId: number;
+  requestId: number;
+  warnings: string[];
+};
+
+export type ChangeRequestBatchFailure = {
+  bookingId: number;
+  bookingStartAt: string;
+  bookingEndAt: string;
+  errors: string[];
+  warnings: string[];
+};
+
+export type ChangeRequestBatchCreateResponse = {
+  requestedCount: number;
+  createdCount: number;
+  skippedCount: number;
+  created: ChangeRequestBatchSuccess[];
+  failures: ChangeRequestBatchFailure[];
 };
 
 export type ChangeRequestActionResponse = {

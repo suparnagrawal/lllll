@@ -17,15 +17,20 @@ import {
 import {
   useApproveSlotChangeRequest,
   useCancelSlotChangeRequest,
+  useCreateSlotChangeBatchRequest,
   useCreateSlotChangeRequest,
   useRejectSlotChangeRequest,
   useSlotChangeOptions,
   useSlotChangeRequests,
 } from "../hooks/useSlotChange";
-import type { ChangeRequestStatus } from "../lib/api/types";
+import type {
+  ChangeRequestBatchCreateResponse,
+  ChangeRequestStatus,
+} from "../lib/api/types";
 import { formatDateTimeDDMMYYYY } from "../utils/datetime";
 
 type StatusFilter = "ALL" | ChangeRequestStatus;
+type CreateScope = "SINGLE" | "SEMESTER";
 
 const STATUS_OPTIONS: StatusFilter[] = [
   "ALL",
@@ -50,6 +55,31 @@ function toInputDateTime(iso: string): string {
   return `${year}-${month}-${day}T${hour}:${minute}`;
 }
 
+function toInputDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function toInputTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+
+  return `${hour}:${minute}`;
+}
+
 function statusVariant(status: ChangeRequestStatus):
   | "default"
   | "secondary"
@@ -68,6 +98,7 @@ export default function SlotChangePage() {
   const canCreate = user?.role === "FACULTY";
   const canReview = user?.role === "STAFF" || user?.role === "ADMIN";
 
+  const [createScope, setCreateScope] = useState<CreateScope>("SINGLE");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [courseId, setCourseId] = useState<string>("");
   const [currentBookingId, setCurrentBookingId] = useState<string>("");
@@ -75,8 +106,16 @@ export default function SlotChangePage() {
   const [proposedStart, setProposedStart] = useState<string>("");
   const [proposedEnd, setProposedEnd] = useState<string>("");
   const [reason, setReason] = useState<string>("");
+  const [semesterCourseId, setSemesterCourseId] = useState<string>("");
+  const [semesterFromDate, setSemesterFromDate] = useState<string>("");
+  const [semesterToDate, setSemesterToDate] = useState<string>("");
+  const [semesterStartTime, setSemesterStartTime] = useState<string>("");
+  const [semesterEndTime, setSemesterEndTime] = useState<string>("");
+  const [semesterProposedRoomId, setSemesterProposedRoomId] = useState<string>("");
+  const [semesterReason, setSemesterReason] = useState<string>("");
   const [formError, setFormError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [batchSummary, setBatchSummary] = useState<ChangeRequestBatchCreateResponse | null>(null);
   const [reviewNotes, setReviewNotes] = useState<Record<number, string>>({});
 
   const requestStatus = statusFilter === "ALL" ? undefined : statusFilter;
@@ -94,6 +133,7 @@ export default function SlotChangePage() {
   } = useSlotChangeOptions(canCreate);
 
   const createMutation = useCreateSlotChangeRequest();
+  const createBatchMutation = useCreateSlotChangeBatchRequest();
   const approveMutation = useApproveSlotChangeRequest();
   const rejectMutation = useRejectSlotChangeRequest();
   const cancelMutation = useCancelSlotChangeRequest();
@@ -108,6 +148,14 @@ export default function SlotChangePage() {
         ? bookingOptions.filter((booking) => String(booking.courseId) === courseId)
         : bookingOptions,
     [bookingOptions, courseId]
+  );
+
+  const semesterBookings = useMemo(
+    () =>
+      semesterCourseId
+        ? bookingOptions.filter((booking) => String(booking.courseId) === semesterCourseId)
+        : [],
+    [bookingOptions, semesterCourseId]
   );
 
   const roomLabelById = useMemo(
@@ -138,6 +186,31 @@ export default function SlotChangePage() {
     }
   };
 
+  const handleSemesterCourseChange = (value: string) => {
+    setSemesterCourseId(value);
+
+    const bookingsForCourse = bookingOptions
+      .filter((booking) => String(booking.courseId) === value)
+      .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
+
+    if (bookingsForCourse.length === 0) {
+      return;
+    }
+
+    const first = bookingsForCourse[0];
+    const last = bookingsForCourse[bookingsForCourse.length - 1];
+
+    if (first && last) {
+      setSemesterFromDate(toInputDate(first.startAt));
+      setSemesterToDate(toInputDate(last.startAt));
+      setSemesterStartTime(toInputTime(first.startAt));
+      setSemesterEndTime(toInputTime(first.endAt));
+      if (!semesterProposedRoomId) {
+        setSemesterProposedRoomId(String(first.roomId));
+      }
+    }
+  };
+
   const handleCreate = async () => {
     if (!courseId || !currentBookingId || !proposedStart || !proposedEnd || !reason.trim()) {
       setFormError("course, booking, proposed start, proposed end, and reason are required");
@@ -146,6 +219,7 @@ export default function SlotChangePage() {
 
     setFormError(null);
     setActionError(null);
+    setBatchSummary(null);
 
     try {
       await createMutation.mutateAsync({
@@ -164,6 +238,39 @@ export default function SlotChangePage() {
       setReason("");
     } catch (error) {
       setFormError(error instanceof Error ? error.message : "Failed to create slot change request");
+    }
+  };
+
+  const handleCreateSemester = async () => {
+    if (
+      !semesterCourseId ||
+      !semesterStartTime ||
+      !semesterEndTime ||
+      !semesterReason.trim()
+    ) {
+      setFormError("course, proposed start/end time, and reason are required");
+      return;
+    }
+
+    setFormError(null);
+    setActionError(null);
+
+    try {
+      const result = await createBatchMutation.mutateAsync({
+        courseId: Number(semesterCourseId),
+        proposedStartTime: semesterStartTime,
+        proposedEndTime: semesterEndTime,
+        reason: semesterReason.trim(),
+        ...(semesterProposedRoomId ? { proposedRoomId: Number(semesterProposedRoomId) } : {}),
+        ...(semesterFromDate ? { fromDate: semesterFromDate } : {}),
+        ...(semesterToDate ? { toDate: semesterToDate } : {}),
+      });
+
+      setBatchSummary(result);
+      setSemesterReason("");
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Failed to create semester slot requests");
+      setBatchSummary(null);
     }
   };
 
@@ -217,6 +324,8 @@ export default function SlotChangePage() {
     (requestsError instanceof Error ? requestsError.message : null) ??
     (optionsError instanceof Error ? optionsError.message : null);
 
+  const isCreatingRequest = createMutation.isPending || createBatchMutation.isPending;
+
   return (
     <div className="space-y-6">
       <div>
@@ -257,79 +366,205 @@ export default function SlotChangePage() {
           <CardContent className="space-y-4">
             {isOptionsLoading && <p className="text-sm text-gray-500">Loading dropdown options...</p>}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="slotCourse">Course</Label>
-                <Select value={courseId} onValueChange={setCourseId}>
-                  <SelectTrigger id="slotCourse">
-                    <SelectValue placeholder="Select course" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {courseOptions.map((course) => (
-                      <SelectItem key={course.id} value={String(course.id)}>
-                        {course.code} - {course.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="slotBooking">Current Booking</Label>
-                <Select value={currentBookingId} onValueChange={handleBookingChange}>
-                  <SelectTrigger id="slotBooking">
-                    <SelectValue placeholder="Select booking" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {filteredBookings.map((booking) => (
-                      <SelectItem key={`${booking.id}-${booking.courseId}`} value={String(booking.id)}>
-                        #{booking.id} • {booking.courseCode} • {booking.roomName} ({formatDateTimeDDMMYYYY(booking.startAt)} - {formatDateTimeDDMMYYYY(booking.endAt)})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="slotRoom">Proposed Room</Label>
-                <Select value={proposedRoomId} onValueChange={setProposedRoomId}>
-                  <SelectTrigger id="slotRoom">
-                    <SelectValue placeholder="Select room" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {roomOptions.map((room) => (
-                      <SelectItem key={room.id} value={String(room.id)}>
-                        {room.name} ({room.buildingName})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="slotStart">Proposed Start</Label>
-                <DateInput id="slotStart" mode="datetime" value={proposedStart} onChange={setProposedStart} />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="slotEnd">Proposed End</Label>
-                <DateInput id="slotEnd" mode="datetime" value={proposedEnd} onChange={setProposedEnd} />
-              </div>
+            <div className="max-w-xs space-y-2">
+              <Label htmlFor="slotCreateScope">Request Scope</Label>
+              <Select
+                value={createScope}
+                onValueChange={(value) => {
+                  setCreateScope(value as CreateScope);
+                  setFormError(null);
+                  setBatchSummary(null);
+                }}
+              >
+                <SelectTrigger id="slotCreateScope">
+                  <SelectValue placeholder="Select request scope" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="SINGLE">Single class instance</SelectItem>
+                  <SelectItem value="SEMESTER">Semester/date-range batch</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="slotReason">Reason</Label>
-              <Textarea
-                id="slotReason"
-                value={reason}
-                onChange={(event) => setReason(event.target.value)}
-                placeholder="Explain why the slot needs to be changed"
-              />
-            </div>
+            {createScope === "SINGLE" ? (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="slotCourse">Course</Label>
+                    <Select value={courseId} onValueChange={setCourseId}>
+                      <SelectTrigger id="slotCourse">
+                        <SelectValue placeholder="Select course" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {courseOptions.map((course) => (
+                          <SelectItem key={course.id} value={String(course.id)}>
+                            {course.code} - {course.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
 
-            <Button type="button" onClick={() => void handleCreate()} disabled={createMutation.isPending}>
-              {createMutation.isPending ? "Submitting..." : "Create Slot Change Request"}
-            </Button>
+                  <div className="space-y-2">
+                    <Label htmlFor="slotBooking">Current Booking</Label>
+                    <Select value={currentBookingId} onValueChange={handleBookingChange}>
+                      <SelectTrigger id="slotBooking">
+                        <SelectValue placeholder="Select booking" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {filteredBookings.map((booking) => (
+                          <SelectItem key={`${booking.id}-${booking.courseId}`} value={String(booking.id)}>
+                            #{booking.id} • {booking.courseCode} • {booking.roomName} ({formatDateTimeDDMMYYYY(booking.startAt)} - {formatDateTimeDDMMYYYY(booking.endAt)})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="slotRoom">Proposed Room</Label>
+                    <Select value={proposedRoomId} onValueChange={setProposedRoomId}>
+                      <SelectTrigger id="slotRoom">
+                        <SelectValue placeholder="Select room" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {roomOptions.map((room) => (
+                          <SelectItem key={room.id} value={String(room.id)}>
+                            {room.name} ({room.buildingName})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="slotStart">Proposed Start</Label>
+                    <DateInput id="slotStart" mode="datetime" value={proposedStart} onChange={setProposedStart} />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="slotEnd">Proposed End</Label>
+                    <DateInput id="slotEnd" mode="datetime" value={proposedEnd} onChange={setProposedEnd} />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="slotReason">Reason</Label>
+                  <Textarea
+                    id="slotReason"
+                    value={reason}
+                    onChange={(event) => setReason(event.target.value)}
+                    placeholder="Explain why the slot needs to be changed"
+                  />
+                </div>
+
+                <Button type="button" onClick={() => void handleCreate()} disabled={isCreatingRequest}>
+                  {createMutation.isPending ? "Submitting..." : "Create Slot Change Request"}
+                </Button>
+              </>
+            ) : (
+              <>
+                <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                  Creates one pending request per linked class booking in the selected date range.
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="slotSemesterCourse">Course</Label>
+                    <Select value={semesterCourseId} onValueChange={handleSemesterCourseChange}>
+                      <SelectTrigger id="slotSemesterCourse">
+                        <SelectValue placeholder="Select course" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {courseOptions.map((course) => (
+                          <SelectItem key={course.id} value={String(course.id)}>
+                            {course.code} - {course.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="slotSemesterRoom">Proposed Room (Optional)</Label>
+                    <Select value={semesterProposedRoomId} onValueChange={setSemesterProposedRoomId}>
+                      <SelectTrigger id="slotSemesterRoom">
+                        <SelectValue placeholder="Keep current room" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {roomOptions.map((room) => (
+                          <SelectItem key={room.id} value={String(room.id)}>
+                            {room.name} ({room.buildingName})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="slotSemesterFromDate">From Date (Optional)</Label>
+                    <DateInput
+                      id="slotSemesterFromDate"
+                      mode="date"
+                      value={semesterFromDate}
+                      onChange={setSemesterFromDate}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="slotSemesterToDate">To Date (Optional)</Label>
+                    <DateInput
+                      id="slotSemesterToDate"
+                      mode="date"
+                      value={semesterToDate}
+                      onChange={setSemesterToDate}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="slotSemesterStartTime">Proposed Start Time</Label>
+                    <DateInput
+                      id="slotSemesterStartTime"
+                      mode="time"
+                      value={semesterStartTime}
+                      onChange={setSemesterStartTime}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="slotSemesterEndTime">Proposed End Time</Label>
+                    <DateInput
+                      id="slotSemesterEndTime"
+                      mode="time"
+                      value={semesterEndTime}
+                      onChange={setSemesterEndTime}
+                    />
+                  </div>
+                </div>
+
+                {semesterCourseId && (
+                  <p className="text-xs text-gray-600">
+                    {semesterBookings.length} linked booking(s) found for this course.
+                  </p>
+                )}
+
+                <div className="space-y-2">
+                  <Label htmlFor="slotSemesterReason">Reason</Label>
+                  <Textarea
+                    id="slotSemesterReason"
+                    value={semesterReason}
+                    onChange={(event) => setSemesterReason(event.target.value)}
+                    placeholder="Explain why the full course schedule needs a slot update"
+                  />
+                </div>
+
+                <Button type="button" onClick={() => void handleCreateSemester()} disabled={isCreatingRequest}>
+                  {createBatchMutation.isPending
+                    ? "Submitting..."
+                    : "Create Semester Slot Change Requests"}
+                </Button>
+              </>
+            )}
           </CardContent>
         </Card>
       )}
@@ -337,6 +572,27 @@ export default function SlotChangePage() {
       {errorMessage && (
         <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {errorMessage}
+        </div>
+      )}
+
+      {batchSummary && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 space-y-2">
+          <p>
+            Semester batch result: created {batchSummary.createdCount} of {batchSummary.requestedCount} request(s).
+          </p>
+          {batchSummary.failures.length > 0 && (
+            <div className="space-y-1">
+              <p className="font-medium">Skipped/failed entries:</p>
+              {batchSummary.failures.slice(0, 5).map((failure) => (
+                <p key={failure.bookingId}>
+                  Booking #{failure.bookingId} ({formatDateTimeDDMMYYYY(failure.bookingStartAt)} - {formatDateTimeDDMMYYYY(failure.bookingEndAt)}): {failure.errors.join("; ")}
+                </p>
+              ))}
+              {batchSummary.failures.length > 5 && (
+                <p>...and {batchSummary.failures.length - 5} more.</p>
+              )}
+            </div>
+          )}
         </div>
       )}
 

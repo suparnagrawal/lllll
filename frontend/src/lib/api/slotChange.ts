@@ -1,7 +1,9 @@
 import { request } from "./client";
 import type {
+  ChangeRequestBatchCreateResponse,
   ChangeRequestActionResponse,
   ChangeRequestStatus,
+  SlotChangeBatchCreateInput,
   SlotChangeCreateInput,
   SlotChangeCreateResponse,
   SlotChangeOptionsResponse,
@@ -23,6 +25,15 @@ export async function createSlotChangeRequest(
   input: SlotChangeCreateInput
 ): Promise<SlotChangeCreateResponse> {
   return request<SlotChangeCreateResponse>("/slot-change-requests", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function createSlotChangeBatchRequest(
+  input: SlotChangeBatchCreateInput
+): Promise<ChangeRequestBatchCreateResponse> {
+  return request<ChangeRequestBatchCreateResponse>("/slot-change-requests/batch", {
     method: "POST",
     body: JSON.stringify(input),
   });

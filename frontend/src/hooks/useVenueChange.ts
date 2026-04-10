@@ -1,7 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as venueChangeApi from "../lib/api/venueChange";
 import { queryConfigs } from "../lib/queryConfig";
-import type { ChangeRequestStatus, VenueChangeCreateInput } from "../lib/api/types";
+import type {
+  ChangeRequestStatus,
+  VenueChangeBatchCreateInput,
+  VenueChangeCreateInput,
+} from "../lib/api/types";
 
 export function useVenueChangeOptions(enabled = true) {
   return useQuery({
@@ -25,6 +29,19 @@ export function useCreateVenueChangeRequest() {
 
   return useMutation({
     mutationFn: (input: VenueChangeCreateInput) => venueChangeApi.createVenueChangeRequest(input),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["venue-change-requests"] });
+      queryClient.invalidateQueries({ queryKey: ["venue-change-options"] });
+    },
+  });
+}
+
+export function useCreateVenueChangeBatchRequest() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (input: VenueChangeBatchCreateInput) =>
+      venueChangeApi.createVenueChangeBatchRequest(input),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["venue-change-requests"] });
       queryClient.invalidateQueries({ queryKey: ["venue-change-options"] });

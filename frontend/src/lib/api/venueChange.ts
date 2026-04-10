@@ -1,7 +1,9 @@
 import { request } from "./client";
 import type {
+  ChangeRequestBatchCreateResponse,
   ChangeRequestActionResponse,
   ChangeRequestStatus,
+  VenueChangeBatchCreateInput,
   VenueChangeCreateInput,
   VenueChangeCreateResponse,
   VenueChangeOptionsResponse,
@@ -23,6 +25,15 @@ export async function createVenueChangeRequest(
   input: VenueChangeCreateInput
 ): Promise<VenueChangeCreateResponse> {
   return request<VenueChangeCreateResponse>("/venue-change-requests", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function createVenueChangeBatchRequest(
+  input: VenueChangeBatchCreateInput
+): Promise<ChangeRequestBatchCreateResponse> {
+  return request<ChangeRequestBatchCreateResponse>("/venue-change-requests/batch", {
     method: "POST",
     body: JSON.stringify(input),
   });

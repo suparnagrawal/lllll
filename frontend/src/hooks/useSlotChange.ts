@@ -1,7 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as slotChangeApi from "../lib/api/slotChange";
 import { queryConfigs } from "../lib/queryConfig";
-import type { ChangeRequestStatus, SlotChangeCreateInput } from "../lib/api/types";
+import type {
+  ChangeRequestStatus,
+  SlotChangeBatchCreateInput,
+  SlotChangeCreateInput,
+} from "../lib/api/types";
 
 export function useSlotChangeOptions(enabled = true) {
   return useQuery({
@@ -25,6 +29,19 @@ export function useCreateSlotChangeRequest() {
 
   return useMutation({
     mutationFn: (input: SlotChangeCreateInput) => slotChangeApi.createSlotChangeRequest(input),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["slot-change-requests"] });
+      queryClient.invalidateQueries({ queryKey: ["slot-change-options"] });
+    },
+  });
+}
+
+export function useCreateSlotChangeBatchRequest() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (input: SlotChangeBatchCreateInput) =>
+      slotChangeApi.createSlotChangeBatchRequest(input),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["slot-change-requests"] });
       queryClient.invalidateQueries({ queryKey: ["slot-change-options"] });
