@@ -13,7 +13,7 @@ import {
 } from "../db/schema";
 import { hasBookingOverlap } from "./bookingService";
 
-type DbExecutor = typeof db | any;
+type DbExecutor = Pick<typeof db, "select" | "insert" | "update" | "delete">;
 
 export type SlotChangeRequestStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
 
@@ -362,6 +362,13 @@ export async function validateSlotChange(
     return { valid: false, errors, warnings };
   }
 
+  const currentBooking = bookingRows[0];
+
+  if (!currentBooking) {
+    errors.push("Current booking not found");
+    return { valid: false, errors, warnings };
+  }
+
   const isLinked = await isBookingLinkedToCourse(
     input.currentBookingId,
     input.courseId,
@@ -374,7 +381,7 @@ export async function validateSlotChange(
   }
 
   // Determine target room
-  const targetRoomId = input.proposedRoomId ?? bookingRows[0].roomId;
+  const targetRoomId = input.proposedRoomId ?? currentBooking.roomId;
 
   // 3. Check room availability at proposed time
   const hasOverlap = await hasBookingOverlap(
@@ -476,6 +483,10 @@ export async function applySlotChange(
 
   const request = requestRows[0];
 
+  if (!request) {
+    return { success: false, error: "Slot change request not found" };
+  }
+
   if (request.status !== "PENDING") {
     return { success: false, error: `Request is already ${request.status.toLowerCase()}` };
   }
@@ -492,6 +503,10 @@ export async function applySlotChange(
   }
 
   const currentBooking = bookingRows[0];
+
+  if (!currentBooking) {
+    return { success: false, error: "Current booking no longer exists" };
+  }
   const targetRoomId = request.proposedRoomId ?? currentBooking.roomId;
 
   // Validate one more time before applying
@@ -526,6 +541,12 @@ export async function applySlotChange(
     return { success: false, error: "Failed to update booking" };
   }
 
+  const updatedBooking = updatedBookings[0];
+
+  if (!updatedBooking) {
+    return { success: false, error: "Failed to update booking" };
+  }
+
   // Update request status
   await executor
     .update(slotChangeRequests)
@@ -536,7 +557,7 @@ export async function applySlotChange(
     })
     .where(eq(slotChangeRequests.id, requestId));
 
-  return { success: true, newBookingId: updatedBookings[0].id };
+  return { success: true, newBookingId: updatedBooking.id };
 }
 
 /**

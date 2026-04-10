@@ -384,7 +384,7 @@ router.post(
       }
 
       // Apply the slot change
-      const result = await db.transaction(async (tx: any) => {
+      const result = await db.transaction(async (tx) => {
         // Update review note if provided
         if (reviewNote) {
           await tx

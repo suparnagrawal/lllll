@@ -2,7 +2,7 @@ import { and, eq, gt, lt, ne } from "drizzle-orm";
 import { db } from "../db";
 import { bookingCourseLink, bookings, courses, rooms } from "../db/schema";
 
-type DbExecutor = typeof db | any;
+type DbExecutor = Pick<typeof db, "select" | "insert" | "update" | "delete">;
 
 const FORBIDDEN_SLOT_KEYS = [
   "slot",

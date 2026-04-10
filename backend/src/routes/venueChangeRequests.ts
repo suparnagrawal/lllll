@@ -344,7 +344,7 @@ router.post(
         }
       }
 
-      const result = await db.transaction(async (tx: any) => {
+      const result = await db.transaction(async (tx) => {
         if (reviewNote) {
           await tx
             .update(venueChangeRequests)
