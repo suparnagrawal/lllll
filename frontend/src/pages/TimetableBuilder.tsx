@@ -72,7 +72,7 @@ import type {
 import { useAuth } from "../auth/AuthContext";
 import { formatDateDDMMYYYY } from "../utils/datetime";
 import { DateInput } from "../components/DateInput";
-import { formatEditDiffSummary } from "./timetableEditUtils";
+import { formatEditDiffSummary, groupOperationsByGroupId } from "./timetableEditUtils";
 
 const DAY_OF_WEEK_OPTIONS: DayOfWeek[] = [
   "MON",
@@ -505,6 +505,9 @@ export function TimetableBuilderPage() {
   const [editStartResult, setEditStartResult] =
     useState<EditCommitSessionStartResponse | null>(null);
   const [editDraftJson, setEditDraftJson] = useState("");
+  const [editSessionStatus, setEditSessionStatus] = useState<"VIEW" | "EDITING" | "COMMITTING">("VIEW");
+  const [showPruneConfirmation, setShowPruneConfirmation] = useState(false);
+  const [pendingPruneBookingCount, setPendingPruneBookingCount] = useState(0);
 
   const days: SlotDay[] = grid?.days ?? [];
   const timeBands: SlotTimeBand[] = grid?.timeBands ?? [];
@@ -1791,6 +1794,7 @@ export function TimetableBuilderPage() {
       setConflictReport(runtimeReport);
       setConflictResolutions({});
       setShowConflictDialog(true);
+      setEditSessionStatus("VIEW");
       return;
     }
 
@@ -1824,6 +1828,7 @@ export function TimetableBuilderPage() {
     activeCommitSessionId: number,
     slotSystemId: number,
   ) => {
+    setEditSessionStatus("COMMITTING");
     await apiStartCommitFreeze(activeCommitSessionId);
 
     const runtimeReport = await apiRunRuntimeCommitCheck(activeCommitSessionId);
@@ -1848,6 +1853,7 @@ export function TimetableBuilderPage() {
     await loadGrid(slotSystemId);
     await loadSlotSystems();
     await loadImportBatches(slotSystemId);
+    setEditSessionStatus("VIEW");
   };
 
   const runInternalThenFinalizeForEdit = async (
@@ -2119,6 +2125,7 @@ export function TimetableBuilderPage() {
     setEditStartLoading(true);
     setChangeError(null);
     setChangeSuccess(null);
+    setEditSessionStatus("EDITING");
     setImportError(null);
 
     try {
@@ -2130,6 +2137,7 @@ export function TimetableBuilderPage() {
           snapshot = parsed;
         } catch {
           setChangeError("Edit draft JSON is invalid. Fix the JSON before starting commit.");
+          setEditSessionStatus("VIEW");
           return;
         }
       }
@@ -2141,10 +2149,31 @@ export function TimetableBuilderPage() {
         pruneBookings: editPruneBookings,
       });
 
+      if (result.noChanges === true || result.diff.affectedRows === 0) {
+        setEditStartResult(result);
+        setChangeError(result.message ?? "No changes detected");
+        setEditSessionStatus("VIEW");
+        return;
+      }
+
+      if (!result.session) {
+        setChangeError("Edit session could not be started");
+        setEditSessionStatus("VIEW");
+        return;
+      }
+
       setEditStartResult(result);
       setCommitSessionId(result.session.commitSessionId);
       setCommitFlowContext("edit");
       setCommitTargetSlotSystemId(selectedSystemId);
+
+      // Check if pruning is enabled and there are bookings to prune
+      if (editPruneBookings && result.diff.bookingImpact.totalAffectedBookings > 0) {
+        setPendingPruneBookingCount(result.diff.bookingImpact.totalAffectedBookings);
+        setShowPruneConfirmation(true);
+        setEditSessionStatus("VIEW");
+        return;
+      }
 
       const externalReport = await apiRunExternalCommitCheck(result.session.commitSessionId);
 
@@ -2158,9 +2187,55 @@ export function TimetableBuilderPage() {
 
       await runInternalThenFinalizeForEdit(result.session.commitSessionId, selectedSystemId);
     } catch (e) {
-      setChangeError(e instanceof Error ? e.message : "Failed to start edit commit");
+      const errorMsg = e instanceof Error ? e.message : "Failed to start edit commit";
+
+      // Handle specific error codes from backend
+      if (errorMsg.includes("Version mismatch") || errorMsg.includes("Timetable updated")) {
+        setChangeError("This timetable was updated by someone else. Please reload.");
+      } else if (errorMsg.includes("No changes detected")) {
+        setChangeError("No changes detected. Edit aborted.");
+      } else {
+        setChangeError(errorMsg);
+      }
     } finally {
       setEditStartLoading(false);
+      setEditSessionStatus("VIEW");
+    }
+  };
+
+  const handleConfirmPrune = async () => {
+    if (!editStartResult?.session) {
+      setChangeError("No edit session found");
+      return;
+    }
+
+    if (selectedSystemId === "") {
+      setChangeError("Slot system is not selected");
+      return;
+    }
+
+    setShowPruneConfirmation(false);
+    setEditSessionStatus("EDITING");
+
+    try {
+      const commitSessionId = editStartResult.session.commitSessionId;
+
+      const externalReport = await apiRunExternalCommitCheck(commitSessionId);
+
+      if (externalReport.conflictCount > 0) {
+        setConflictStage("external");
+        setConflictReport(externalReport);
+        setConflictResolutions({});
+        setShowConflictDialog(true);
+        setEditSessionStatus("VIEW");
+        return;
+      }
+
+      await runInternalThenFinalizeForEdit(commitSessionId, selectedSystemId);
+    } catch (e) {
+      setChangeError(e instanceof Error ? e.message : "Failed to proceed with prune confirmation");
+    } finally {
+      setEditSessionStatus("VIEW");
     }
   };
 
@@ -2249,6 +2324,42 @@ export function TimetableBuilderPage() {
           )}
         </div>
 
+     {/* Prune Confirmation Modal */}
+     {showPruneConfirmation && (
+       <div
+         className="fixed inset-0 z-[60] flex items-center justify-center"
+         style={{ backgroundColor: "rgba(0,0,0,0.6)" }}
+       >
+         <div
+           className="bg-white rounded-lg shadow-2xl p-6 w-full max-w-md"
+         >
+           <h3 className="text-lg font-bold mb-4 text-red-600">⚠️ Confirm Pruning</h3>
+           <p className="text-gray-700 mb-2">
+             You have enabled booking pruning. This will remove <strong>{pendingPruneBookingCount}</strong> existing booking{pendingPruneBookingCount !== 1 ? "s" : ""} that no longer fit the new slot structure.
+           </p>
+           <p className="text-gray-600 text-sm mb-4">
+             This action cannot be undone. Pruned bookings will be permanently deleted.
+           </p>
+           <div className="flex gap-3 justify-end">
+             <button
+               className="btn btn-ghost"
+               onClick={() => {
+                 setShowPruneConfirmation(false);
+                 setPendingPruneBookingCount(0);
+               }}
+             >
+               Cancel (Keep Bookings)
+             </button>
+             <button
+               className="btn btn-error"
+               onClick={() => void handleConfirmPrune()}
+             >
+               Confirm Prune
+             </button>
+           </div>
+         </div>
+       </div>
+     )}
         {isSystemLocked && (
           <div className="mt-3 p-3 rounded" style={{ backgroundColor: "#fef3cd", border: "1px solid #ffc107" }}>
             <strong>🔒 Locked System:</strong> This slot system has been committed and is locked.
@@ -3486,6 +3597,22 @@ export function TimetableBuilderPage() {
                 : "Resolve pre-freeze clashes before moving to the next stage."}
             </p>
 
+            {conflictStage === "runtime" && (
+              <div className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                <div className="font-semibold">Grouped Runtime Conflicts</div>
+                {Array.from(
+                  conflictReport.conflicts.reduce((map, conflict) => {
+                    const key = `Row ${conflict.rowIndex}`;
+                    const current = map.get(key) ?? 0;
+                    map.set(key, current + 1);
+                    return map;
+                  }, new Map<string, number>()),
+                ).map(([rowLabel, count]) => (
+                  <div key={rowLabel}>{rowLabel}: {count} conflict(s)</div>
+                ))}
+              </div>
+            )}
+
             <div className="space-y-4">
               {conflictReport.conflicts.map((conflict) => {
                 const resolution = conflictResolutions[conflict.id];
@@ -3503,6 +3630,8 @@ export function TimetableBuilderPage() {
                     style={{ borderColor: resolution ? "#28a745" : "#ffc107" }}
                   >
                     <div className="font-medium mb-2">
+                      Affected Row: #{conflict.rowIndex} ·
+                      {" "}
                       Requested Slot - Room: {conflictRoomLabel},{" "}
                       {new Date(conflict.startAt).toLocaleString()} → {new Date(conflict.endAt).toLocaleString()}
                     </div>
@@ -3650,6 +3779,11 @@ export function TimetableBuilderPage() {
             id="changeWorkspacePanel"
           >
             <h3 className="text-xl font-bold mb-4">✏️ Slot System Change Workspace</h3>
+                       {editSessionStatus !== "VIEW" && (
+                         <div className="p-3 rounded mb-4 text-sm" style={{ backgroundColor: "#e3f2fd", color: "#1565c0" }}>
+                           <strong>Status:</strong> Edit in progress · {editSessionStatus === "EDITING" ? "Running conflict checks" : "Finalizing changes"}
+                         </div>
+                       )}
             <p className="text-gray-600 mb-4">
               Preview and apply structural changes to the locked slot system.
               Changes will acquire a booking freeze during application.
@@ -3731,12 +3865,29 @@ export function TimetableBuilderPage() {
                 <p className="text-sm text-gray-600 mt-1">
                   {formatEditDiffSummary(editStartResult.diff)}
                 </p>
+                <p className="text-sm text-blue-600 mt-1 font-medium">
+                  Booking Impact: {editStartResult.diff.bookingImpact.totalAffectedBookings} bookings will be affected
+                </p>
                 {editStartResult.diff.operations.length > 0 && (
                   <div className="mt-2 max-h-40 overflow-y-auto border rounded bg-white p-2">
-                    {editStartResult.diff.operations.map((operation, index) => (
-                      <div key={`${operation.type}-${operation.label}-${index}`} className="text-xs py-1 border-b last:border-b-0">
-                        <strong>{operation.type}</strong> · {operation.label} · {operation.oldDescriptorCount} → {operation.newDescriptorCount}
-                      </div>
+                    {groupOperationsByGroupId(editStartResult.diff.operations).map((group) => (
+                      <details key={group.groupId} className="text-xs py-2 border-b last:border-b-0">
+                        <summary className="cursor-pointer font-medium text-gray-700">
+                          {group.type} · {group.operations.length} operation(s) · {group.totalBookingsImpacted} booking(s) affected
+                        </summary>
+                        <div className="ml-3 mt-1">
+                          {group.operations.map((operation, idx) => (
+                            <div key={`${operation.operationGroupId}-${idx}`} className="text-xs py-1 text-gray-600 border-l border-gray-300 pl-2">
+                              <strong>{operation.label}</strong> · {operation.oldDescriptorCount} → {operation.newDescriptorCount} slots
+                              {operation.affectedBookings > 0 && (
+                                <span className="text-orange-600 ml-1">
+                                  ({operation.affectedBookings} booking{operation.affectedBookings !== 1 ? "s" : ""})
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </details>
                     ))}
                   </div>
                 )}
@@ -3747,9 +3898,14 @@ export function TimetableBuilderPage() {
               <button
                 className="btn btn-primary"
                 onClick={() => void handleStartEditCommit()}
-                disabled={editStartLoading || changeLoading || selectedSystemId === ""}
+                disabled={
+                  editStartLoading ||
+                  changeLoading ||
+                  selectedSystemId === "" ||
+                  editSessionStatus === "COMMITTING"
+                }
               >
-                {editStartLoading ? "Starting..." : "Start Edit Commit"}
+                 {editStartLoading ? "Starting..." : !editStartResult ? "Start Edit Commit" : "Proceed to Conflict Check"}
               </button>
               <button
                 className="btn btn-ghost"
