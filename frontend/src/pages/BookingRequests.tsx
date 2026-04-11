@@ -164,7 +164,6 @@ export function BookingRequestsPage({
     try {
       setRequests(await getBookingRequests(filter === "ALL" ? undefined : filter));
     } catch (e) {
-      console.log("ERROR DEBUG:", e);
       setError(formatError(e, "Failed to load booking requests"));
     } finally {
       setLoading(false);
@@ -185,7 +184,6 @@ export function BookingRequestsPage({
       }
       setBookingsById(bookingMap);
     } catch (e) {
-      console.log("ERROR DEBUG:", e);
       setError(formatError(e, "Failed to load edit requests"));
     }
   };

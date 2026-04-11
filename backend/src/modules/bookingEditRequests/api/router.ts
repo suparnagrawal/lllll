@@ -18,20 +18,28 @@ router.get("/", authMiddleware, async (req, res) => {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
-  const whereClause =
-    user.role === "ADMIN" || user.role === "STAFF"
-      ? undefined
-      : eq(bookingEditRequests.requestedBy, user.id);
+  try {
+    const whereClause =
+      user.role === "ADMIN" || user.role === "STAFF"
+        ? undefined
+        : eq(bookingEditRequests.requestedBy, user.id);
 
-  const query = db
-    .select()
-    .from(bookingEditRequests);
+    const query = db
+      .select()
+      .from(bookingEditRequests);
 
-  const rows = whereClause
-    ? await query.where(whereClause)
-    : await query;
+    const rows = whereClause
+      ? await query.where(whereClause)
+      : await query;
 
-  return res.json(rows);
+    return res.json(rows);
+  } catch (err) {
+    console.error("DB ERROR:", err);
+    return res.status(500).json({
+      error: "Failed to fetch booking edit requests",
+      message: "Failed to fetch booking edit requests",
+    });
+  }
 });
 
 router.post(
