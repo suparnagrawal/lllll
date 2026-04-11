@@ -781,72 +781,6 @@ export const bookingCourseLink = pgTable(
   }),
 );
 
-export const slotChangeRequestStatusEnum = pgEnum("slot_change_request_status", [
-  "PENDING",
-  "APPROVED",
-  "REJECTED",
-  "CANCELLED",
-]);
-
-export const slotChangeRequests = pgTable(
-  "slot_change_requests",
-  {
-    id: serial("id").primaryKey(),
-    requestedBy: integer("requested_by")
-      .notNull()
-      .references(() => users.id),
-    courseId: integer("course_id")
-      .notNull()
-      .references(() => courses.id, { onDelete: "cascade" }),
-    currentBookingId: integer("current_booking_id")
-      .notNull()
-      .references(() => bookings.id, { onDelete: "cascade" }),
-    proposedRoomId: integer("proposed_room_id").references(() => rooms.id, {
-      onDelete: "set null",
-    }),
-    proposedStart: timestamp("proposed_start", { withTimezone: true }).notNull(),
-    proposedEnd: timestamp("proposed_end", { withTimezone: true }).notNull(),
-    reason: text("reason").notNull(),
-    status: slotChangeRequestStatusEnum("status").notNull().default("PENDING"),
-    reviewedBy: integer("reviewed_by").references(() => users.id, {
-      onDelete: "set null",
-    }),
-    reviewNote: text("review_note"),
-    createdAt: timestamp("created_at", { withTimezone: false })
-      .notNull()
-      .defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: false })
-      .notNull()
-      .defaultNow(),
-  },
-  (table) => ({
-    requestedByIdx: index("slot_change_requests_requested_by_idx").on(
-      table.requestedBy,
-    ),
-    courseIdIdx: index("slot_change_requests_course_id_idx").on(table.courseId),
-    currentBookingIdIdx: index("slot_change_requests_current_booking_id_idx").on(
-      table.currentBookingId,
-    ),
-    proposedRoomIdIdx: index("slot_change_requests_proposed_room_id_idx").on(
-      table.proposedRoomId,
-    ),
-    reviewedByIdx: index("slot_change_requests_reviewed_by_idx").on(
-      table.reviewedBy,
-    ),
-    statusIdx: index("slot_change_requests_status_idx").on(table.status),
-    proposedStartIdx: index("slot_change_requests_proposed_start_idx").on(
-      table.proposedStart,
-    ),
-    proposedEndIdx: index("slot_change_requests_proposed_end_idx").on(
-      table.proposedEnd,
-    ),
-    proposedRangeCheck: check(
-      "slot_change_requests_valid_proposed_range_check",
-      sql`${table.proposedEnd} > ${table.proposedStart}`,
-    ),
-  }),
-);
-
 // Session store table (created by connect-pg-simple)
 export const userSessions = pgTable(
   "user_sessions",
@@ -866,61 +800,6 @@ export const userSessions = pgTable(
   (table) => ({
     expireIdx: index("IDX_session_expire").on(table.expire),
   })
-);
-
-// Venue Change Requests (REQ-4.3.8 to REQ-4.3.11)
-export const venueChangeRequestStatusEnum = pgEnum("venue_change_request_status", [
-  "PENDING",
-  "APPROVED",
-  "REJECTED",
-  "CANCELLED",
-]);
-
-export const venueChangeRequests = pgTable(
-  "venue_change_requests",
-  {
-    id: serial("id").primaryKey(),
-    requestedBy: integer("requested_by")
-      .notNull()
-      .references(() => users.id),
-    courseId: integer("course_id")
-      .notNull()
-      .references(() => courses.id, { onDelete: "cascade" }),
-    currentBookingId: integer("current_booking_id")
-      .notNull()
-      .references(() => bookings.id, { onDelete: "cascade" }),
-    proposedRoomId: integer("proposed_room_id")
-      .notNull()
-      .references(() => rooms.id, { onDelete: "cascade" }),
-    reason: text("reason").notNull(),
-    status: venueChangeRequestStatusEnum("status").notNull().default("PENDING"),
-    reviewedBy: integer("reviewed_by").references(() => users.id, {
-      onDelete: "set null",
-    }),
-    reviewNote: text("review_note"),
-    createdAt: timestamp("created_at", { withTimezone: false })
-      .notNull()
-      .defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: false })
-      .notNull()
-      .defaultNow(),
-  },
-  (table) => ({
-    requestedByIdx: index("venue_change_requests_requested_by_idx").on(
-      table.requestedBy,
-    ),
-    courseIdIdx: index("venue_change_requests_course_id_idx").on(table.courseId),
-    currentBookingIdIdx: index("venue_change_requests_current_booking_id_idx").on(
-      table.currentBookingId,
-    ),
-    proposedRoomIdIdx: index("venue_change_requests_proposed_room_id_idx").on(
-      table.proposedRoomId,
-    ),
-    reviewedByIdx: index("venue_change_requests_reviewed_by_idx").on(
-      table.reviewedBy,
-    ),
-    statusIdx: index("venue_change_requests_status_idx").on(table.status),
-  }),
 );
 
 export * from "../modules/timetable/schema";

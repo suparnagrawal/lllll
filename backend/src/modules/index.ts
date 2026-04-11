@@ -8,10 +8,8 @@ import { buildingsModule } from "./buildings";
 import { dashboardModule } from "./dashboard";
 import { notificationsModule } from "./notifications";
 import { roomsModule } from "./rooms";
-import { slotChangeRequestsModule } from "./slotChangeRequests";
 import { timetableModule } from "./timetable";
 import { usersModule } from "./users";
-import { venueChangeRequestsModule } from "./venueChangeRequests";
 
 /**
  * Central feature-module registry.
@@ -24,8 +22,6 @@ export const apiModules: ApiModule[] = [
   bookingsModule,
   bookingRequestsModule,
   bookingEditRequestsModule,
-  slotChangeRequestsModule,
-  venueChangeRequestsModule,
   availabilityModule,
   usersModule,
   notificationsModule,

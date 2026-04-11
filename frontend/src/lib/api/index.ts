@@ -25,36 +25,6 @@ export type {
   EditBookingDirectResponse,
   EditBookingRequestResponse,
   EditBookingResponse,
-  ChangeRequestStatus,
-  ChangeRequestCourseOption,
-  ChangeRequestBookingOption,
-  ChangeRequestRoomOption,
-  ChangeRequestRequester,
-  SlotChangeRequestRecord,
-  VenueChangeRequestRecord,
-  SlotChangeRequestListItem,
-  VenueChangeRequestListItem,
-  SlotChangeRequestDetail,
-  VenueChangeRequestDetail,
-  SlotChangeOptionsResponse,
-  VenueChangeOptionsResponse,
-  SlotChangeCreateInput,
-  SlotChangeBatchCreateInput,
-  VenueChangeCreateInput,
-  VenueChangeBatchCreateInput,
-  SlotChangeValidateInput,
-  SlotChangeValidationResponse,
-  SlotChangeAlternativeSuggestion,
-  VenueChangeValidateInput,
-  VenueChangeValidationResponse,
-  VenueChangeValidationSlot,
-  VenueSuggestion,
-  SlotChangeCreateResponse,
-  VenueChangeCreateResponse,
-  ChangeRequestBatchSuccess,
-  ChangeRequestBatchFailure,
-  ChangeRequestBatchCreateResponse,
-  ChangeRequestActionResponse,
   NotificationType,
   AppNotification,
   NotificationsResponse,
@@ -207,33 +177,6 @@ export {
   approveEditRequest,
   rejectEditRequest,
 } from "./editBooking";
-
-// Slot change endpoints
-export {
-  getSlotChangeOptions,
-  getSlotChangeRequests,
-  getSlotChangeRequest,
-  createSlotChangeRequest,
-  createSlotChangeBatchRequest,
-  approveSlotChangeRequest,
-  rejectSlotChangeRequest,
-  cancelSlotChangeRequest,
-  validateSlotChangeRequest,
-} from "./slotChange";
-
-// Venue change endpoints
-export {
-  getVenueChangeOptions,
-  getVenueChangeRequests,
-  getVenueChangeRequest,
-  createVenueChangeRequest,
-  createVenueChangeBatchRequest,
-  approveVenueChangeRequest,
-  rejectVenueChangeRequest,
-  cancelVenueChangeRequest,
-  getVenueSuggestions,
-  validateVenueChangeRequest,
-} from "./venueChange";
 
 // Notifications endpoints
 export {
