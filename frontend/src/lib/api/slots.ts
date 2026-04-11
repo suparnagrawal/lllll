@@ -15,11 +15,6 @@ import type {
   TimetableImportBatchDeleteReport,
   TimetableImportProcessedRowsReport,
   TimetableImportBatchListResponse,
-  ConflictDetectionReport,
-  ConflictResolutionDecision,
-  CommitWithResolutionsReport,
-  CancelCommitResponse,
-  FreezeStatusResponse,
   CommitSessionSummary,
   CommitStageReport,
   CommitSessionResolutionDecision,
@@ -274,53 +269,6 @@ export async function getTimetableImportProcessedRows(
 ): Promise<TimetableImportProcessedRowsReport> {
   return request<TimetableImportProcessedRowsReport>(
     `/timetable/imports/${batchId}/processed-rows`,
-  );
-}
-
-// Conflict Detection and Resolution
-
-export async function detectCommitConflicts(
-  batchId: number,
-  decisions: TimetableImportCommitDecision[],
-): Promise<ConflictDetectionReport> {
-  return request<ConflictDetectionReport>(
-    `/timetable/imports/${batchId}/detect-conflicts`,
-    {
-      method: "POST",
-      body: JSON.stringify({ decisions }),
-    },
-  );
-}
-
-export async function commitWithResolutions(
-  batchId: number,
-  resolutions: ConflictResolutionDecision[],
-): Promise<CommitWithResolutionsReport> {
-  return request<CommitWithResolutionsReport>(
-    `/timetable/imports/${batchId}/commit-with-resolutions`,
-    {
-      method: "POST",
-      body: JSON.stringify({ resolutions }),
-    },
-  );
-}
-
-export async function cancelCommit(
-  batchId: number,
-): Promise<CancelCommitResponse> {
-  return request<CancelCommitResponse>(
-    `/timetable/imports/${batchId}/cancel-commit`,
-    {
-      method: "POST",
-    },
-  );
-}
-
-export async function getFreezeStatus(
-  batchId: number,
-): Promise<FreezeStatusResponse> {
-  return request<FreezeStatusResponse>(
-    `/timetable/imports/${batchId}/freeze-status`,
   );
 }
 

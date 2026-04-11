@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import {
   addDayLane as apiAddDayLane,
@@ -39,7 +39,6 @@ import {
   resolveRuntimeCommitConflicts as apiResolveRuntimeCommitConflicts,
   finalizeCommitSession as apiFinalizeCommitSession,
   cancelCommitSession as apiCancelCommitSession,
-  getFreezeStatus as apiGetFreezeStatus,
   previewSlotSystemChanges as apiPreviewSlotSystemChanges,
 
 } from "../lib/api";
@@ -63,7 +62,6 @@ import type {
   CommitSessionResolutionDecision,
   CommitResolutionAction,
   CommitSessionStage,
-  FreezeStatusResponse,
   ChangePreviewResult,
   EditCommitSessionStartResponse,
   TimetableSnapshotState,
@@ -424,7 +422,70 @@ function readMetadataString(metadata: Record<string, unknown>, key: string): str
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
-export function TimetableBuilderPage() {
+export type TimetableBuilderView = "all" | "structure" | "imports" | "processed" | "workspace";
+
+type TimetableBuilderPageProps = {
+  view?: TimetableBuilderView;
+};
+
+type CommitPipelineStep =
+  | "IDLE"
+  | "SESSION_STARTED"
+  | "EXTERNAL_CHECK"
+  | "EXTERNAL_CONFLICTS"
+  | "EXTERNAL_RESOLVED"
+  | "INTERNAL_CHECK"
+  | "INTERNAL_CONFLICTS"
+  | "INTERNAL_RESOLVED"
+  | "FREEZE"
+  | "RUNTIME_CHECK"
+  | "RUNTIME_CONFLICTS"
+  | "RUNTIME_RESOLVED"
+  | "FINALIZE"
+  | "COMPLETED"
+  | "CANCELLED"
+  | "FAILED";
+
+function toCommitPipelineLabel(step: CommitPipelineStep): string {
+  switch (step) {
+    case "IDLE":
+      return "Idle";
+    case "SESSION_STARTED":
+      return "Session started";
+    case "EXTERNAL_CHECK":
+      return "External check";
+    case "EXTERNAL_CONFLICTS":
+      return "External conflicts";
+    case "EXTERNAL_RESOLVED":
+      return "External resolved";
+    case "INTERNAL_CHECK":
+      return "Internal check";
+    case "INTERNAL_CONFLICTS":
+      return "Internal conflicts";
+    case "INTERNAL_RESOLVED":
+      return "Internal resolved";
+    case "FREEZE":
+      return "Freeze acquired";
+    case "RUNTIME_CHECK":
+      return "Runtime check";
+    case "RUNTIME_CONFLICTS":
+      return "Runtime conflicts";
+    case "RUNTIME_RESOLVED":
+      return "Runtime resolved";
+    case "FINALIZE":
+      return "Finalizing";
+    case "COMPLETED":
+      return "Completed";
+    case "CANCELLED":
+      return "Cancelled";
+    case "FAILED":
+      return "Failed";
+    default:
+      return "Idle";
+  }
+}
+
+export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps = {}) {
   const { user } = useAuth();
   const isAdmin = user?.role === "ADMIN";
 
@@ -496,7 +557,8 @@ export function TimetableBuilderPage() {
   >({});
   const [conflictLoading, setConflictLoading] = useState(false);
   const [showConflictDialog, setShowConflictDialog] = useState(false);
-  const [freezeInfo, setFreezeInfo] = useState<FreezeStatusResponse | null>(null);
+  const [isCommitFreezeActive, setIsCommitFreezeActive] = useState(false);
+  const [commitPipelineStep, setCommitPipelineStep] = useState<CommitPipelineStep>("IDLE");
   const [commitFlowContext, setCommitFlowContext] = useState<"import" | "edit" | null>(null);
   const [commitTargetSlotSystemId, setCommitTargetSlotSystemId] = useState<number | null>(null);
 
@@ -511,9 +573,11 @@ export function TimetableBuilderPage() {
   const [editStartResult, setEditStartResult] =
     useState<EditCommitSessionStartResponse | null>(null);
   const [editDraftJson, setEditDraftJson] = useState("");
+  const [workspaceAutoOpenedForSystemId, setWorkspaceAutoOpenedForSystemId] = useState<number | null>(null);
   const [editSessionStatus, setEditSessionStatus] = useState<"VIEW" | "EDITING" | "COMMITTING">("VIEW");
   const [showPruneConfirmation, setShowPruneConfirmation] = useState(false);
   const [pendingPruneBookingCount, setPendingPruneBookingCount] = useState(0);
+  const [maintenanceTab, setMaintenanceTab] = useState<"SLOT_SYSTEM" | "DANGER_ZONE">("SLOT_SYSTEM");
 
   const days: SlotDay[] = grid?.days ?? [];
   const timeBands: SlotTimeBand[] = grid?.timeBands ?? [];
@@ -699,6 +763,11 @@ export function TimetableBuilderPage() {
   const isSystemLocked = selectedSystem?.isLocked ?? false;
   const lockedStructureEditMessage =
     "Slot system is locked. Use Edit Structure to modify days, time bands, lanes, or blocks.";
+  const showStructureSection = view === "all" || view === "structure" || view === "workspace";
+  const showImportSection = view === "all" || view === "imports" || view === "processed";
+  const showImportControls = view === "all" || view === "imports";
+  const showProcessedSection = view === "all" || view === "processed";
+  const showGridSection = view === "all" || view === "structure" || view === "workspace";
 
   const previewRowById = useMemo(() => {
     return new Map<number, TimetableImportPreviewRow>(
@@ -790,7 +859,7 @@ export function TimetableBuilderPage() {
           return previewReport.batchId;
         }
 
-        return "";
+        return batches[0]?.batchId ?? "";
       });
     } catch (e) {
       setImportBatches([]);
@@ -871,6 +940,22 @@ export function TimetableBuilderPage() {
     }
   };
 
+  const handleLoadImportBatch = useCallback(async (batchId: number) => {
+    setImportLoading(true);
+    setImportError(null);
+    setImportInfo(null);
+
+    try {
+      const report = await apiGetTimetableImportBatch(batchId);
+      hydratePreviewFromBatch(report);
+      await loadProcessedRows(report.batchId);
+    } catch (e) {
+      setImportError(e instanceof Error ? e.message : "Failed to load import batch");
+    } finally {
+      setImportLoading(false);
+    }
+  }, []);
+
   const updateProcessedBookingEdit = (
     bookingId: number,
     patch: Partial<ProcessedBookingEditState>,
@@ -940,6 +1025,15 @@ export function TimetableBuilderPage() {
   };
 
   const handleDeleteProcessedBooking = async (batchId: number, bookingId: number) => {
+    const approved =
+      typeof window === "undefined"
+        ? true
+        : window.confirm("Delete this booking? This action cannot be undone.");
+
+    if (!approved) {
+      return;
+    }
+
     setDeletingBookingId(bookingId);
     setProcessedRowsError(null);
 
@@ -1001,6 +1095,33 @@ export function TimetableBuilderPage() {
     void loadImportBatches(selectedSystemId);
   }, [selectedSystemId]);
 
+  useEffect(() => {
+    if (view !== "processed") {
+      return;
+    }
+
+    if (selectedBatchId === "" || importLoading || processedRowsLoading) {
+      return;
+    }
+
+    const hasPreview = previewReport?.batchId === selectedBatchId;
+    const hasProcessedRows = processedRowsReport?.batchId === selectedBatchId;
+
+    if (hasPreview && hasProcessedRows) {
+      return;
+    }
+
+    void handleLoadImportBatch(selectedBatchId);
+  }, [
+    view,
+    selectedBatchId,
+    importLoading,
+    processedRowsLoading,
+    previewReport?.batchId,
+    processedRowsReport?.batchId,
+    handleLoadImportBatch,
+  ]);
+
   const handleCreateSlotSystem = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -1027,6 +1148,18 @@ export function TimetableBuilderPage() {
 
   const handleDeleteSlotSystem = async () => {
     if (selectedSystemId === "") {
+      return;
+    }
+
+    const selectedLabel = selectedSystem?.name ?? "this slot system";
+    const approved =
+      typeof window === "undefined"
+        ? true
+        : window.confirm(
+            `Delete slot system "${selectedLabel}"? This removes its grid structure and cannot be undone.`,
+          );
+
+    if (!approved) {
       return;
     }
 
@@ -1316,6 +1449,16 @@ export function TimetableBuilderPage() {
       return;
     }
 
+    const blockLabel = blocks.find((block) => block.id === blockId)?.label ?? `#${blockId}`;
+    const approved =
+      typeof window === "undefined"
+        ? true
+        : window.confirm(`Delete block "${blockLabel}"?`);
+
+    if (!approved) {
+      return;
+    }
+
     setActionLoading(true);
     setError(null);
 
@@ -1364,6 +1507,18 @@ export function TimetableBuilderPage() {
 
     if (day.laneCount <= 1) {
       setError("At least one lane must remain for a day");
+      return;
+    }
+
+    const dayLabel = DAY_LABELS[day.dayOfWeek];
+    const approved =
+      typeof window === "undefined"
+        ? true
+        : window.confirm(
+            `Remove one lane from ${dayLabel}? This change cannot be undone.`,
+          );
+
+    if (!approved) {
       return;
     }
 
@@ -1499,6 +1654,7 @@ export function TimetableBuilderPage() {
     setCommitReport(null);
     setProcessedRowsReport(null);
     setProcessedRowsError(null);
+    setCommitPipelineStep("IDLE");
 
     try {
       const aliasMap = parseAliasMap(aliasMapText);
@@ -1765,7 +1921,7 @@ export function TimetableBuilderPage() {
     setConflictResolutions({});
     setConflictStage(null);
     setCommitSessionId(null);
-    setFreezeInfo(null);
+    setIsCommitFreezeActive(false);
     setCommitFlowContext(null);
     setCommitTargetSlotSystemId(null);
   };
@@ -1784,18 +1940,15 @@ export function TimetableBuilderPage() {
     activeCommitSessionId: number,
     batchId: number,
   ) => {
+    setCommitPipelineStep("FREEZE");
     await apiStartCommitFreeze(activeCommitSessionId);
+    setIsCommitFreezeActive(true);
 
-    try {
-      const freeze = await apiGetFreezeStatus(batchId);
-      setFreezeInfo(freeze);
-    } catch {
-      // Freeze banner is informational.
-    }
-
+    setCommitPipelineStep("RUNTIME_CHECK");
     const runtimeReport = await apiRunRuntimeCommitCheck(activeCommitSessionId);
 
     if (runtimeReport.conflictCount > 0) {
+      setCommitPipelineStep("RUNTIME_CONFLICTS");
       setConflictStage("runtime");
       setConflictReport(runtimeReport);
       setConflictResolutions({});
@@ -1804,8 +1957,10 @@ export function TimetableBuilderPage() {
       return;
     }
 
+    setCommitPipelineStep("FINALIZE");
     const finalizeReport = await apiFinalizeCommitSession(activeCommitSessionId);
     setCommitReport(null);
+    setCommitPipelineStep("COMPLETED");
     clearCommitConflictState();
     setImportInfo(
       `Commit completed. Created ${finalizeReport.createdBookings} bookings and skipped ${finalizeReport.skippedOperations} operation(s).`,
@@ -1817,9 +1972,11 @@ export function TimetableBuilderPage() {
     activeCommitSessionId: number,
     batchId: number,
   ) => {
+    setCommitPipelineStep("INTERNAL_CHECK");
     const internalReport = await apiRunInternalCommitCheck(activeCommitSessionId);
 
     if (internalReport.conflictCount > 0) {
+      setCommitPipelineStep("INTERNAL_CONFLICTS");
       setConflictStage("internal");
       setConflictReport(internalReport);
       setConflictResolutions({});
@@ -1835,11 +1992,15 @@ export function TimetableBuilderPage() {
     slotSystemId: number,
   ) => {
     setEditSessionStatus("COMMITTING");
+    setCommitPipelineStep("FREEZE");
     await apiStartCommitFreeze(activeCommitSessionId);
+    setIsCommitFreezeActive(true);
 
+    setCommitPipelineStep("RUNTIME_CHECK");
     const runtimeReport = await apiRunRuntimeCommitCheck(activeCommitSessionId);
 
     if (runtimeReport.conflictCount > 0) {
+      setCommitPipelineStep("RUNTIME_CONFLICTS");
       setConflictStage("runtime");
       setConflictReport(runtimeReport);
       setConflictResolutions({});
@@ -1847,8 +2008,10 @@ export function TimetableBuilderPage() {
       return;
     }
 
+    setCommitPipelineStep("FINALIZE");
     const finalizeReport = await apiFinalizeCommitSession(activeCommitSessionId);
     setCommitReport(null);
+    setCommitPipelineStep("COMPLETED");
     clearCommitConflictState();
     setEditStartResult(null);
     setChangeSuccess(
@@ -1866,9 +2029,11 @@ export function TimetableBuilderPage() {
     activeCommitSessionId: number,
     slotSystemId: number,
   ) => {
+    setCommitPipelineStep("INTERNAL_CHECK");
     const internalReport = await apiRunInternalCommitCheck(activeCommitSessionId);
 
     if (internalReport.conflictCount > 0) {
+      setCommitPipelineStep("INTERNAL_CONFLICTS");
       setConflictStage("internal");
       setConflictReport(internalReport);
       setConflictResolutions({});
@@ -1892,6 +2057,7 @@ export function TimetableBuilderPage() {
     setCommitLoading(true);
     setImportError(null);
     setImportInfo(null);
+    setCommitPipelineStep("SESSION_STARTED");
 
     try {
       const decisions = buildImportDecisionsPayload();
@@ -1901,9 +2067,11 @@ export function TimetableBuilderPage() {
       setCommitFlowContext("import");
       setCommitTargetSlotSystemId(previewReport.slotSystemId);
 
+      setCommitPipelineStep("EXTERNAL_CHECK");
       const externalReport = await apiRunExternalCommitCheck(session.commitSessionId);
 
       if (externalReport.conflictCount > 0) {
+        setCommitPipelineStep("EXTERNAL_CONFLICTS");
         setConflictStage("external");
         setConflictReport(externalReport);
         setConflictResolutions({});
@@ -1913,6 +2081,7 @@ export function TimetableBuilderPage() {
 
       await runInternalThenFinalize(session.commitSessionId, previewReport.batchId);
     } catch (e) {
+      setCommitPipelineStep("FAILED");
       setImportError(e instanceof Error ? e.message : "Failed to start staged commit");
     } finally {
       setCommitLoading(false);
@@ -1969,10 +2138,13 @@ export function TimetableBuilderPage() {
       );
 
       if (conflictStage === "external") {
+        setCommitPipelineStep("EXTERNAL_RESOLVED");
         await apiResolveExternalCommitConflicts(commitSessionId, resolutions);
+        setCommitPipelineStep("EXTERNAL_CHECK");
         const externalReport = await apiRunExternalCommitCheck(commitSessionId);
 
         if (externalReport.conflictCount > 0) {
+          setCommitPipelineStep("EXTERNAL_CONFLICTS");
           setConflictReport(externalReport);
           setConflictResolutions({});
           return;
@@ -1998,10 +2170,13 @@ export function TimetableBuilderPage() {
       }
 
       if (conflictStage === "internal") {
+        setCommitPipelineStep("INTERNAL_RESOLVED");
         await apiResolveInternalCommitConflicts(commitSessionId, resolutions);
+        setCommitPipelineStep("INTERNAL_CHECK");
         const internalReport = await apiRunInternalCommitCheck(commitSessionId);
 
         if (internalReport.conflictCount > 0) {
+          setCommitPipelineStep("INTERNAL_CONFLICTS");
           setConflictReport(internalReport);
           setConflictResolutions({});
           return;
@@ -2026,17 +2201,22 @@ export function TimetableBuilderPage() {
         return;
       }
 
+      setCommitPipelineStep("RUNTIME_RESOLVED");
       await apiResolveRuntimeCommitConflicts(commitSessionId, resolutions);
+      setCommitPipelineStep("RUNTIME_CHECK");
       const runtimeReport = await apiRunRuntimeCommitCheck(commitSessionId);
 
       if (runtimeReport.conflictCount > 0) {
+        setCommitPipelineStep("RUNTIME_CONFLICTS");
         setConflictReport(runtimeReport);
         setConflictResolutions({});
         return;
       }
 
+      setCommitPipelineStep("FINALIZE");
       const finalizeReport = await apiFinalizeCommitSession(commitSessionId);
       setCommitReport(null);
+      setCommitPipelineStep("COMPLETED");
       clearCommitConflictState();
 
       if (commitFlowContext === "edit") {
@@ -2066,6 +2246,7 @@ export function TimetableBuilderPage() {
         await hydrateAfterFinalize(previewReport.batchId);
       }
     } catch (e) {
+      setCommitPipelineStep("FAILED");
       setImportError(e instanceof Error ? e.message : "Failed to resolve staged conflicts");
     } finally {
       setConflictLoading(false);
@@ -2081,6 +2262,7 @@ export function TimetableBuilderPage() {
     try {
       await apiCancelCommitSession(commitSessionId);
       const cancelledEditFlow = commitFlowContext === "edit";
+      setCommitPipelineStep("CANCELLED");
       clearCommitConflictState();
 
       if (cancelledEditFlow) {
@@ -2089,17 +2271,19 @@ export function TimetableBuilderPage() {
         setImportInfo("Commit session cancelled. Booking operations resumed.");
       }
     } catch (e) {
+      setCommitPipelineStep("FAILED");
       setImportError(e instanceof Error ? e.message : "Failed to cancel commit session");
     }
   };
 
   // Change workspace handlers
-  const handlePreviewChanges = async () => {
+  const handlePreviewChanges = useCallback(async () => {
     if (selectedSystemId === "") return;
 
     setChangeLoading(true);
     setChangeError(null);
     setEditStartResult(null);
+    setCommitPipelineStep("IDLE");
 
     try {
       const preview = await apiPreviewSlotSystemChanges(Number(selectedSystemId), {});
@@ -2115,7 +2299,37 @@ export function TimetableBuilderPage() {
     } finally {
       setChangeLoading(false);
     }
-  };
+  }, [grid, selectedSystemId]);
+
+  useEffect(() => {
+    if (view !== "workspace") {
+      setWorkspaceAutoOpenedForSystemId(null);
+      return;
+    }
+
+    if (selectedSystemId === "" || !selectedSystem?.isLocked) {
+      return;
+    }
+
+    if (workspaceAutoOpenedForSystemId === selectedSystemId) {
+      return;
+    }
+
+    if (changeLoading || showChangeWorkspace) {
+      return;
+    }
+
+    setWorkspaceAutoOpenedForSystemId(selectedSystemId);
+    void handlePreviewChanges();
+  }, [
+    view,
+    selectedSystemId,
+    selectedSystem?.isLocked,
+    workspaceAutoOpenedForSystemId,
+    changeLoading,
+    showChangeWorkspace,
+    handlePreviewChanges,
+  ]);
 
   const handleStartEditCommit = async () => {
     if (selectedSystemId === "" || !grid || !selectedSystem) {
@@ -2133,6 +2347,7 @@ export function TimetableBuilderPage() {
     setChangeSuccess(null);
     setEditSessionStatus("EDITING");
     setImportError(null);
+    setCommitPipelineStep("SESSION_STARTED");
 
     try {
       let snapshot = toSnapshotStateFromGrid(grid);
@@ -2158,12 +2373,14 @@ export function TimetableBuilderPage() {
       if (result.noChanges === true || result.diff.affectedRows === 0) {
         setEditStartResult(result);
         setChangeError(result.message ?? "No changes detected");
+        setCommitPipelineStep("IDLE");
         setEditSessionStatus("VIEW");
         return;
       }
 
       if (!result.session) {
         setChangeError("Edit session could not be started");
+        setCommitPipelineStep("FAILED");
         setEditSessionStatus("VIEW");
         return;
       }
@@ -2181,9 +2398,11 @@ export function TimetableBuilderPage() {
         return;
       }
 
+      setCommitPipelineStep("EXTERNAL_CHECK");
       const externalReport = await apiRunExternalCommitCheck(result.session.commitSessionId);
 
       if (externalReport.conflictCount > 0) {
+        setCommitPipelineStep("EXTERNAL_CONFLICTS");
         setConflictStage("external");
         setConflictReport(externalReport);
         setConflictResolutions({});
@@ -2193,6 +2412,7 @@ export function TimetableBuilderPage() {
 
       await runInternalThenFinalizeForEdit(result.session.commitSessionId, selectedSystemId);
     } catch (e) {
+      setCommitPipelineStep("FAILED");
       const errorMsg = e instanceof Error ? e.message : "Failed to start edit commit";
       setChangeError(mapEditStartErrorToMessage(errorMsg));
     } finally {
@@ -2218,9 +2438,11 @@ export function TimetableBuilderPage() {
     try {
       const commitSessionId = editStartResult.session.commitSessionId;
 
+      setCommitPipelineStep("EXTERNAL_CHECK");
       const externalReport = await apiRunExternalCommitCheck(commitSessionId);
 
       if (externalReport.conflictCount > 0) {
+        setCommitPipelineStep("EXTERNAL_CONFLICTS");
         setConflictStage("external");
         setConflictReport(externalReport);
         setConflictResolutions({});
@@ -2231,6 +2453,7 @@ export function TimetableBuilderPage() {
 
       await runInternalThenFinalizeForEdit(commitSessionId, selectedSystemId);
     } catch (e) {
+      setCommitPipelineStep("FAILED");
       setChangeError(e instanceof Error ? e.message : "Failed to proceed with prune confirmation");
     } finally {
       setEditSessionStatus("VIEW");
@@ -2244,16 +2467,20 @@ export function TimetableBuilderPage() {
         <p className="text-gray-600">Build slot systems with day columns, time-band rows, and merged slot blocks</p>
       </div>
 
+      <div className="flex flex-col">
+
+      {showStructureSection && (
       <form
         id="timetable-structure-section"
         className="border rounded-lg p-6 mb-8 mx-4 bg-white"
+        style={{ order: 1 }}
         onSubmit={handleCreateSlotSystem}
       >
         <div className="card-header">
-          <h3>Slot System Selector</h3>
+          <h3>Slot System Setup</h3>
         </div>
 
-        <div className="form-row">
+        <div className="form-row lg:grid-cols-2">
           <div className="form-field">
             <label htmlFor="slotSystemSelect">Active slot system</label>
             <select
@@ -2276,30 +2503,28 @@ export function TimetableBuilderPage() {
           </div>
           <div className="form-field">
             <label htmlFor="newSlotSystemName">Create slot system</label>
-            <input
-              id="newSlotSystemName"
-              className="input"
-              type="text"
-              value={newSystemName}
-              onChange={(e) => setNewSystemName(e.target.value)}
-              placeholder="e.g. UG Semester Grid"
-              disabled={actionLoading}
-            />
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <input
+                id="newSlotSystemName"
+                className="input flex-1 min-w-0"
+                type="text"
+                value={newSystemName}
+                onChange={(e) => setNewSystemName(e.target.value)}
+                placeholder="e.g. UG Semester Grid"
+                disabled={actionLoading}
+              />
+              <button
+                type="submit"
+                className="btn btn-primary whitespace-nowrap shrink-0"
+                disabled={actionLoading}
+              >
+                {actionLoading ? "Saving..." : "Create"}
+              </button>
+            </div>
           </div>
         </div>
 
-        <div className="btn-group">
-          <button type="submit" className="btn btn-primary" disabled={actionLoading}>
-            {actionLoading ? "Saving..." : "Create Slot System"}
-          </button>
-          <button
-            type="button"
-            className="btn btn-danger"
-            onClick={() => void handleDeleteSlotSystem()}
-            disabled={actionLoading || selectedSystemId === ""}
-          >
-            Delete Slot System
-          </button>
+        <div className="btn-group mt-4">
           <button
             type="button"
             className="btn btn-ghost"
@@ -2364,37 +2589,14 @@ export function TimetableBuilderPage() {
             Direct day/band/block edits are disabled. Use <strong>"Edit Structure"</strong> to make changes through the change workspace.
           </div>
         )}
-
-        <div className="form-row mt-6">
-          <div className="form-field">
-            <label>Booking prune options</label>
-            <div className="btn-group">
-              <button
-                type="button"
-                className="btn btn-warning"
-                onClick={() => void handlePruneSelectedSlotSystemBookings()}
-                disabled={actionLoading || selectedSystemId === ""}
-              >
-                Prune Selected Slot System Bookings
-              </button>
-              <button
-                type="button"
-                className="btn btn-danger"
-                onClick={() => void handlePruneAllBookings()}
-                disabled={actionLoading}
-              >
-                Prune All Bookings
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {successMessage && <div className="alert alert-success mt-4">{successMessage}</div>}
       </form>
+      )}
 
+      {showImportSection && (
       <form
         id="timetable-import-section"
         className="border rounded-lg p-6 mb-8 mx-4 bg-white"
+        style={{ order: 4 }}
         onSubmit={handlePreviewImport}
       >
         <div className="card-header">
@@ -2405,6 +2607,32 @@ export function TimetableBuilderPage() {
             </span>
           )}
         </div>
+
+        {!showStructureSection && (
+          <div className="form-row">
+            <div className="form-field">
+              <label htmlFor="slotSystemSelectImport">Slot system</label>
+              <select
+                id="slotSystemSelectImport"
+                className="input"
+                value={selectedSystemId}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setSelectedSystemId(value === "" ? "" : Number(value));
+                }}
+                disabled={loadingSystems || actionLoading || importLoading}
+              >
+                <option value="">Select a slot system</option>
+                {slotSystems.map((system) => (
+                  <option key={system.id} value={system.id}>
+                    {system.isLocked ? "🔒 " : ""}
+                    {system.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
 
         <div className="alert mb-4">
           Single-sheet mode is active: each slot system uses one classroom allocation sheet.
@@ -2425,10 +2653,86 @@ export function TimetableBuilderPage() {
           )}
         </div>
 
+        {commitPipelineStep !== "IDLE" && (
+          <div className="alert mb-4">
+            Commit Pipeline: <strong>{toCommitPipelineLabel(commitPipelineStep)}</strong>
+            {(commitPipelineStep === "COMPLETED" ||
+              commitPipelineStep === "FAILED" ||
+              commitPipelineStep === "CANCELLED") && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                style={{ marginLeft: "var(--space-2)" }}
+                onClick={() => setCommitPipelineStep("IDLE")}
+              >
+                Clear Status
+              </button>
+            )}
+          </div>
+        )}
+
+        <div className="form-row">
+          <div className="form-field">
+            <label htmlFor="batchSelect">Load existing batch</label>
+            <select
+              id="batchSelect"
+              className="input"
+              value={selectedBatchId}
+              onChange={(e) => {
+                const value = e.target.value;
+                setSelectedBatchId(value === "" ? "" : Number(value));
+              }}
+              disabled={importBatchesLoading || importLoading}
+            >
+              <option value="">Select batch</option>
+              {importBatches.map((batch) => (
+                <option key={batch.batchId} value={batch.batchId}>
+                  #{batch.batchId} · {batch.status}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-field">
+            <label>Batch actions</label>
+            <div className="btn-group">
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => {
+                  if (selectedBatchId !== "") {
+                    void handleLoadImportBatch(selectedBatchId);
+                  }
+                }}
+                disabled={selectedBatchId === "" || importLoading}
+              >
+                {importLoading ? "Loading..." : "Load Selected Batch"}
+              </button>
+              {selectedSystemId !== "" && (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => void loadImportBatches(selectedSystemId)}
+                  disabled={importBatchesLoading || importLoading}
+                >
+                  {importBatchesLoading ? "Refreshing..." : "Refresh Batches"}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {!importBatchesLoading && importBatches.length === 0 && (
+          <div className="empty-text mt-2">No imported batches found for the selected slot system yet.</div>
+        )}
+
         {importBatchesError && (
           <div className="alert alert-error mt-4">{importBatchesError}</div>
         )}
 
+        {importError && <div className="alert alert-error mt-4">{importError}</div>}
+
+        {showImportControls && (
+        <>
         <div className="form-row">
           <div className="form-field">
             <label htmlFor="importTermStart">Term start date</label>
@@ -2566,7 +2870,6 @@ export function TimetableBuilderPage() {
         </div>
 
         {importInfo && <div className="alert alert-success mt-4">{importInfo}</div>}
-        {importError && <div className="alert alert-error mt-4">{importError}</div>}
 
         {previewReport && (
           <div className="mt-4">
@@ -2944,8 +3247,10 @@ export function TimetableBuilderPage() {
             </div>
           </div>
         )}
+        </>
+        )}
 
-        {(processedRowsLoading || processedRowsError || processedRowsReport) && (
+        {showProcessedSection && (processedRowsLoading || processedRowsError || processedRowsReport) && (
           <div id="timetable-processed-section" className="mt-4">
             <div className="card-header mb-2">
               <h3>Processed Rows And Booking CRUD</h3>
@@ -3052,7 +3357,7 @@ export function TimetableBuilderPage() {
 
                               {isAdmin && occurrence.booking && (
                                 <div className="empty-text mt-2">
-                                  Source: {occurrence.booking.source.replace(/_/g, " ")} · Linked Request: {occurrence.booking.requestId ? "Yes" : "No"} · Approved At: {occurrence.booking.approvedAt ? new Date(occurrence.booking.approvedAt).toLocaleString() : "-"}
+                                  Source: {occurrence.booking.source.replace(/_/g, " ")} · Linked Request: {occurrence.booking.requestId ? "Yes" : "No"}
                                 </div>
                               )}
 
@@ -3226,8 +3531,14 @@ export function TimetableBuilderPage() {
           </div>
         )}
       </form>
+      )}
 
-      <div id="timetable-grid-section" className="border rounded-lg p-6 mb-8 mx-4 bg-white">
+      {showGridSection && (
+      <div
+        id="timetable-grid-section"
+        className="border rounded-lg p-6 mb-8 mx-4 bg-white"
+        style={{ order: 2 }}
+      >
         <div className="card-header">
           <h3>Grid Editor</h3>
           <span className="badge badge-role">
@@ -3563,16 +3874,95 @@ export function TimetableBuilderPage() {
           </div>
         )}
       </div>
+      )}
+
+      {showStructureSection && (
+      <div
+        id="timetable-maintenance-section"
+        className="border rounded-lg p-6 mb-8 mx-4 bg-white"
+        style={{ order: 3 }}
+      >
+        <div className="card-header">
+          <h3>Slot System Maintenance</h3>
+          <span className="badge badge-role">
+            {selectedSystem ? selectedSystem.name : "No system selected"}
+          </span>
+        </div>
+
+        <div className="mb-4 inline-flex rounded-md border border-gray-200 bg-gray-100 p-1">
+          <button
+            type="button"
+            className={`px-3 py-1 text-sm rounded ${
+              maintenanceTab === "SLOT_SYSTEM" ? "bg-white shadow" : "text-gray-600"
+            }`}
+            onClick={() => setMaintenanceTab("SLOT_SYSTEM")}
+          >
+            Slot System
+          </button>
+          <button
+            type="button"
+            className={`px-3 py-1 text-sm rounded ${
+              maintenanceTab === "DANGER_ZONE" ? "bg-white shadow text-red-700" : "text-red-600"
+            }`}
+            onClick={() => setMaintenanceTab("DANGER_ZONE")}
+          >
+            Danger Zone
+          </button>
+        </div>
+
+        {maintenanceTab === "SLOT_SYSTEM" ? (
+          <div className="form-field">
+            <label>Selected slot system actions</label>
+            <div className="btn-group">
+              <button
+                type="button"
+                className="btn btn-warning"
+                onClick={() => void handlePruneSelectedSlotSystemBookings()}
+                disabled={actionLoading || selectedSystemId === ""}
+              >
+                Prune Selected Slot System Bookings
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={() => void handleDeleteSlotSystem()}
+                disabled={actionLoading || selectedSystemId === ""}
+              >
+                Delete Slot System
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded border border-red-300 bg-red-50 p-4">
+            <h4 className="text-sm font-semibold text-red-700">Global Danger Zone</h4>
+            <p className="text-sm text-red-700 mt-1">
+              Prune all bookings removes imported and manual bookings across every slot system.
+            </p>
+            <button
+              type="button"
+              className="btn btn-danger mt-3"
+              onClick={() => void handlePruneAllBookings()}
+              disabled={actionLoading}
+            >
+              Prune All Bookings
+            </button>
+          </div>
+        )}
+
+        {successMessage && <div className="alert alert-success mt-4">{successMessage}</div>}
+      </div>
+      )}
+
+      </div>
 
       {/* Freeze Status Banner */}
-      {freezeInfo && freezeInfo.isFrozen && (
+      {isCommitFreezeActive && (
         <div
           className="fixed top-0 left-0 right-0 z-40 p-3 text-center text-white"
           style={{ backgroundColor: "#dc3545" }}
         >
-          ⚠️ <strong>Booking Freeze Active:</strong> Held by {freezeInfo.freezeInfo?.userName ?? "unknown"} since{" "}
-          {freezeInfo.freezeInfo?.startedAt ? new Date(freezeInfo.freezeInfo.startedAt).toLocaleString() : "unknown"}.
-          New booking operations are blocked.
+          ⚠️ <strong>Booking Freeze Active:</strong> Commit session is currently frozen for final validation.
+          New booking operations are blocked until commit completes or is cancelled.
         </div>
       )}
 

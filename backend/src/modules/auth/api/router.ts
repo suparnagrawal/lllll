@@ -11,7 +11,7 @@ import logger from "../../../shared/utils/logger";
 
 const router = Router();
 
-type SetupRole = "STUDENT" | "FACULTY" | "STAFF" | "ADMIN";
+type SetupRole = "STUDENT";
 
 function buildFrontendUrl(pathname: string, params?: Record<string, string>): string {
   const normalizedBase = env.FRONTEND_URL.endsWith("/")
@@ -385,12 +385,10 @@ router.post("/complete-setup", async (req, res) => {
       });
     }
 
-    // Google OAuth first-time setup is student-only.
-    const allowedRoles = user.registeredVia === "google"
-      ? ["STUDENT"]
-      : ["STUDENT", "STAFF", "ADMIN"];
+    // First-login setup is intentionally student-only.
+    const allowedRoles = ["STUDENT"] as const;
 
-    if (!role || !allowedRoles.includes(role)) {
+    if (role !== "STUDENT") {
       return res.status(400).json({
         error: `role must be one of: ${allowedRoles.join(", ")}`,
       });

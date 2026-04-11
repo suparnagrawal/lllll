@@ -5,6 +5,7 @@ import type {
   ChangeRequestStatus,
   VenueChangeBatchCreateInput,
   VenueChangeCreateInput,
+  VenueChangeValidateInput,
 } from "../lib/api/types";
 
 export function useVenueChangeOptions(enabled = true) {
@@ -21,6 +22,33 @@ export function useVenueChangeRequests(status?: ChangeRequestStatus) {
     queryKey: ["venue-change-requests", status],
     queryFn: () => venueChangeApi.getVenueChangeRequests(status),
     ...queryConfigs.venueChangeRequests,
+  });
+}
+
+export function useVenueChangeRequest(id?: number, enabled = true) {
+  return useQuery({
+    queryKey: ["venue-change-request", id],
+    queryFn: () => venueChangeApi.getVenueChangeRequest(id as number),
+    enabled: enabled && typeof id === "number",
+    ...queryConfigs.venueChangeRequests,
+  });
+}
+
+export function useVenueSuggestions(
+  bookingId?: number,
+  options?: { courseId?: number; buildingId?: number },
+  enabled = true
+) {
+  return useQuery({
+    queryKey: [
+      "venue-suggestions",
+      bookingId,
+      options?.courseId,
+      options?.buildingId,
+    ],
+    queryFn: () => venueChangeApi.getVenueSuggestions(bookingId as number, options),
+    enabled: enabled && typeof bookingId === "number",
+    ...queryConfigs.venueChangeOptions,
   });
 }
 
@@ -81,5 +109,12 @@ export function useCancelVenueChangeRequest() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["venue-change-requests"] });
     },
+  });
+}
+
+export function useValidateVenueChangeRequest() {
+  return useMutation({
+    mutationFn: (input: VenueChangeValidateInput) =>
+      venueChangeApi.validateVenueChangeRequest(input),
   });
 }

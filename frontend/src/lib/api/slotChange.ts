@@ -6,8 +6,11 @@ import type {
   SlotChangeBatchCreateInput,
   SlotChangeCreateInput,
   SlotChangeCreateResponse,
+  SlotChangeRequestDetail,
   SlotChangeOptionsResponse,
   SlotChangeRequestListItem,
+  SlotChangeValidateInput,
+  SlotChangeValidationResponse,
 } from "./types";
 
 export async function getSlotChangeOptions(): Promise<SlotChangeOptionsResponse> {
@@ -19,6 +22,10 @@ export async function getSlotChangeRequests(
 ): Promise<SlotChangeRequestListItem[]> {
   const query = status ? `?status=${encodeURIComponent(status)}` : "";
   return request<SlotChangeRequestListItem[]>(`/slot-change-requests${query}`);
+}
+
+export async function getSlotChangeRequest(id: number): Promise<SlotChangeRequestDetail> {
+  return request<SlotChangeRequestDetail>(`/slot-change-requests/${id}`);
 }
 
 export async function createSlotChangeRequest(
@@ -64,5 +71,14 @@ export async function cancelSlotChangeRequest(
 ): Promise<ChangeRequestActionResponse> {
   return request<ChangeRequestActionResponse>(`/slot-change-requests/${id}/cancel`, {
     method: "POST",
+  });
+}
+
+export async function validateSlotChangeRequest(
+  input: SlotChangeValidateInput
+): Promise<SlotChangeValidationResponse> {
+  return request<SlotChangeValidationResponse>("/slot-change-requests/validate", {
+    method: "POST",
+    body: JSON.stringify(input),
   });
 }

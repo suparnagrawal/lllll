@@ -1,5 +1,5 @@
 import { TimetableBuilderPage } from '../TimetableBuilder';
 
 export default function TimetableOverviewPage() {
-  return <TimetableBuilderPage />;
+  return <TimetableBuilderPage view="all" />;
 }

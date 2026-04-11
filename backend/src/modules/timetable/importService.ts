@@ -883,6 +883,25 @@ async function getSlotDescriptorLookup(slotSystemId: number) {
   };
 }
 
+function buildSlotStructureSignature(
+  descriptorsByLabel: Map<string, SlotDescriptor[]>,
+): string {
+  const signatureParts: string[] = [];
+
+  for (const [normalizedLabel, descriptors] of descriptorsByLabel.entries()) {
+    const descriptorParts = descriptors
+      .map((descriptor) =>
+        `${descriptor.dayOfWeek}|${descriptor.startTime}|${descriptor.endTime}`,
+      )
+      .sort();
+
+    signatureParts.push(`${normalizedLabel}:${descriptorParts.join("&&")}`);
+  }
+
+  signatureParts.sort();
+  return hashValue(signatureParts.join("||"));
+}
+
 async function getBuildingRoomLookup() {
   const [buildingRows, roomRows] = await Promise.all([
     db
@@ -1632,6 +1651,13 @@ async function fetchBatchPreviewReport(batchId: number, reused: boolean): Promis
     throw createServiceError(404, "Import batch not found");
   }
 
+  if (batch.status === "PREVIEWED") {
+    await synchronizePreviewedBatchRowsWithCurrentStructure({
+      batchId: batch.id,
+      slotSystemId: batch.slotSystemId,
+    });
+  }
+
   const rows = await db
     .select({
       id: timetableImportRows.id,
@@ -1686,6 +1712,7 @@ export async function previewTimetableImport(input: PreviewImportInput): Promise
   const aliasMap = parseAliasMap(input.aliasMap);
   const rows = parseSheetRows(input.fileBuffer, input.fileName);
   const { descriptorsByLabel, allLabels } = await getSlotDescriptorLookup(slotSystemId);
+  const slotStructureSignature = buildSlotStructureSignature(descriptorsByLabel);
   const buildingLookup = await getBuildingRoomLookup();
 
   const aliasObj: Record<string, string> = {};
@@ -1695,7 +1722,7 @@ export async function previewTimetableImport(input: PreviewImportInput): Promise
 
   const fileHash = hashValue(input.fileBuffer.toString("base64"));
   const fingerprint = hashValue(
-    `${TIMETABLE_IMPORT_PARSER_VERSION}|${fileHash}|${slotSystemId}|${termStartDate.toISOString()}|${termEndDate.toISOString()}|${JSON.stringify(
+    `${TIMETABLE_IMPORT_PARSER_VERSION}|${slotStructureSignature}|${fileHash}|${slotSystemId}|${termStartDate.toISOString()}|${termEndDate.toISOString()}|${JSON.stringify(
       aliasObj,
     )}`,
   );
@@ -2170,6 +2197,13 @@ export async function saveTimetableImportDecisions(
     throw createServiceError(404, "Import batch not found");
   }
 
+  if (batch.status === "PREVIEWED") {
+    await synchronizePreviewedBatchRowsWithCurrentStructure({
+      batchId,
+      slotSystemId: batch.slotSystemId,
+    });
+  }
+
   const decisions = parseDecisionInput(input.decisions);
 
   if (decisions.size === 0) {
@@ -2206,11 +2240,17 @@ export async function saveTimetableImportDecisions(
   const existingResolutionRows = await db
     .select({
       rowId: timetableImportRowResolutions.rowId,
+      action: timetableImportRowResolutions.action,
+      resolvedRoomId: timetableImportRowResolutions.resolvedRoomId,
+      createSlot: timetableImportRowResolutions.createSlot,
+      createRoom: timetableImportRowResolutions.createRoom,
     })
     .from(timetableImportRowResolutions)
     .where(eq(timetableImportRowResolutions.batchId, batchId));
 
-  const existingResolutionRowIds = new Set(existingResolutionRows.map((row) => row.rowId));
+  const existingResolutionByRowId = new Map(
+    existingResolutionRows.map((row) => [row.rowId, row]),
+  );
 
   const slotSystemStructure = await getSlotSystemStructure(batch.slotSystemId);
   const createdSlotLabelByKey = new Map<string, string>();
@@ -2273,10 +2313,6 @@ export async function saveTimetableImportDecisions(
         continue;
       }
 
-      if (existingResolutionRowIds.has(siblingRowId)) {
-        continue;
-      }
-
       const siblingRow = rowById.get(siblingRowId);
       if (!siblingRow) {
         continue;
@@ -2292,11 +2328,32 @@ export async function saveTimetableImportDecisions(
         continue;
       }
 
-      allDecisions.set(siblingRowId, {
+      const existingResolution = existingResolutionByRowId.get(siblingRowId);
+
+      if (existingResolution) {
+        if (existingResolution.action !== "RESOLVE") {
+          continue;
+        }
+
+        if (existingResolution.createSlot || existingResolution.createRoom) {
+          continue;
+        }
+      }
+
+      const propagatedDecision: ImportDecision = {
         rowId: siblingRowId,
         action: "RESOLVE",
         resolvedSlotLabel,
-      });
+      };
+
+      if (
+        existingResolution?.resolvedRoomId !== null &&
+        existingResolution?.resolvedRoomId !== undefined
+      ) {
+        propagatedDecision.resolvedRoomId = existingResolution.resolvedRoomId;
+      }
+
+      allDecisions.set(siblingRowId, propagatedDecision);
 
       propagatedSlotLabelByRowId.set(siblingRowId, resolvedSlotLabel);
     }
@@ -2931,6 +2988,8 @@ async function getBatchRows(batchId: number) {
       rawCourseCode: timetableImportRows.rawCourseCode,
       rawSlot: timetableImportRows.rawSlot,
       rawClassroom: timetableImportRows.rawClassroom,
+      parsedBuilding: timetableImportRows.parsedBuilding,
+      parsedRoom: timetableImportRows.parsedRoom,
       resolvedSlotLabel: timetableImportRows.resolvedSlotLabel,
       resolvedRoomId: timetableImportRows.resolvedRoomId,
       auxiliaryData: timetableImportRows.auxiliaryData,
@@ -2938,6 +2997,133 @@ async function getBatchRows(batchId: number) {
     .from(timetableImportRows)
     .where(eq(timetableImportRows.batchId, batchId))
     .orderBy(asc(timetableImportRows.rowIndex));
+}
+
+function getClassificationReasonsForCurrentStructure(
+  classification: PreviewClassification,
+  fallbackReasons: string[],
+): string[] {
+  if (classification === "VALID_AND_AUTOMATABLE") {
+    return [];
+  }
+
+  if (classification === "UNRESOLVED_SLOT") {
+    return ["Slot does not exist in selected slot system"];
+  }
+
+  if (classification === "UNRESOLVED_ROOM") {
+    return ["Room not found in resolved building"];
+  }
+
+  if (classification === "AMBIGUOUS_CLASSROOM") {
+    return ["Classroom must use canonical format: Building Name RoomNumber"];
+  }
+
+  return fallbackReasons;
+}
+
+async function synchronizePreviewedBatchRowsWithCurrentStructure(input: {
+  batchId: number;
+  slotSystemId: number;
+}): Promise<void> {
+  const rows = await getBatchRows(input.batchId);
+
+  if (rows.length === 0) {
+    return;
+  }
+
+  const [slotLookup, buildingLookup] = await Promise.all([
+    getSlotDescriptorLookup(input.slotSystemId),
+    getBuildingRoomLookup(),
+  ]);
+
+  await db.transaction(async (tx) => {
+    for (const row of rows) {
+      if (
+        row.classification !== "UNRESOLVED_SLOT" &&
+        row.classification !== "VALID_AND_AUTOMATABLE"
+      ) {
+        continue;
+      }
+
+      const normalizedRawSlot = normalizeSpace(row.rawSlot ?? "");
+      const normalizedCurrentResolvedSlot = row.resolvedSlotLabel
+        ? normalizeSpace(row.resolvedSlotLabel)
+        : "";
+      const effectiveSlotLabel = normalizedCurrentResolvedSlot || normalizedRawSlot;
+
+      const hasEffectiveSlot =
+        effectiveSlotLabel.length > 0 &&
+        (slotLookup.descriptorsByLabel.get(normalizeKey(effectiveSlotLabel))?.length ?? 0) > 0;
+
+      const hasResolvedRoom =
+        typeof row.resolvedRoomId === "number" &&
+        buildingLookup.roomById.has(row.resolvedRoomId);
+
+      let nextClassification = row.classification;
+
+      if (row.classification === "UNRESOLVED_SLOT") {
+        if (!hasEffectiveSlot) {
+          nextClassification = "UNRESOLVED_SLOT";
+        } else if (hasResolvedRoom) {
+          nextClassification = "VALID_AND_AUTOMATABLE";
+        } else if (row.parsedBuilding && row.parsedRoom) {
+          nextClassification = "UNRESOLVED_ROOM";
+        } else {
+          nextClassification = "AMBIGUOUS_CLASSROOM";
+        }
+      } else if (row.classification === "VALID_AND_AUTOMATABLE") {
+        if (!hasEffectiveSlot) {
+          nextClassification = "UNRESOLVED_SLOT";
+        } else if (!hasResolvedRoom) {
+          nextClassification = row.parsedBuilding && row.parsedRoom
+            ? "UNRESOLVED_ROOM"
+            : "AMBIGUOUS_CLASSROOM";
+        }
+      }
+
+      const normalizedStoredResolvedSlotLabel = row.resolvedSlotLabel
+        ? normalizeSpace(row.resolvedSlotLabel)
+        : null;
+
+      const nextResolvedSlotLabel =
+        hasEffectiveSlot &&
+        !normalizedCurrentResolvedSlot &&
+        normalizedRawSlot.length > 0
+          ? normalizedRawSlot
+          : normalizedStoredResolvedSlotLabel;
+
+      const classificationChanged = nextClassification !== row.classification;
+      const resolvedSlotChanged = nextResolvedSlotLabel !== normalizedStoredResolvedSlotLabel;
+
+      if (!classificationChanged && !resolvedSlotChanged) {
+        continue;
+      }
+
+      const updatePayload: {
+        classification?: PreviewClassification;
+        reasons?: string[];
+        resolvedSlotLabel?: string | null;
+      } = {};
+
+      if (classificationChanged) {
+        updatePayload.classification = nextClassification;
+        updatePayload.reasons = getClassificationReasonsForCurrentStructure(
+          nextClassification,
+          Array.isArray(row.reasons) ? (row.reasons as string[]) : [],
+        );
+      }
+
+      if (resolvedSlotChanged) {
+        updatePayload.resolvedSlotLabel = nextResolvedSlotLabel;
+      }
+
+      await tx
+        .update(timetableImportRows)
+        .set(updatePayload)
+        .where(eq(timetableImportRows.id, row.id));
+    }
+  });
 }
 
 type RowResolutionPersistRecord = {
@@ -3181,6 +3367,13 @@ export async function commitTimetableImport(
 
   if (batch.status === "COMMITTED" && !options.allowCommittedBatch) {
     return buildCommittedReport(batchId);
+  }
+
+  if (batch.status === "PREVIEWED") {
+    await synchronizePreviewedBatchRowsWithCurrentStructure({
+      batchId,
+      slotSystemId: batch.slotSystemId,
+    });
   }
 
   const decisions = new Map<number, ImportDecision>();
@@ -3589,6 +3782,7 @@ export async function getTimetableImportProcessedRows(
   const [batch] = await db
     .select({
       id: timetableImportBatches.id,
+      slotSystemId: timetableImportBatches.slotSystemId,
       status: timetableImportBatches.status,
       warnings: timetableImportBatches.warnings,
     })
@@ -3598,6 +3792,13 @@ export async function getTimetableImportProcessedRows(
 
   if (!batch) {
     throw createServiceError(404, "Import batch not found");
+  }
+
+  if (batch.status === "PREVIEWED") {
+    await synchronizePreviewedBatchRowsWithCurrentStructure({
+      batchId,
+      slotSystemId: batch.slotSystemId,
+    });
   }
 
   const [rows, resolutions, occurrences] = await Promise.all([

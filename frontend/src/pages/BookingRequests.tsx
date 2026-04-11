@@ -546,8 +546,10 @@ export function BookingRequestsPage({
           {requests.map((req) => {
             const isPendingFaculty = req.status === "PENDING_FACULTY";
             const isPendingStaff = req.status === "PENDING_STAFF";
-            const isPending = isPendingFaculty || isPendingStaff;
+            const isApproved = req.status === "APPROVED";
+            const isCancellableStatus = isPendingFaculty || isPendingStaff || isApproved;
             const isOwnRequest = user ? req.userId === user.id : false;
+            const isFacultyApprover = user ? req.facultyId === user.id : false;
             const isActing = actingId === req.id;
 
             const canForward = currentRole === "FACULTY" && isPendingFaculty;
@@ -555,7 +557,9 @@ export function BookingRequestsPage({
             const canReject =
               (currentRole === "FACULTY" && isPendingFaculty) ||
               (currentRole === "STAFF" && isPendingStaff);
-            const canCancel = (currentRole === "ADMIN" || isOwnRequest) && isPending;
+            const canCancel =
+              (currentRole === "ADMIN" || isOwnRequest || isFacultyApprover) &&
+              isCancellableStatus;
 
             const hasActions = canForward || canApprove || canReject || canCancel;
             const requestedByLabel =

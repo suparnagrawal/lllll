@@ -1363,6 +1363,16 @@ async function computeExternalConflicts(batchId: number, operations: SessionOper
   );
   const conflicts: TimetableCommitConflict[] = [];
 
+  const overlapRowsByOperationId = new Map<string, Array<{
+    id: number;
+    roomId: number;
+    startAt: Date;
+    endAt: Date;
+    sourceRef: string | null;
+  }>>();
+
+  const conflictingBatchIds = new Set<number>();
+
   for (const operation of activeOperations) {
     const opStart = new Date(operation.startAt);
     const opEnd = new Date(operation.endAt);
@@ -1385,12 +1395,68 @@ async function computeExternalConflicts(batchId: number, operations: SessionOper
         ),
       );
 
+    overlapRowsByOperationId.set(operation.operationId, overlaps);
+
+    for (const overlap of overlaps) {
+      if (typeof overlap.sourceRef !== "string") {
+        continue;
+      }
+
+      const match = /^batch:(\d+):/.exec(overlap.sourceRef);
+      if (!match) {
+        continue;
+      }
+
+      const overlapBatchId = Number(match[1]);
+      if (Number.isInteger(overlapBatchId) && overlapBatchId > 0) {
+        conflictingBatchIds.add(overlapBatchId);
+      }
+    }
+  }
+
+  const conflictingBatches = conflictingBatchIds.size > 0
+    ? await db
+        .select({
+          id: timetableImportBatches.id,
+          slotSystemId: timetableImportBatches.slotSystemId,
+          status: timetableImportBatches.status,
+        })
+        .from(timetableImportBatches)
+        .where(inArray(timetableImportBatches.id, Array.from(conflictingBatchIds)))
+    : [];
+
+  const conflictBatchById = new Map(conflictingBatches.map((batch) => [batch.id, batch]));
+
+  for (const operation of activeOperations) {
+    const overlaps = overlapRowsByOperationId.get(operation.operationId) ?? [];
+
     for (const overlap of overlaps) {
       if (operation.forceOverwriteBookingIds.includes(overlap.id)) {
         continue;
       }
 
-      if (typeof overlap.sourceRef === "string" && overlap.sourceRef.startsWith(`batch:${batchId}:`)) {
+      if (typeof overlap.sourceRef !== "string") {
+        continue;
+      }
+
+      if (overlap.sourceRef.startsWith(`batch:${batchId}:`)) {
+        continue;
+      }
+
+      const match = /^batch:(\d+):/.exec(overlap.sourceRef);
+      if (!match) {
+        continue;
+      }
+
+      const overlapBatchId = Number(match[1]);
+      if (!Number.isInteger(overlapBatchId) || overlapBatchId <= 0) {
+        continue;
+      }
+
+      const overlapBatch = conflictBatchById.get(overlapBatchId);
+
+      // External cross-system clashes should only use committed timetable batches.
+      if (!overlapBatch || overlapBatch.status !== "COMMITTED") {
         continue;
       }
 
@@ -1409,6 +1475,9 @@ async function computeExternalConflicts(batchId: number, operations: SessionOper
         reason: "Clashes with committed timetable allocation",
         metadata: {
           conflictingBookingId: overlap.id,
+          conflictingBatchId: overlapBatchId,
+          conflictingSlotSystemId: overlapBatch.slotSystemId,
+          conflictingBatchStatus: overlapBatch.status,
           conflictingStartAt: overlap.startAt.toISOString(),
           conflictingEndAt: overlap.endAt.toISOString(),
           conflictingSourceRef: overlap.sourceRef,

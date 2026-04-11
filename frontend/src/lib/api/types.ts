@@ -5,7 +5,7 @@ export type UserRole =
   | "STUDENT"
   | "PENDING_ROLE";
 
-export type SetupRole = "STUDENT" | "FACULTY" | "ADMIN";
+export type SetupRole = "STUDENT";
 
 export type AuthMethod = "email" | "google";
 
@@ -219,6 +219,26 @@ export type VenueChangeRequestListItem = {
   requestedByUser: ChangeRequestRequester;
 };
 
+export type ChangeRequestDetailRequester = ChangeRequestRequester & {
+  [key: string]: unknown;
+};
+
+export type SlotChangeRequestDetail = {
+  request: SlotChangeRequestRecord;
+  course: ChangeRequestCourseOption;
+  currentBooking: Booking;
+  proposedRoom: Room | null;
+  requestedByUser: ChangeRequestDetailRequester;
+};
+
+export type VenueChangeRequestDetail = {
+  request: VenueChangeRequestRecord;
+  course: ChangeRequestCourseOption;
+  currentBooking: Booking;
+  proposedRoom: Room;
+  requestedByUser: ChangeRequestDetailRequester;
+};
+
 export type SlotChangeOptionsResponse = {
   courses: ChangeRequestCourseOption[];
   bookings: ChangeRequestBookingOption[];
@@ -263,6 +283,60 @@ export type VenueChangeBatchCreateInput = {
   reason: string;
   fromDate?: string;
   toDate?: string;
+};
+
+export type SlotChangeValidateInput = {
+  courseId: number;
+  currentBookingId: number;
+  proposedStart: string;
+  proposedEnd: string;
+  proposedRoomId?: number;
+};
+
+export type SlotChangeAlternativeSuggestion = {
+  type: "room" | "time";
+  roomId?: number;
+  roomName?: string;
+  buildingName?: string;
+  startAt?: string;
+  endAt?: string;
+  reason: string;
+};
+
+export type SlotChangeValidationResponse = {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  suggestions?: SlotChangeAlternativeSuggestion[];
+};
+
+export type VenueChangeValidateInput = {
+  courseId: number;
+  currentBookingId: number;
+  proposedRoomId: number;
+};
+
+export type VenueSuggestion = {
+  roomId: number;
+  roomName: string;
+  buildingName: string;
+  capacity: number | null;
+  hasProjector: boolean;
+  hasMic: boolean;
+  accessible: boolean;
+};
+
+export type VenueChangeValidationSlot = {
+  startAt: string;
+  endAt: string;
+  isCurrentSlot: boolean;
+};
+
+export type VenueChangeValidationResponse = {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  availableSlots?: VenueChangeValidationSlot[];
 };
 
 export type SlotChangeCreateResponse = {
@@ -593,6 +667,16 @@ export type TimetableImportProcessedOccurrenceStatus =
   | "UNRESOLVED"
   | "ALREADY_PROCESSED";
 
+export type TimetableImportProcessedOccurrenceBooking = {
+  id: number;
+  roomId: number;
+  startAt: string;
+  endAt: string;
+  requestId: number | null;
+  source: BookingSource;
+  sourceRef: string | null;
+};
+
 export type TimetableImportProcessedOccurrence = {
   occurrenceId: number;
   status: TimetableImportProcessedOccurrenceStatus;
@@ -601,7 +685,7 @@ export type TimetableImportProcessedOccurrence = {
   endAt: string;
   sourceRef: string | null;
   errorMessage: string | null;
-  booking: Booking | null;
+  booking: TimetableImportProcessedOccurrenceBooking | null;
 };
 
 export type TimetableImportProcessedRow = {
@@ -631,112 +715,6 @@ export type TimetableImportProcessedRowsReport = {
   status: "PREVIEWED" | "COMMITTED";
   warnings: string[];
   rows: TimetableImportProcessedRow[];
-};
-
-// ============================================================================
-// Conflict Detection and Resolution Types
-// ============================================================================
-
-export type ConflictResolutionAction = "FORCE_OVERWRITE" | "SKIP" | "ALTERNATIVE_ROOM";
-
-export type DetectedConflict = {
-  occurrenceId: number;
-  rowId: number;
-  rowIndex: number;
-  courseCode: string;
-  slot: string;
-  classroom: string;
-  roomId: number;
-  roomName: string;
-  buildingName: string;
-  startAt: string;
-  endAt: string;
-  conflictingBooking: {
-    id: number;
-    roomId: number;
-    startAt: string;
-    endAt: string;
-    source: string;
-    sourceRef: string | null;
-  };
-};
-
-export type ConflictResolutionDecision = {
-  occurrenceId: number;
-  action: ConflictResolutionAction;
-  alternativeRoomId?: number;
-};
-
-export type ConflictDetectionReport = {
-  batchId: number;
-  status: "FROZEN" | "NO_CONFLICTS";
-  totalOccurrences: number;
-  conflictCount: number;
-  conflicts: DetectedConflict[];
-  frozenAt: string | null;
-  frozenBy: {
-    userId: number;
-    userName: string;
-  } | null;
-};
-
-export type CommitWithResolutionsReport = {
-  batchId: number;
-  status: "COMMITTED";
-  totalOccurrences: number;
-  createdBookings: number;
-  skippedOccurrences: number;
-  overwrittenBookings: number;
-  alternativeRoomBookings: number;
-  deletedConflictingBookings: number;
-  warnings: string[];
-  changes: {
-    created: Array<{
-      occurrenceId: number;
-      bookingId: number;
-      roomId: number;
-      startAt: string;
-      endAt: string;
-    }>;
-    deleted: Array<{
-      bookingId: number;
-      roomId: number;
-      startAt: string;
-      endAt: string;
-      reason: string;
-    }>;
-    skipped: Array<{
-      occurrenceId: number;
-      reason: string;
-    }>;
-  };
-};
-
-export type CancelCommitResponse = {
-  batchId: number;
-  status: "CANCELLED";
-};
-
-export type FreezeStatusResponse = {
-  batchId: number;
-  isFrozen: boolean;
-  frozenByThisBatch: boolean;
-  freezeInfo: {
-    batchId: number;
-    userId: number;
-    userName: string;
-    startedAt: string;
-  } | null;
-};
-
-export type BookingFreezeErrorResponse = {
-  error: string;
-  message: string;
-  freezeInfo: {
-    batchId: number;
-    frozenBy: string;
-    startedAt: string;
-  };
 };
 
 // ============================================================================

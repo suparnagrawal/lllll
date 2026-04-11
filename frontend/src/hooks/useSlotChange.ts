@@ -5,6 +5,7 @@ import type {
   ChangeRequestStatus,
   SlotChangeBatchCreateInput,
   SlotChangeCreateInput,
+  SlotChangeValidateInput,
 } from "../lib/api/types";
 
 export function useSlotChangeOptions(enabled = true) {
@@ -20,6 +21,15 @@ export function useSlotChangeRequests(status?: ChangeRequestStatus) {
   return useQuery({
     queryKey: ["slot-change-requests", status],
     queryFn: () => slotChangeApi.getSlotChangeRequests(status),
+    ...queryConfigs.slotChangeRequests,
+  });
+}
+
+export function useSlotChangeRequest(id?: number, enabled = true) {
+  return useQuery({
+    queryKey: ["slot-change-request", id],
+    queryFn: () => slotChangeApi.getSlotChangeRequest(id as number),
+    enabled: enabled && typeof id === "number",
     ...queryConfigs.slotChangeRequests,
   });
 }
@@ -81,5 +91,12 @@ export function useCancelSlotChangeRequest() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["slot-change-requests"] });
     },
+  });
+}
+
+export function useValidateSlotChangeRequest() {
+  return useMutation({
+    mutationFn: (input: SlotChangeValidateInput) =>
+      slotChangeApi.validateSlotChangeRequest(input),
   });
 }
