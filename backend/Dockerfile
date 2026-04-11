@@ -1,13 +1,30 @@
-FROM node:20-alpine AS builder
+FROM node:20-alpine AS deps
 WORKDIR /app
 
 COPY backend/package*.json ./
 RUN npm ci
 
+FROM node:20-alpine AS builder
+WORKDIR /app
+
+COPY --from=deps /app/package*.json ./
+COPY --from=deps /app/node_modules ./node_modules
+
 COPY backend/tsconfig.json ./tsconfig.json
 COPY backend/src ./src
 
 RUN npm run build
+
+FROM node:20-alpine AS migrator
+WORKDIR /app
+
+COPY --from=deps /app/package*.json ./
+COPY --from=deps /app/node_modules ./node_modules
+COPY backend/drizzle.config.js ./drizzle.config.js
+COPY backend/src ./src
+COPY backend/scripts ./scripts
+
+CMD ["npm", "run", "db:push:first-deploy"]
 
 FROM node:20-alpine AS runner
 WORKDIR /app

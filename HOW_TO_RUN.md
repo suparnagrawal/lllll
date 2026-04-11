@@ -44,10 +44,10 @@ JWT_SECRET=replace_with_strong_random_secret
 SESSION_SECRET=replace_with_strong_random_session_secret
 ```
 
-Run migrations and seed data:
+Synchronize schema (push-based) and seed data:
 
 ```bash
-npx drizzle-kit migrate
+npm run db:push
 npm run seed:dev
 ```
 
@@ -104,24 +104,27 @@ export SESSION_SECRET="change_this"
 docker-compose up --build
 ```
 
+During startup, `backend-schema-sync` runs `npm run db:push:first-deploy` and exits.
+It applies `drizzle-kit push --force` only when the public schema is empty, then the backend starts.
+
 Service URLs:
 - Frontend: `http://localhost:5173`
 - Backend API: `http://localhost:5000/api`
 - Health check: `http://localhost:5000/health`
 
-## 7. Migration Troubleshooting
+## 7. Schema Sync Troubleshooting
 
-If `drizzle-kit migrate` fails on an old local database state, reset local DB volumes and re-run migrations:
+If `db:push` fails because of an old local database state, reset local DB volumes and re-run schema sync:
 
 ```bash
 docker-compose down -v
 docker-compose up -d db redis
 cd backend
-npx drizzle-kit migrate
+npm run db:push
 npm run seed:dev
 ```
 
-The migration chain has been verified on a fresh database.
+For full Docker deployment, guarded first-deploy schema sync runs automatically through `backend-schema-sync`.
 
 ## 8. Seeded Login Accounts (Password Auth)
 
