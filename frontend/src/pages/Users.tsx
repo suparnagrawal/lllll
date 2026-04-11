@@ -10,6 +10,7 @@ import { Input } from "../components/ui/input";
 import { Badge } from "../components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import { BuildingAssignmentDialog } from "./components/BuildingAssignmentDialog";
+import { formatError } from "../utils/formatError";
 
 type RoleFilter = "ALL" | UserRole;
 const PAGE_SIZES = [10, 20, 50];
@@ -62,7 +63,7 @@ export function UsersPage() {
       setPagination({ page: response.pagination.page, pageSize, totalPages: response.pagination.totalPages, totalUsers: response.pagination.total });
       setSelectedIds(new Set());
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load users");
+      setError(formatError(e, "Failed to load users"));
     } finally {
       setLoading(false);
     }
@@ -102,7 +103,7 @@ export function UsersPage() {
       setCreateForm({ name: "", email: "", password: "", role: "FACULTY", department: "", authProvider: "email" });
       await loadUsers(1);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to create user");
+      setError(formatError(e, "Failed to create user"));
     } finally {
       setCreatingUser(false);
     }
@@ -124,7 +125,7 @@ export function UsersPage() {
       await loadUsers(page);
       setBulkActionMode(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Bulk action failed");
+      setError(formatError(e, "Bulk action failed"));
     } finally {
       setLoading(false);
     }
@@ -138,7 +139,7 @@ export function UsersPage() {
       setNotice(`${getUserDisplayName(targetUser)}'s role updated`);
       await loadUsers(page);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to update role");
+      setError(formatError(e, "Failed to update role"));
     } finally {
       setLoading(false);
       setEditingUser(null);
@@ -152,7 +153,7 @@ export function UsersPage() {
       setNotice(`${getUserDisplayName(targetUser)} ${!targetUser.isActive ? "activated" : "deactivated"}`);
       await loadUsers(page);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to update status");
+      setError(formatError(e, "Failed to update status"));
     } finally {
       setLoading(false);
       setDeactivatingUser(null);
@@ -167,7 +168,7 @@ export function UsersPage() {
       const nextPage = page > 1 && users.length === 1 ? page - 1 : page;
       await loadUsers(nextPage);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to delete user");
+      setError(formatError(e, "Failed to delete user"));
     } finally {
       setLoading(false);
       setDeletingUser(null);

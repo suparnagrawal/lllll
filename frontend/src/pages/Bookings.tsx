@@ -13,6 +13,7 @@ import { formatRoomDisplayWithBuildingsArray } from "../utils/room";
 import type { BookingRequestPrefill } from "./bookingAvailabilityBridge";
 import { EditBookingModal } from "../components/EditBookingModal";
 import { useToast } from "../context/ToastContext";
+import { formatError } from "../utils/formatError";
 
 export function BookingsPage() {
   const { user } = useAuth();
@@ -185,7 +186,7 @@ function BookingsPageContent({ currentUserId, userRole, isAdmin, canManageBookin
       setNewStartAt("");
       setNewEndAt("");
     } catch (e) {
-      setCreateError(e instanceof Error ? e.message : "Failed to create booking");
+      setCreateError(formatError(e, "Failed to create booking"));
     }
   };
 
@@ -224,7 +225,7 @@ function BookingsPageContent({ currentUserId, userRole, isAdmin, canManageBookin
 
       setEditTarget(null);
     } catch (error) {
-      const rawMessage = error instanceof Error ? error.message : "Failed to edit booking";
+      const rawMessage = formatError(error, "Failed to edit booking");
       setEditError(mapEditErrorMessage(rawMessage));
     }
   }, [editBookingMutation, editTarget, mapEditErrorMessage, pushToast]);
@@ -260,7 +261,7 @@ function BookingsPageContent({ currentUserId, userRole, isAdmin, canManageBookin
     try {
       await deleteBookingMutation.mutateAsync(id);
     } catch (e) {
-      setCreateError(e instanceof Error ? e.message : "Failed to delete booking");
+      setCreateError(formatError(e, "Failed to delete booking"));
     } finally {
       setDeletingId(null);
     }

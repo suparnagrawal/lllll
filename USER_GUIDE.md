@@ -291,6 +291,12 @@ Faculty and Students also receive **email notifications** for important updates 
 | Session expired | Log in again; sessions timeout after 35 min inactivity |
 | Too many requests error | Wait a few minutes; rate limiting is active |
 
+### Known Issues Fixed
+
+- Error banners that previously displayed `[object Object]` now show readable, user-friendly API error messages.
+- Session handling was stabilized so temporary token-refresh failures do not immediately log out active users when the current access token is still valid.
+- Access-denied navigation now uses in-app routing to avoid full-page refresh side effects.
+
 ---
 
 ## Quick Reference

@@ -835,6 +835,14 @@ This system provides a complete solution for university room allocation with rob
 | Session timeout countdown consistency | `/frontend/src/auth/AuthContext.tsx` | Countdown logic and UI were aligned; current working tree shows a smooth second-by-second 5-minute countdown display (`mm:ss`). |
 | Backend type safety (P0 scope) | `/backend/src/api/middleware/rateLimit.middleware.ts` | Fixed typed rate-limit configuration/middleware signatures and improved guard safety on request-processing paths. |
 
+### Known Issues Fixed (April 11, 2026)
+
+| Issue | File(s) | Resolution |
+|------|---------|------------|
+| `[object Object]` shown in UI error banners | `/frontend/src/lib/api/client.ts`, `/frontend/src/lib/api/auth.ts`, `/frontend/src/utils/formatError.ts`, `/frontend/src/pages/BookingRequests.tsx` | Added centralized error normalization and switched key pages/API handlers to use it, so object payloads are rendered as readable messages. |
+| Random session drops during refresh checks | `/frontend/src/auth/AuthContext.tsx`, `/frontend/src/lib/api/client.ts` | Refresh-failure handling now preserves authenticated state while the current access token is still valid, and only clears session when token is truly expired/unauthorized. |
+| Full-page reload from access-denied actions | `/frontend/src/components/auth/RequireRole.tsx` | Replaced anchor navigation with SPA routing links to keep auth/session context stable in-app. |
+
 ### Runtime and Build Validation
 
 | Check | Command | Result |

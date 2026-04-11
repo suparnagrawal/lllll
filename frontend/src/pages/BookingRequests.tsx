@@ -31,6 +31,7 @@ import { useAuth } from "../auth/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { DateInput } from "../components/DateInput";
 import { formatDateTimeDDMMYYYY } from "../utils/datetime";
+import { formatError } from "../utils/formatError";
 import { formatRoomDisplayWithBuildingsArray } from "../utils/room";
 import type {
   AvailabilityPrefill,
@@ -163,7 +164,7 @@ export function BookingRequestsPage({
     try {
       setRequests(await getBookingRequests(filter === "ALL" ? undefined : filter));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load booking requests");
+      setError(formatError(e, "Failed to load booking requests"));
     } finally {
       setLoading(false);
     }
@@ -183,25 +184,25 @@ export function BookingRequestsPage({
       }
       setBookingsById(bookingMap);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load edit requests");
+      setError(formatError(e, "Failed to load edit requests"));
     }
   };
 
   const loadRooms = async () => {
     try { setRooms(await getRooms()); }
-    catch (e) { setError(e instanceof Error ? e.message : "Failed to load rooms"); }
+    catch (e) { setError(formatError(e, "Failed to load rooms")); }
   };
 
   const loadBuildings = async () => {
     try { setBuildings(await getBuildings()); }
-    catch (e) { setError(e instanceof Error ? e.message : "Failed to load buildings"); }
+    catch (e) { setError(formatError(e, "Failed to load buildings")); }
   };
 
   const loadFacultyUsers = async () => {
     try {
       setFacultyUsers(await getFacultyUsers());
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load faculty users");
+      setError(formatError(e, "Failed to load faculty users"));
     }
   };
 
@@ -306,7 +307,7 @@ export function BookingRequestsPage({
       setPrefillMessage(null);
       await loadRequests(statusFilter);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to create request");
+      setError(formatError(e, "Failed to create request"));
     } finally {
       setIsSubmitting(false);
     }
@@ -351,7 +352,7 @@ export function BookingRequestsPage({
       await loadRequests(statusFilter);
       await loadEditRequests();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Action failed");
+      setError(formatError(e, "Action failed"));
     } finally {
       setActingId(null);
     }
@@ -369,7 +370,7 @@ export function BookingRequestsPage({
       await loadEditRequests();
       await loadRequests(statusFilter);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Action failed");
+      setError(formatError(e, "Action failed"));
     } finally {
       setActingId(null);
     }

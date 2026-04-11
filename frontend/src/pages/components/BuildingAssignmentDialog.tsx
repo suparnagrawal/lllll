@@ -4,6 +4,7 @@ import { Button } from "../../components/ui/button";
 import { useBuildings } from "../../hooks/useBuildings";
 import { useUserBuildingAssignments, useUpdateUserBuildingAssignments } from "../../hooks/useUsers";
 import type { ManagedUser } from "../../lib/api/types";
+import { formatError } from "../../utils/formatError";
 
 type BuildingAssignmentDialogProps = {
   user: ManagedUser | null;
@@ -62,7 +63,7 @@ export function BuildingAssignmentDialog({ user, open, onOpenChange, onSuccess }
       onSuccess();
       onOpenChange(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update building assignments");
+      setError(formatError(err, "Failed to update building assignments"));
     } finally {
       setSaving(false);
     }

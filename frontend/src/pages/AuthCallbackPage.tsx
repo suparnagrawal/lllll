@@ -4,6 +4,7 @@ import { Loader2, AlertCircle } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { markProfileSetupRequired } from "../auth/profileSetup";
 import { getAuthUser } from "../lib/api";
+import { formatError } from "../utils/formatError";
 
 type CallbackState = "loading" | "error" | "success";
 
@@ -164,9 +165,7 @@ export default function AuthCallbackPage() {
 
         clearPendingOAuthPayload();
         setState("error");
-        setErrorMessage(
-          err instanceof Error ? err.message : "Authentication failed. Please try again.",
-        );
+        setErrorMessage(formatError(err, "Authentication failed. Please try again."));
       }
     })();
 

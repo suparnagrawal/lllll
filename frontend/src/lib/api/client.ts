@@ -1,5 +1,6 @@
 import { API_BASE_URL, AUTH_TOKEN_KEY, AUTH_REFRESH_TOKEN_KEY, AUTH_USER_KEY } from "./constants";
 import type { AuthUser, ApiErrorPayload, RefreshTokenResponse } from "./types";
+import { formatError } from "../../utils/formatError";
 
 let onUnauthorizedCallback: (() => void) | null = null;
 let isRefreshing = false;
@@ -112,10 +113,6 @@ export async function refreshAccessToken(): Promise<boolean> {
       const refreshToken = getRefreshToken();
 
       if (!refreshToken) {
-        clearAuth();
-        if (onUnauthorizedCallback) {
-          onUnauthorizedCallback();
-        }
         return false;
       }
 
@@ -195,10 +192,10 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
     const apiPayload = payload as ApiErrorPayload | null;
     const retryAfterSeconds = getRetryAfterSeconds(response);
-    const message =
-      apiPayload?.error ??
-      apiPayload?.message ??
-      httpErrorMessage(response.status, retryAfterSeconds);
+    const message = formatError(
+      apiPayload?.error ?? apiPayload?.message ?? payload,
+      httpErrorMessage(response.status, retryAfterSeconds),
+    );
     throw new Error(message);
   }
 
@@ -244,10 +241,10 @@ export async function requestFormData<T>(
 
     const apiPayload = payload as ApiErrorPayload | null;
     const retryAfterSeconds = getRetryAfterSeconds(response);
-    const message =
-      apiPayload?.error ??
-      apiPayload?.message ??
-      httpErrorMessage(response.status, retryAfterSeconds);
+    const message = formatError(
+      apiPayload?.error ?? apiPayload?.message ?? payload,
+      httpErrorMessage(response.status, retryAfterSeconds),
+    );
 
     throw new Error(message);
   }

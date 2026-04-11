@@ -1,4 +1,4 @@
-import { Navigate, Outlet } from "react-router-dom";
+import { Link, Navigate, Outlet } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import type { UserRole } from "../../lib/api/types";
 
@@ -42,19 +42,19 @@ function AccessDenied({ requiredRoles, userRole }: AccessDeniedProps) {
         </p>
 
         <div className="space-y-3">
-          <a
-            href="/"
+          <Link
+            to="/"
             className="block px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
           >
             Back to Dashboard
-          </a>
+          </Link>
 
-          <a
-            href="/login"
+          <Link
+            to="/login"
             className="block px-4 py-2 border border-slate-300 text-slate-700 font-medium rounded-lg hover:bg-slate-50 transition-colors"
           >
             Sign In with Different Account
-          </a>
+          </Link>
         </div>
       </div>
     </div>

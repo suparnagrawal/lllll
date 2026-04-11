@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../co
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Loader2 } from "lucide-react";
+import { formatError } from "../utils/formatError";
 
 interface ToastProps {
   type: "error" | "success";
@@ -130,7 +131,7 @@ export default function LoginPage() {
       await login(email.trim(), password, "email");
       // Navigation will happen via useEffect when user state updates
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Login failed. Please check your credentials.";
+      const errorMessage = formatError(error, "Login failed. Please check your credentials.");
       const retryMatch = errorMessage.match(/Try again in (\d+) second/);
       const retryCountdownSeconds = retryMatch ? parseInt(retryMatch[1], 10) : undefined;
       
