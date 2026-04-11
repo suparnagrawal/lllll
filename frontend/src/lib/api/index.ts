@@ -19,6 +19,12 @@ export type {
   BookingSource,
   BookingRequest,
   Booking,
+  BookingEditRequestStatus,
+  BookingEditRequest,
+  EditBookingPayload,
+  EditBookingDirectResponse,
+  EditBookingRequestResponse,
+  EditBookingResponse,
   ChangeRequestStatus,
   ChangeRequestCourseOption,
   ChangeRequestBookingOption,
@@ -193,6 +199,14 @@ export {
   rejectBookingRequest,
   cancelBookingRequest,
 } from "./booking-requests";
+
+// Edit booking endpoints
+export {
+  editBooking,
+  getEditRequests,
+  approveEditRequest,
+  rejectEditRequest,
+} from "./editBooking";
 
 // Slot change endpoints
 export {

@@ -3,17 +3,23 @@ import type { FormEvent } from "react";
 import { useLocation } from "react-router-dom";
 import {
   approveBookingRequest,
+  approveEditRequest,
   cancelBookingRequest,
   createBookingRequest,
   forwardBookingRequest,
   getFacultyUsers,
   getManagedUsers,
   getBookingRequests,
+  getBookings,
+  getEditRequests,
   getRooms,
   getBuildings,
+  rejectEditRequest,
   rejectBookingRequest,
 } from "../lib/api";
 import type {
+  Booking,
+  BookingEditRequest,
   BookingEventType,
   BookingRequest,
   BookingStatus,
@@ -22,6 +28,7 @@ import type {
   Building,
 } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
+import { useToast } from "../context/ToastContext";
 import { DateInput } from "../components/DateInput";
 import { formatDateTimeDDMMYYYY } from "../utils/datetime";
 import { formatRoomDisplayWithBuildingsArray } from "../utils/room";
@@ -95,6 +102,7 @@ export function BookingRequestsPage({
   onOpenAvailability,
 }: BookingRequestsPageProps) {
   const { user } = useAuth();
+  const { pushToast } = useToast();
   const location = useLocation();
   const currentRole = user?.role ?? null;
   const isAdmin = currentRole === "ADMIN";
@@ -108,6 +116,8 @@ export function BookingRequestsPage({
   const [rooms, setRooms] = useState<Room[]>([]);
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [facultyUsers, setFacultyUsers] = useState<FacultyUser[]>([]);
+  const [editRequests, setEditRequests] = useState<BookingEditRequest[]>([]);
+  const [bookingsById, setBookingsById] = useState<Record<number, Booking>>({});
   const [adminUserNameById, setAdminUserNameById] = useState<Record<number, string>>({});
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
 
@@ -159,6 +169,24 @@ export function BookingRequestsPage({
     }
   };
 
+  const loadEditRequests = async () => {
+    try {
+      const [editRows, bookingRows] = await Promise.all([
+        getEditRequests(),
+        getBookings(),
+      ]);
+
+      setEditRequests(editRows);
+      const bookingMap: Record<number, Booking> = {};
+      for (const booking of bookingRows) {
+        bookingMap[booking.id] = booking;
+      }
+      setBookingsById(bookingMap);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load edit requests");
+    }
+  };
+
   const loadRooms = async () => {
     try { setRooms(await getRooms()); }
     catch (e) { setError(e instanceof Error ? e.message : "Failed to load rooms"); }
@@ -182,6 +210,7 @@ export function BookingRequestsPage({
       await loadRooms();
       await loadBuildings();
       await loadRequests("ALL");
+      await loadEditRequests();
 
       if (isStudent) {
         await loadFacultyUsers();
@@ -319,6 +348,25 @@ export function BookingRequestsPage({
     setError(null);
     try {
       await action();
+      await loadRequests(statusFilter);
+      await loadEditRequests();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Action failed");
+    } finally {
+      setActingId(null);
+    }
+  };
+
+  const runEditRequestAction = async (
+    id: number,
+    action: () => Promise<void>,
+  ) => {
+    setActingId(id);
+    setError(null);
+
+    try {
+      await action();
+      await loadEditRequests();
       await loadRequests(statusFilter);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Action failed");
@@ -705,6 +753,107 @@ export function BookingRequestsPage({
           })}
         </div>
       )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Edit Requests</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {editRequests.length === 0 ? (
+            <p className="text-gray-600">No edit requests found.</p>
+          ) : (
+            editRequests.map((editRequest) => {
+              const isPending = editRequest.status === "PENDING";
+              const isReviewer = currentRole === "ADMIN" || currentRole === "STAFF";
+              const canReview = isReviewer && isPending;
+              const originalBooking = bookingsById[editRequest.bookingId];
+              const originalRoomLabel =
+                originalBooking
+                  ? roomNameById.get(originalBooking.roomId) ?? `Room #${originalBooking.roomId}`
+                  : `Booking #${editRequest.bookingId}`;
+              const proposedRoomLabel =
+                editRequest.proposedRoomId === null
+                  ? originalRoomLabel
+                  : roomNameById.get(editRequest.proposedRoomId) ?? `Room #${editRequest.proposedRoomId}`;
+
+              const originalStart = originalBooking?.startAt
+                ? formatDateTimeDDMMYYYY(originalBooking.startAt)
+                : "-";
+              const originalEnd = originalBooking?.endAt
+                ? formatDateTimeDDMMYYYY(originalBooking.endAt)
+                : "-";
+              const proposedStart = editRequest.proposedStartAt
+                ? formatDateTimeDDMMYYYY(editRequest.proposedStartAt)
+                : originalStart;
+              const proposedEnd = editRequest.proposedEndAt
+                ? formatDateTimeDDMMYYYY(editRequest.proposedEndAt)
+                : originalEnd;
+              const isActing = actingId === editRequest.id;
+
+              return (
+                <div key={editRequest.id} className="border rounded-lg p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-semibold">Edit Request #{editRequest.id}</p>
+                      <p className="text-sm text-gray-600">Booking #{editRequest.bookingId}</p>
+                    </div>
+                    <Badge variant={editRequest.status === "APPROVED" ? "default" : editRequest.status === "REJECTED" ? "destructive" : "secondary"}>
+                      {editRequest.status}
+                    </Badge>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                    <div className="rounded-md border p-3 bg-gray-50">
+                      <p className="font-semibold mb-1">Original</p>
+                      <p>Room: {originalRoomLabel}</p>
+                      <p>From: {originalStart}</p>
+                      <p>To: {originalEnd}</p>
+                    </div>
+                    <div className="rounded-md border p-3 bg-blue-50">
+                      <p className="font-semibold mb-1">Proposed</p>
+                      <p>Room: {proposedRoomLabel}</p>
+                      <p>From: {proposedStart}</p>
+                      <p>To: {proposedEnd}</p>
+                    </div>
+                  </div>
+
+                  {canReview && (
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={isActing}
+                        onClick={() =>
+                          void runEditRequestAction(editRequest.id, async () => {
+                            await approveEditRequest(editRequest.id);
+                            pushToast("success", "Edit request approved");
+                          })
+                        }
+                      >
+                        {isActing ? "Working…" : "Approve"}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="destructive"
+                        disabled={isActing}
+                        onClick={() =>
+                          void runEditRequestAction(editRequest.id, async () => {
+                            await rejectEditRequest(editRequest.id);
+                            pushToast("info", "Edit request rejected");
+                          })
+                        }
+                      >
+                        {isActing ? "Working…" : "Reject"}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
