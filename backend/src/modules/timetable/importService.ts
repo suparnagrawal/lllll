@@ -2557,6 +2557,85 @@ async function resetRowsForReallocation(
   };
 }
 
+export async function recomputeCommittedBatchRows(input: {
+  batchId: number;
+  rowIds: number[];
+}): Promise<{
+  batchId: number;
+  targetRows: number;
+  deletedBookings: number;
+  warnings: string[];
+}> {
+  const batchId = Number(input.batchId);
+
+  if (!Number.isInteger(batchId) || batchId <= 0) {
+    throw createServiceError(400, "Invalid batchId");
+  }
+
+  const targetRowIds = Array.from(
+    new Set(
+      (input.rowIds ?? []).filter(
+        (rowId) => Number.isInteger(rowId) && rowId > 0,
+      ),
+    ),
+  );
+
+  if (targetRowIds.length === 0) {
+    return {
+      batchId,
+      targetRows: 0,
+      deletedBookings: 0,
+      warnings: ["No affected rows detected for recomputation."],
+    };
+  }
+
+  const [batch] = await db
+    .select({
+      id: timetableImportBatches.id,
+      status: timetableImportBatches.status,
+    })
+    .from(timetableImportBatches)
+    .where(eq(timetableImportBatches.id, batchId))
+    .limit(1);
+
+  if (!batch) {
+    throw createServiceError(404, "Import batch not found");
+  }
+
+  if (batch.status !== "COMMITTED") {
+    throw createServiceError(409, "Only committed batches can be recomputed");
+  }
+
+  const resetResult = await resetRowsForReallocation(batchId, targetRowIds);
+
+  const commitReport = await commitTimetableImport(
+    { batchId },
+    {
+      allowCommittedBatch: true,
+      targetRowIds,
+    },
+  );
+
+  const warnings = [...commitReport.warnings];
+
+  if (commitReport.failedOccurrences > 0) {
+    warnings.push(
+      `Recompute finished with ${commitReport.failedOccurrences} failed occurrence(s).`,
+    );
+  }
+
+  if (commitReport.unresolvedRows > 0) {
+    warnings.push(`Recompute left ${commitReport.unresolvedRows} unresolved row(s).`);
+  }
+
+  return {
+    batchId,
+    targetRows: targetRowIds.length,
+    deletedBookings: resetResult.deletedBookings,
+    warnings,
+  };
+}
+
 export async function reallocateTimetableImport(input: CommitImportInput): Promise<CommitReport> {
   const batchId = Number(input.batchId);
 

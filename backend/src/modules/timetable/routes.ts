@@ -30,6 +30,18 @@ import {
 	handleGetFreezeStatus,
 	handlePreviewSlotSystemChanges,
 	handleApplySlotSystemChanges,
+	handleStartCommitSession,
+	handleStartEditCommitSession,
+	handleExternalCommitCheck,
+	handleExternalCommitResolve,
+	handleInternalCommitCheck,
+	handleInternalCommitResolve,
+	handleStartCommitFreeze,
+	handleRuntimeCommitCheck,
+	handleRuntimeCommitResolve,
+	handleFinalizeCommitSession,
+	handleCancelCommitSession,
+	handleGetCommitSessionStatus,
 } from "./controller";
 import { authMiddleware } from "../../middleware/auth";
 import { requireRole } from "../../middleware/rbac";
@@ -107,6 +119,44 @@ router.post(
 );
 router.post("/imports/:id/cancel-commit", timetableImportCommitLimiter, handleCancelCommit);
 router.get("/imports/:id/freeze-status", timetableImportReadLimiter, handleGetFreezeStatus);
+
+// New staged commit session flow (external -> internal -> freeze -> runtime -> finalize)
+router.post("/commit/start", timetableImportCommitLimiter, handleStartCommitSession);
+router.post("/edit/start", timetableImportCommitLimiter, handleStartEditCommitSession);
+router.post(
+	"/commit/external-check",
+	timetableImportCommitLimiter,
+	handleExternalCommitCheck,
+);
+router.post(
+	"/commit/external-resolve",
+	timetableImportCommitLimiter,
+	handleExternalCommitResolve,
+);
+router.post(
+	"/commit/internal-check",
+	timetableImportCommitLimiter,
+	handleInternalCommitCheck,
+);
+router.post(
+	"/commit/internal-resolve",
+	timetableImportCommitLimiter,
+	handleInternalCommitResolve,
+);
+router.post("/commit/freeze", timetableImportCommitLimiter, handleStartCommitFreeze);
+router.post(
+	"/commit/runtime-check",
+	timetableImportCommitLimiter,
+	handleRuntimeCommitCheck,
+);
+router.post(
+	"/commit/runtime-resolve",
+	timetableImportCommitLimiter,
+	handleRuntimeCommitResolve,
+);
+router.post("/commit/finalize", timetableImportCommitLimiter, handleFinalizeCommitSession);
+router.post("/commit/cancel", timetableImportCommitLimiter, handleCancelCommitSession);
+router.get("/commit/:id/status", timetableImportReadLimiter, handleGetCommitSessionStatus);
 
 // Slot system change workspace
 router.post(

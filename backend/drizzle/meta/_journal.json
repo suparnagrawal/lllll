@@ -176,6 +176,20 @@
       "when": 1775683726264,
       "tag": "0024_gorgeous_cammi",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1775838600000,
+      "tag": "0026_timetable_commit_sessions",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1775842200000,
+      "tag": "0027_edit_mode_snapshot_version",
+      "breakpoints": true
     }
   ]
 }

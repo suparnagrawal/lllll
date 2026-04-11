@@ -397,6 +397,7 @@ export type SlotSystem = {
   id: number;
   name: string;
   isLocked: boolean;
+  version: number;
   createdAt: string;
 };
 
@@ -735,6 +736,152 @@ export type BookingFreezeErrorResponse = {
     batchId: number;
     frozenBy: string;
     startedAt: string;
+  };
+};
+
+// ============================================================================
+// Staged Commit Session Types
+// ============================================================================
+
+export type CommitSessionStatus =
+  | "STARTED"
+  | "EXTERNAL_DONE"
+  | "INTERNAL_DONE"
+  | "FROZEN"
+  | "COMPLETED"
+  | "CANCELLED"
+  | "FAILED";
+
+export type CommitSessionStage = "external" | "internal" | "runtime";
+
+export type CommitResolutionAction =
+  | "SKIP"
+  | "CHANGE_ROOM"
+  | "CHANGE_SLOT_EXISTING"
+  | "CREATE_SLOT_AND_USE"
+  | "FORCE_OVERWRITE"
+  | "ALTERNATIVE_ROOM";
+
+export type CommitSessionSummary = {
+  commitSessionId: number;
+  batchId: number;
+  slotSystemId: number;
+  status: CommitSessionStatus;
+  payloadSnapshot: string;
+  isFrozen: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CommitSessionConflict = {
+  id: string;
+  stage: CommitSessionStage;
+  type: CommitSessionStage;
+  operationId: string;
+  rowId: number;
+  rowIndex: number;
+  roomId: number;
+  startAt: string;
+  endAt: string;
+  reason: string;
+  metadata: Record<string, unknown>;
+};
+
+export type CommitStageReport = {
+  commitSessionId: number;
+  stage: CommitSessionStage;
+  conflictCount: number;
+  conflicts: CommitSessionConflict[];
+};
+
+export type CommitSessionResolutionDecision = {
+  conflictId: string;
+  action: CommitResolutionAction;
+  roomId?: number;
+  startAt?: string;
+  endAt?: string;
+};
+
+export type CommitSessionFinalizeReport = {
+  commitSessionId: number;
+  batchId: number;
+  createdBookings: number;
+  skippedOperations: number;
+  deletedConflictingBookings: number;
+};
+
+export type CommitSessionCancelResponse = {
+  commitSessionId: number;
+  status: "CANCELLED";
+};
+
+export type TimetableSnapshotDay = {
+  id: number;
+  dayOfWeek: DayOfWeek;
+  orderIndex: number;
+  laneCount: number;
+};
+
+export type TimetableSnapshotTimeBand = {
+  id: number;
+  startTime: string;
+  endTime: string;
+  orderIndex: number;
+};
+
+export type TimetableSnapshotBlock = {
+  id: number;
+  dayId: number;
+  startBandId: number;
+  laneIndex: number;
+  rowSpan: number;
+  label: string;
+};
+
+export type TimetableSnapshotState = {
+  slotSystemId: number;
+  days: TimetableSnapshotDay[];
+  timeBands: TimetableSnapshotTimeBand[];
+  blocks: TimetableSnapshotBlock[];
+  roomAssignments?: Record<string, number>;
+};
+
+export type EditCommitDiffOperationPreview = {
+  type: "ADD_SLOT" | "REMOVE_SLOT" | "CHANGE_SLOT" | "CHANGE_VENUE";
+  label: string;
+  oldDescriptorCount: number;
+  newDescriptorCount: number;
+  oldRoomId: number | null;
+  newRoomId: number | null;
+  operationGroupId: string;
+  affectedBookings: number;
+};
+
+export type EditCommitSessionStartResponse = {
+  session?: CommitSessionSummary;
+  noChanges?: boolean;
+  message?: string;
+  diff: {
+    summary: {
+      total: number;
+      added: number;
+      removed: number;
+      changedSlot: number;
+      changedVenue: number;
+    };
+    changedLabels: string[];
+    operations: EditCommitDiffOperationPreview[];
+    affectedRows: number;
+    unchangedRows: number;
+    expectedVersion: number;
+    currentVersion: number;
+    bookingImpact: {
+      totalAffectedBookings: number;
+      byOperation: {
+        operationId: string;
+        affectedBookings: number;
+      }[];
+    };
   };
 };
 

@@ -12,7 +12,8 @@ import { eq, and, inArray } from "drizzle-orm";
 import {
   timetableImportBatches,
   timetableImportOccurrences,
-  bookings,
+  timetableImportRowResolutions,
+  timetableImportRows,
 } from "../../db/schema";
 import {
   freezeBookings,
@@ -20,6 +21,7 @@ import {
 } from "./services/bookingFreezeService";
 import logger from "../../shared/utils/logger";
 import { slotBlocks, slotDays, slotSystems, slotTimeBands } from "./schema";
+import { recomputeCommittedBatchRows } from "./importService";
 import {
   createServiceError,
   isTimetableServiceError,
@@ -105,6 +107,162 @@ export type ChangeApplyResult = {
     warnings: string[];
   };
 };
+
+type SlotLabelSignatureMap = Map<string, string>;
+
+function normalizeSlotLabel(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+async function buildSlotLabelSignatureMap(
+  slotSystemId: number,
+): Promise<SlotLabelSignatureMap> {
+  const [days, timeBands, blocks] = await Promise.all([
+    db
+      .select({ id: slotDays.id, dayOfWeek: slotDays.dayOfWeek })
+      .from(slotDays)
+      .where(eq(slotDays.slotSystemId, slotSystemId)),
+    db
+      .select({
+        id: slotTimeBands.id,
+        startTime: slotTimeBands.startTime,
+        endTime: slotTimeBands.endTime,
+      })
+      .from(slotTimeBands)
+      .where(eq(slotTimeBands.slotSystemId, slotSystemId)),
+    db
+      .select({
+        label: slotBlocks.label,
+        dayId: slotBlocks.dayId,
+        startBandId: slotBlocks.startBandId,
+        rowSpan: slotBlocks.rowSpan,
+      })
+      .from(slotBlocks)
+      .where(eq(slotBlocks.slotSystemId, slotSystemId)),
+  ]);
+
+  const dayById = new Map(days.map((day) => [day.id, day.dayOfWeek]));
+  const sortedTimeBands = [...timeBands].sort((a, b) => {
+    const startCompare = String(a.startTime).localeCompare(String(b.startTime));
+    if (startCompare !== 0) {
+      return startCompare;
+    }
+
+    const endCompare = String(a.endTime).localeCompare(String(b.endTime));
+    if (endCompare !== 0) {
+      return endCompare;
+    }
+
+    return a.id - b.id;
+  });
+
+  const timeBandIndexById = new Map<number, number>();
+  sortedTimeBands.forEach((band, index) => {
+    timeBandIndexById.set(band.id, index);
+  });
+
+  const partsByLabel = new Map<string, Set<string>>();
+
+  for (const block of blocks) {
+    const labelKey = normalizeSlotLabel(block.label ?? "");
+    if (!labelKey) {
+      continue;
+    }
+
+    const dayOfWeek = dayById.get(block.dayId);
+    const startBandIndex = timeBandIndexById.get(block.startBandId);
+
+    if (!dayOfWeek || startBandIndex === undefined) {
+      continue;
+    }
+
+    const endBandIndex = startBandIndex + block.rowSpan - 1;
+    const startBand = sortedTimeBands[startBandIndex];
+    const endBand = sortedTimeBands[endBandIndex];
+
+    if (!startBand || !endBand) {
+      continue;
+    }
+
+    const part = `${dayOfWeek}|${String(startBand.startTime)}|${String(endBand.endTime)}`;
+    const existing = partsByLabel.get(labelKey) ?? new Set<string>();
+    existing.add(part);
+    partsByLabel.set(labelKey, existing);
+  }
+
+  const signatures: SlotLabelSignatureMap = new Map();
+
+  for (const [labelKey, parts] of partsByLabel.entries()) {
+    signatures.set(labelKey, Array.from(parts).sort().join("||"));
+  }
+
+  return signatures;
+}
+
+function getChangedSlotLabels(
+  before: SlotLabelSignatureMap,
+  after: SlotLabelSignatureMap,
+): Set<string> {
+  const changed = new Set<string>();
+  const keys = new Set<string>([...before.keys(), ...after.keys()]);
+
+  for (const key of keys) {
+    if ((before.get(key) ?? "") !== (after.get(key) ?? "")) {
+      changed.add(key);
+    }
+  }
+
+  return changed;
+}
+
+async function getAffectedRowIdsForChangedLabels(
+  batchId: number,
+  changedLabels: Set<string>,
+): Promise<number[]> {
+  if (changedLabels.size === 0) {
+    return [];
+  }
+
+  const rows = await db
+    .select({
+      rowId: timetableImportRows.id,
+      rawSlot: timetableImportRows.rawSlot,
+      rowResolvedSlotLabel: timetableImportRows.resolvedSlotLabel,
+      resolutionAction: timetableImportRowResolutions.action,
+      resolutionSlotLabel: timetableImportRowResolutions.resolvedSlotLabel,
+    })
+    .from(timetableImportRows)
+    .leftJoin(
+      timetableImportRowResolutions,
+      and(
+        eq(timetableImportRowResolutions.batchId, batchId),
+        eq(timetableImportRowResolutions.rowId, timetableImportRows.id),
+      ),
+    )
+    .where(eq(timetableImportRows.batchId, batchId));
+
+  const rowIds: number[] = [];
+
+  for (const row of rows) {
+    if (row.resolutionAction === "SKIP") {
+      continue;
+    }
+
+    const effectiveLabel =
+      row.resolutionSlotLabel ?? row.rowResolvedSlotLabel ?? row.rawSlot ?? "";
+    const normalizedLabel = normalizeSlotLabel(effectiveLabel);
+
+    if (!normalizedLabel) {
+      continue;
+    }
+
+    if (changedLabels.has(normalizedLabel)) {
+      rowIds.push(row.rowId);
+    }
+  }
+
+  return Array.from(new Set(rowIds));
+}
 
 // ============================================================================
 // Preview Changes
@@ -282,6 +440,8 @@ export async function applySlotSystemChanges(
     },
   };
 
+  const beforeLabelSignatures = await buildSlotLabelSignatureMap(slotSystemId);
+
   try {
     // 1. Remove blocks first (so time band / day deletion cascades cleanly)
     if (changes.removeBlockIds) {
@@ -442,8 +602,10 @@ export async function applySlotSystemChanges(
       }
     }
 
-    // 9. Clean up orphaned occurrences and bookings
-    //    Find CREATED occurrences whose sourceRef references blocks that no longer exist
+    // 9. Recompute only rows affected by structural slot-label changes.
+    const afterLabelSignatures = await buildSlotLabelSignatureMap(slotSystemId);
+    const changedLabels = getChangedSlotLabels(beforeLabelSignatures, afterLabelSignatures);
+
     const committedBatches = await db
       .select({ id: timetableImportBatches.id })
       .from(timetableImportBatches)
@@ -454,56 +616,30 @@ export async function applySlotSystemChanges(
         ),
       );
 
-    if (committedBatches.length > 0) {
-      const batchIds = committedBatches.map((b) => b.id);
-
-      // Find occurrences with bookings that reference deleted blocks
-      const orphanedOccurrences = await db
-        .select({
-          id: timetableImportOccurrences.id,
-          bookingId: timetableImportOccurrences.bookingId,
-          sourceRef: timetableImportOccurrences.sourceRef,
-        })
-        .from(timetableImportOccurrences)
-        .where(
-          and(
-            inArray(timetableImportOccurrences.batchId, batchIds),
-            eq(timetableImportOccurrences.status, "CREATED"),
-          ),
+    if (committedBatches.length > 0 && changedLabels.size > 0) {
+      for (const batch of committedBatches) {
+        const affectedRowIds = await getAffectedRowIdsForChangedLabels(
+          batch.id,
+          changedLabels,
         );
 
-      // Extract block IDs from sourceRefs and check if blocks still exist
-      const currentBlocks = await db
-        .select({ id: slotBlocks.id })
-        .from(slotBlocks)
-        .where(eq(slotBlocks.slotSystemId, slotSystemId));
-
-      const currentBlockIds = new Set(currentBlocks.map((b) => b.id));
-
-      for (const occ of orphanedOccurrences) {
-        // Parse block ID from sourceRef like "batch:1:row:2:block:3"
-        const blockMatch = occ.sourceRef?.match(/block:(\d+)/);
-        if (!blockMatch) continue;
-
-        const blockId = Number(blockMatch[1]);
-        if (currentBlockIds.has(blockId)) continue;
-
-        // Block was deleted — remove associated booking and mark occurrence
-        result.recomputation.affectedOccurrences++;
-
-        if (occ.bookingId) {
-          await db.delete(bookings).where(eq(bookings.id, occ.bookingId));
-          result.recomputation.deletedBookings++;
+        if (affectedRowIds.length === 0) {
+          continue;
         }
 
-        await db
-          .update(timetableImportOccurrences)
-          .set({
-            status: "FAILED",
-            errorMessage: "Block removed during slot system change",
-            bookingId: null,
-          })
-          .where(eq(timetableImportOccurrences.id, occ.id));
+        const recomputeResult = await recomputeCommittedBatchRows({
+          batchId: batch.id,
+          rowIds: affectedRowIds,
+        });
+
+        result.recomputation.affectedOccurrences += recomputeResult.targetRows;
+        result.recomputation.deletedBookings += recomputeResult.deletedBookings;
+
+        if (recomputeResult.warnings.length > 0) {
+          for (const warning of recomputeResult.warnings) {
+            result.recomputation.warnings.push(`Batch ${batch.id}: ${warning}`);
+          }
+        }
       }
     }
 
