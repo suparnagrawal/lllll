@@ -184,7 +184,7 @@ describe('POST /booking-requests/:id/approve', () => {
       .send({});
 
     expect(response.status).toBe(409);
-    expect(response.body.error).toContain('Room already booked');
+    expect(response.body.message).toContain('Room already booked');
     expect(testState.createBookingMock).not.toHaveBeenCalled();
   });
 });

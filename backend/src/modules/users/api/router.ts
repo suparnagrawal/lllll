@@ -237,7 +237,7 @@ router.get("/faculty", authMiddleware, async (req, res) => {
     return res.json(rows);
   } catch (error) {
     logger.error(error);
-    return res.status(500).json({ error: "Failed to fetch faculty users" });
+    return res.status(500).json({ message: "Failed to fetch faculty users" });
   }
 });
 
@@ -249,16 +249,16 @@ router.get("/:id/building-assignments", authMiddleware, async (req, res) => {
     const requesterRole = req.user?.role;
 
     if (!Number.isInteger(targetId) || targetId <= 0) {
-      return res.status(400).json({ error: "Invalid id" });
+      return res.status(400).json({ message: "Invalid id" });
     }
 
     // Staff can only view their own assignments, admins can view any
     if (requesterRole === "STAFF" && requesterId !== targetId) {
-      return res.status(403).json({ error: "You can only view your own building assignments" });
+      return res.status(403).json({ message: "You can only view your own building assignments" });
     }
 
     if (requesterRole !== "ADMIN" && requesterRole !== "STAFF") {
-      return res.status(403).json({ error: "Access denied" });
+      return res.status(403).json({ message: "Access denied" });
     }
 
     const targetRows = await db
@@ -270,7 +270,7 @@ router.get("/:id/building-assignments", authMiddleware, async (req, res) => {
     const target = targetRows[0];
 
     if (!target) {
-      return res.status(404).json({ error: "User not found" });
+      return res.status(404).json({ message: "User not found" });
     }
 
     if (target.role !== "STAFF") {
@@ -301,12 +301,12 @@ router.get("/:id/building-assignments", authMiddleware, async (req, res) => {
   } catch (error) {
     if (isMissingAssignmentsTableError(error)) {
       return res.status(503).json({
-        error: "Staff building assignments are unavailable until database migrations are applied",
+        message: "Staff building assignments are unavailable until database migrations are applied",
       });
     }
 
     logger.error(error);
-    return res.status(500).json({ error: "Failed to fetch building assignments" });
+    return res.status(500).json({ message: "Failed to fetch building assignments" });
   }
 });
 
@@ -315,7 +315,7 @@ router.get("/:id/building-assignments", authMiddleware, async (req, res) => {
 router.get("/profile", authMiddleware, async (req, res) => {
   try {
     if (!req.user?.id) {
-      return res.status(401).json({ error: "Unauthorized" });
+      return res.status(401).json({ message: "Unauthorized" });
     }
 
     const rows = await db
@@ -337,13 +337,13 @@ router.get("/profile", authMiddleware, async (req, res) => {
     const profile = rows[0];
 
     if (!profile) {
-      return res.status(404).json({ error: "User not found" });
+      return res.status(404).json({ message: "User not found" });
     }
 
     return res.json(profile);
   } catch (error) {
     logger.error(error);
-    return res.status(500).json({ error: "Failed to fetch profile" });
+    return res.status(500).json({ message: "Failed to fetch profile" });
   }
 });
 
@@ -352,7 +352,7 @@ router.get("/profile", authMiddleware, async (req, res) => {
 router.patch("/profile", authMiddleware, async (req, res) => {
   try {
     if (!req.user?.id) {
-      return res.status(401).json({ error: "Unauthorized" });
+      return res.status(401).json({ message: "Unauthorized" });
     }
 
     const rawDepartment = req.body?.department;
@@ -362,7 +362,7 @@ router.patch("/profile", authMiddleware, async (req, res) => {
       rawDepartment !== null &&
       typeof rawDepartment !== "string"
     ) {
-      return res.status(400).json({ error: "department must be a string when provided" });
+      return res.status(400).json({ message: "department must be a string when provided" });
     }
 
     const profileRows = await db
@@ -374,11 +374,11 @@ router.patch("/profile", authMiddleware, async (req, res) => {
     const profile = profileRows[0];
 
     if (!profile) {
-      return res.status(404).json({ error: "User not found" });
+      return res.status(404).json({ message: "User not found" });
     }
 
     if (!profile.isActive) {
-      return res.status(403).json({ error: "Your account is inactive" });
+      return res.status(403).json({ message: "Your account is inactive" });
     }
 
     const updatePayload: { department?: string | null } = {};
@@ -391,7 +391,7 @@ router.patch("/profile", authMiddleware, async (req, res) => {
     }
 
     if (Object.keys(updatePayload).length === 0) {
-      return res.status(400).json({ error: "No updatable profile fields provided" });
+      return res.status(400).json({ message: "No updatable profile fields provided" });
     }
 
     const updatedRows = await db
@@ -413,7 +413,7 @@ router.patch("/profile", authMiddleware, async (req, res) => {
     return res.json(updatedRows[0]);
   } catch (error) {
     logger.error(error);
-    return res.status(500).json({ error: "Failed to update profile" });
+    return res.status(500).json({ message: "Failed to update profile" });
   }
 });
 
@@ -422,7 +422,7 @@ router.patch("/profile", authMiddleware, async (req, res) => {
 router.delete("/profile", authMiddleware, async (req, res) => {
   try {
     if (!req.user?.id) {
-      return res.status(401).json({ error: "Unauthorized" });
+      return res.status(401).json({ message: "Unauthorized" });
     }
 
     const targetId = req.user.id;
@@ -436,7 +436,7 @@ router.delete("/profile", authMiddleware, async (req, res) => {
     const target = targetRows[0];
 
     if (!target) {
-      return res.status(404).json({ error: "User not found" });
+      return res.status(404).json({ message: "User not found" });
     }
 
     if (target.role === "ADMIN" && target.isActive) {
@@ -444,7 +444,7 @@ router.delete("/profile", authMiddleware, async (req, res) => {
 
       if (activeAdminCount <= 1) {
         return res.status(400).json({
-          error: "Cannot delete the last active ADMIN",
+          message: "Cannot delete the last active ADMIN",
         });
       }
     }
@@ -473,7 +473,7 @@ router.delete("/profile", authMiddleware, async (req, res) => {
     return res.json({ ok: true });
   } catch (error) {
     logger.error(error);
-    return res.status(500).json({ error: "Failed to delete profile" });
+    return res.status(500).json({ message: "Failed to delete profile" });
   }
 });
 
@@ -482,7 +482,7 @@ router.delete("/profile", authMiddleware, async (req, res) => {
 router.get("/profile/export", authMiddleware, async (req, res) => {
   try {
     if (!req.user?.id) {
-      return res.status(401).json({ error: "Unauthorized" });
+      return res.status(401).json({ message: "Unauthorized" });
     }
 
     // Get user profile
@@ -494,7 +494,7 @@ router.get("/profile/export", authMiddleware, async (req, res) => {
 
     const user = userRows[0];
     if (!user) {
-      return res.status(404).json({ error: "User not found" });
+      return res.status(404).json({ message: "User not found" });
     }
 
     // Get user's booking requests
@@ -545,7 +545,7 @@ router.get("/profile/export", authMiddleware, async (req, res) => {
     });
   } catch (error) {
     logger.error(error);
-    return res.status(500).json({ error: "Failed to export user data" });
+    return res.status(500).json({ message: "Failed to export user data" });
   }
 });
 
@@ -554,7 +554,7 @@ router.get("/profile/export", authMiddleware, async (req, res) => {
 router.get("/profile/sessions", authMiddleware, async (req, res) => {
   try {
     if (!req.user?.id) {
-      return res.status(401).json({ error: "Unauthorized" });
+      return res.status(401).json({ message: "Unauthorized" });
     }
 
     const rows = await db
@@ -587,7 +587,7 @@ router.get("/profile/sessions", authMiddleware, async (req, res) => {
     return res.json(sessions);
   } catch (error) {
     logger.error(error);
-    return res.status(500).json({ error: "Failed to fetch sessions" });
+    return res.status(500).json({ message: "Failed to fetch sessions" });
   }
 });
 
@@ -596,7 +596,7 @@ router.get("/profile/sessions", authMiddleware, async (req, res) => {
 router.post("/profile/sessions/logout-others", authMiddleware, async (req, res) => {
   try {
     if (!req.user?.id) {
-      return res.status(401).json({ error: "Unauthorized" });
+      return res.status(401).json({ message: "Unauthorized" });
     }
 
     const rows = await db
@@ -629,7 +629,7 @@ router.post("/profile/sessions/logout-others", authMiddleware, async (req, res) 
     return res.json({ ok: true, terminatedSessions: otherSessionIds.length });
   } catch (error) {
     logger.error(error);
-    return res.status(500).json({ error: "Failed to sign out other sessions" });
+    return res.status(500).json({ message: "Failed to sign out other sessions" });
   }
 });
 
@@ -638,7 +638,7 @@ router.post("/profile/sessions/logout-others", authMiddleware, async (req, res) 
 router.get("/profile/activity", authMiddleware, async (req, res) => {
   try {
     if (!req.user?.id) {
-      return res.status(401).json({ error: "Unauthorized" });
+      return res.status(401).json({ message: "Unauthorized" });
     }
 
     const limit = Math.min(parsePositiveInt(req.query.limit, 15), 20);
@@ -751,7 +751,7 @@ router.get("/profile/activity", authMiddleware, async (req, res) => {
     return res.json(activity);
   } catch (error) {
     logger.error(error);
-    return res.status(500).json({ error: "Failed to fetch activity" });
+    return res.status(500).json({ message: "Failed to fetch activity" });
   }
 });
 
@@ -779,7 +779,7 @@ router.get("/", async (req, res) => {
 
     if (parsedIsActive === "invalid") {
       return res.status(400).json({
-        error: "is_active must be true or false when provided",
+        message: "is_active must be true or false when provided",
       });
     }
 
@@ -788,7 +788,7 @@ router.get("/", async (req, res) => {
     if (roleFilterRaw) {
       if (!FILTERABLE_ROLES.includes(roleFilterRaw as UserRole)) {
         return res.status(400).json({
-          error: "Invalid role filter",
+          message: "Invalid role filter",
         });
       }
 
@@ -903,7 +903,7 @@ router.get("/", async (req, res) => {
     });
   } catch (error) {
     logger.error(error);
-    return res.status(500).json({ error: "Failed to fetch users" });
+    return res.status(500).json({ message: "Failed to fetch users" });
   }
 });
 
@@ -921,7 +921,7 @@ router.post("/", async (req, res) => {
       typeof rawRole !== "string"
     ) {
       return res.status(400).json({
-        error: "email and role are required",
+        message: "email and role are required",
       });
     }
 
@@ -931,7 +931,7 @@ router.post("/", async (req, res) => {
       rawAuthProvider !== "google"
     ) {
       return res.status(400).json({
-        error: "authProvider must be email or google when provided",
+        message: "authProvider must be email or google when provided",
       });
     }
 
@@ -942,7 +942,7 @@ router.post("/", async (req, res) => {
 
     if (!email) {
       return res.status(400).json({
-        error: "email cannot be empty",
+        message: "email cannot be empty",
       });
     }
 
@@ -955,13 +955,13 @@ router.post("/", async (req, res) => {
       name = localPart || "Google User";
     } else {
       return res.status(400).json({
-        error: "name is required for email/password accounts",
+        message: "name is required for email/password accounts",
       });
     }
 
     if (!name) {
       return res.status(400).json({
-        error: "name cannot be empty",
+        message: "name cannot be empty",
       });
     }
 
@@ -969,7 +969,7 @@ router.post("/", async (req, res) => {
 
     if (rawDepartment !== undefined && typeof rawDepartment !== "string") {
       return res.status(400).json({
-        error: "department must be a string when provided",
+        message: "department must be a string when provided",
       });
     }
 
@@ -983,13 +983,13 @@ router.post("/", async (req, res) => {
     if (authProvider === "email") {
       if (!EMAIL_PROVISIONABLE_ROLES.includes(requestedRole as "ADMIN" | "STAFF")) {
         return res.status(400).json({
-          error: "Only ADMIN or STAFF can be created with email/password",
+          message: "Only ADMIN or STAFF can be created with email/password",
         });
       }
 
       if (typeof rawPassword !== "string" || rawPassword.length < 8) {
         return res.status(400).json({
-          error: "password must be at least 8 characters",
+          message: "password must be at least 8 characters",
         });
       }
 
@@ -997,13 +997,13 @@ router.post("/", async (req, res) => {
     } else {
       if (!GOOGLE_PROVISIONABLE_ROLES.includes(requestedRole as "ADMIN" | "STAFF" | "FACULTY")) {
         return res.status(400).json({
-          error: "Google-provisioned accounts can only be ADMIN, STAFF or FACULTY",
+          message: "Google-provisioned accounts can only be ADMIN, STAFF or FACULTY",
         });
       }
 
       if (!email.endsWith("@iitj.ac.in")) {
         return res.status(400).json({
-          error: "Google-provisioned users must use @iitj.ac.in email",
+          message: "Google-provisioned users must use @iitj.ac.in email",
         });
       }
 
@@ -1017,7 +1017,7 @@ router.post("/", async (req, res) => {
       .limit(1);
 
     if (existing[0]) {
-      return res.status(409).json({ error: "Email already exists" });
+      return res.status(409).json({ message: "Email already exists" });
     }
 
     const inserted = await db
@@ -1048,7 +1048,7 @@ router.post("/", async (req, res) => {
     return res.status(201).json(inserted[0]);
   } catch (error) {
     logger.error(error);
-    return res.status(500).json({ error: "Failed to create user" });
+    return res.status(500).json({ message: "Failed to create user" });
   }
 });
 
@@ -1057,24 +1057,24 @@ router.patch("/:id/role", async (req, res) => {
     const targetId = Number(req.params.id);
 
     if (!Number.isInteger(targetId) || targetId <= 0) {
-      return res.status(400).json({ error: "Invalid id" });
+      return res.status(400).json({ message: "Invalid id" });
     }
 
     if (req.user?.id === targetId) {
       return res.status(400).json({
-        error: "You cannot change your own role",
+        message: "You cannot change your own role",
       });
     }
 
     const requestedRole = req.body?.role;
 
     if (typeof requestedRole !== "string") {
-      return res.status(400).json({ error: "role is required" });
+      return res.status(400).json({ message: "role is required" });
     }
 
     if (!ASSIGNABLE_ROLES.includes(requestedRole as AssignableRole)) {
       return res.status(400).json({
-        error: "Invalid target role",
+        message: "Invalid target role",
       });
     }
 
@@ -1087,7 +1087,7 @@ router.patch("/:id/role", async (req, res) => {
     const target = targetRows[0];
 
     if (!target) {
-      return res.status(404).json({ error: "User not found" });
+      return res.status(404).json({ message: "User not found" });
     }
 
     if (target.role === "ADMIN" && requestedRole !== "ADMIN" && target.isActive) {
@@ -1095,7 +1095,7 @@ router.patch("/:id/role", async (req, res) => {
 
       if (activeAdminCount <= 1) {
         return res.status(400).json({
-          error: "Cannot demote the last active ADMIN",
+          message: "Cannot demote the last active ADMIN",
         });
       }
     }
@@ -1131,7 +1131,7 @@ router.patch("/:id/role", async (req, res) => {
     return res.json(updated);
   } catch (error) {
     logger.error(error);
-    return res.status(500).json({ error: "Failed to update role" });
+    return res.status(500).json({ message: "Failed to update role" });
   }
 });
 
@@ -1140,13 +1140,13 @@ router.put("/:id/building-assignments", async (req, res) => {
     const targetId = Number(req.params.id);
 
     if (!Number.isInteger(targetId) || targetId <= 0) {
-      return res.status(400).json({ error: "Invalid id" });
+      return res.status(400).json({ message: "Invalid id" });
     }
 
     const parsedBuildingIds = parseBuildingIds(req.body?.buildingIds);
 
     if (parsedBuildingIds === "invalid") {
-      return res.status(400).json({ error: "buildingIds must be an array of positive integers" });
+      return res.status(400).json({ message: "buildingIds must be an array of positive integers" });
     }
 
     const targetRows = await db
@@ -1158,11 +1158,11 @@ router.put("/:id/building-assignments", async (req, res) => {
     const target = targetRows[0];
 
     if (!target) {
-      return res.status(404).json({ error: "User not found" });
+      return res.status(404).json({ message: "User not found" });
     }
 
     if (target.role !== "STAFF") {
-      return res.status(400).json({ error: "Assignments are allowed only for STAFF users" });
+      return res.status(400).json({ message: "Assignments are allowed only for STAFF users" });
     }
 
     if (parsedBuildingIds.length > 0) {
@@ -1172,7 +1172,7 @@ router.put("/:id/building-assignments", async (req, res) => {
         .where(inArray(buildings.id, parsedBuildingIds));
 
       if (existingBuildingRows.length !== parsedBuildingIds.length) {
-        return res.status(400).json({ error: "One or more buildingIds are invalid" });
+        return res.status(400).json({ message: "One or more buildingIds are invalid" });
       }
     }
 
@@ -1220,12 +1220,12 @@ router.put("/:id/building-assignments", async (req, res) => {
   } catch (error) {
     if (isMissingAssignmentsTableError(error)) {
       return res.status(503).json({
-        error: "Staff building assignments are unavailable until database migrations are applied",
+        message: "Staff building assignments are unavailable until database migrations are applied",
       });
     }
 
     logger.error(error);
-    return res.status(500).json({ error: "Failed to update building assignments" });
+    return res.status(500).json({ message: "Failed to update building assignments" });
   }
 });
 
@@ -1234,17 +1234,17 @@ router.patch("/:id/active", async (req, res) => {
     const targetId = Number(req.params.id);
 
     if (!Number.isInteger(targetId) || targetId <= 0) {
-      return res.status(400).json({ error: "Invalid id" });
+      return res.status(400).json({ message: "Invalid id" });
     }
 
     const isActive = req.body?.isActive;
 
     if (typeof isActive !== "boolean") {
-      return res.status(400).json({ error: "isActive must be a boolean" });
+      return res.status(400).json({ message: "isActive must be a boolean" });
     }
 
     if (req.user?.id === targetId && isActive === false) {
-      return res.status(400).json({ error: "You cannot deactivate yourself" });
+      return res.status(400).json({ message: "You cannot deactivate yourself" });
     }
 
     const targetRows = await db
@@ -1256,7 +1256,7 @@ router.patch("/:id/active", async (req, res) => {
     const target = targetRows[0];
 
     if (!target) {
-      return res.status(404).json({ error: "User not found" });
+      return res.status(404).json({ message: "User not found" });
     }
 
     if (target.role === "ADMIN" && target.isActive && !isActive) {
@@ -1264,7 +1264,7 @@ router.patch("/:id/active", async (req, res) => {
 
       if (activeAdminCount <= 1) {
         return res.status(400).json({
-          error: "Cannot deactivate the last active ADMIN",
+          message: "Cannot deactivate the last active ADMIN",
         });
       }
     }
@@ -1284,7 +1284,7 @@ router.patch("/:id/active", async (req, res) => {
     return res.json(updated[0]);
   } catch (error) {
     logger.error(error);
-    return res.status(500).json({ error: "Failed to update active status" });
+    return res.status(500).json({ message: "Failed to update active status" });
   }
 });
 
@@ -1293,11 +1293,11 @@ router.delete("/:id", async (req, res) => {
     const targetId = Number(req.params.id);
 
     if (!Number.isInteger(targetId) || targetId <= 0) {
-      return res.status(400).json({ error: "Invalid id" });
+      return res.status(400).json({ message: "Invalid id" });
     }
 
     if (req.user?.id === targetId) {
-      return res.status(400).json({ error: "You cannot delete yourself" });
+      return res.status(400).json({ message: "You cannot delete yourself" });
     }
 
     const targetRows = await db
@@ -1309,7 +1309,7 @@ router.delete("/:id", async (req, res) => {
     const target = targetRows[0];
 
     if (!target) {
-      return res.status(404).json({ error: "User not found" });
+      return res.status(404).json({ message: "User not found" });
     }
 
     if (target.role === "ADMIN" && target.isActive) {
@@ -1317,7 +1317,7 @@ router.delete("/:id", async (req, res) => {
 
       if (activeAdminCount <= 1) {
         return res.status(400).json({
-          error: "Cannot delete the last active ADMIN",
+          message: "Cannot delete the last active ADMIN",
         });
       }
     }
@@ -1346,7 +1346,7 @@ router.delete("/:id", async (req, res) => {
     return res.json({ ok: true });
   } catch (error) {
     logger.error(error);
-    return res.status(500).json({ error: "Failed to delete user" });
+    return res.status(500).json({ message: "Failed to delete user" });
   }
 });
 

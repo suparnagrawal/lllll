@@ -15,7 +15,7 @@ router.get("/data", authMiddleware, async (req, res, next) => {
   try {
     const userId = (req as any).user?.id;
     if (!userId) {
-      return res.status(401).json({ error: "Unauthorized" });
+      return res.status(401).json({ message: "Unauthorized" });
     }
 
     const today = new Date();
@@ -119,7 +119,7 @@ router.get("/stats", authMiddleware, async (req, res, next) => {
   try {
     const userId = (req as any).user?.id;
     if (!userId) {
-      return res.status(401).json({ error: "Unauthorized" });
+      return res.status(401).json({ message: "Unauthorized" });
     }
 
     const today = new Date();
@@ -184,7 +184,7 @@ router.get("/upcoming-bookings", authMiddleware, async (req, res, next) => {
   try {
     const userId = (req as any).user?.id;
     if (!userId) {
-      return res.status(401).json({ error: "Unauthorized" });
+      return res.status(401).json({ message: "Unauthorized" });
     }
 
     const now = new Date();
@@ -220,7 +220,7 @@ router.get("/activity-feed", authMiddleware, async (req, res, next) => {
   try {
     const userId = (req as any).user?.id;
     if (!userId) {
-      return res.status(401).json({ error: "Unauthorized" });
+      return res.status(401).json({ message: "Unauthorized" });
     }
 
     // Get recent booking requests (created/approved/rejected)

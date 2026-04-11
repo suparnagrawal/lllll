@@ -7,13 +7,14 @@ import {
   updateBooking,
 } from '../../services/bookingService';
 import { db } from '../../../../db';
-import { bookings, rooms, slotSystems, timetableImportBatches, timetableImportOccurrences } from '../../../../db/schema';
+import { bookingRequests, bookings, rooms, slotSystems, timetableImportBatches, timetableImportOccurrences } from '../../../../db/schema';
 import { eq, and, inArray, lt, gt } from 'drizzle-orm';
 import {
   getAssignedBuildingIdsForStaff,
   isRoomAssignedToStaff,
 } from '../../../users/services/staffBuildingScope';
 import { NotFoundError, ForbiddenError, ValidationError } from '../../../../domain/errors/AppError';
+import { applyDirectEdit, createEditRequest, decideEditFlow } from '../../../../services/editBookingService';
 
 type BookingCreateRequestBody = CreateBookingInput & {
   approvedBy?: number;
@@ -239,6 +240,147 @@ export class BookingsController {
     }
 
     res.json(result.booking);
+  }
+
+  async edit(req: Request, res: Response): Promise<void> {
+    const bookingId = Number(req.params.id);
+
+    if (!Number.isInteger(bookingId) || bookingId <= 0) {
+      throw new ValidationError('Invalid id');
+    }
+
+    const row = await db
+      .select({
+        booking: bookings,
+        buildingId: rooms.buildingId,
+        requestStatus: bookingRequests.status,
+        requestUserId: bookingRequests.userId,
+        requestFacultyId: bookingRequests.facultyId,
+      })
+      .from(bookings)
+      .innerJoin(rooms, eq(bookings.roomId, rooms.id))
+      .leftJoin(bookingRequests, eq(bookings.requestId, bookingRequests.id))
+      .where(eq(bookings.id, bookingId))
+      .limit(1);
+
+    const existing = row[0];
+
+    if (!existing) {
+      throw new NotFoundError('Booking not found');
+    }
+
+    const user = req.user;
+
+    if (!user) {
+      throw new ForbiddenError('Unauthorized');
+    }
+
+    if (user.role === 'STAFF') {
+      const assignedBuildingIds = await getAssignedBuildingIdsForStaff(user.id);
+
+      if (!assignedBuildingIds.includes(existing.buildingId)) {
+        throw new ForbiddenError('You do not have access to this booking');
+      }
+
+      if (req.body?.newRoomId !== undefined) {
+        const nextRoomId = Number(req.body.newRoomId);
+
+        if (
+          Number.isInteger(nextRoomId) &&
+          nextRoomId > 0 &&
+          !(await isRoomAssignedToStaff(user.id, nextRoomId))
+        ) {
+          throw new ForbiddenError('You do not have access to the target room');
+        }
+      }
+    }
+
+    if (user.role === 'STUDENT') {
+      if (existing.requestUserId !== user.id) {
+        throw new ForbiddenError('You can only edit your own booking requests');
+      }
+    }
+
+    if (user.role === 'FACULTY') {
+      const canAccess =
+        existing.requestUserId === user.id ||
+        existing.requestFacultyId === user.id;
+
+      if (!canAccess) {
+        throw new ForbiddenError('You can only edit linked booking requests');
+      }
+    }
+
+    let flow;
+
+    try {
+      flow = decideEditFlow(
+        {
+          id: user.id,
+          role: user.role,
+        },
+        {
+          id: existing.booking.id,
+          roomId: existing.booking.roomId,
+          startAt: existing.booking.startAt,
+          endAt: existing.booking.endAt,
+          requestStatus: existing.requestStatus,
+        },
+      );
+    } catch {
+      throw new ValidationError('Booking cannot be edited in current status');
+    }
+
+    const changes = {
+      ...(req.body?.newRoomId !== undefined ? { newRoomId: Number(req.body.newRoomId) } : {}),
+      ...(req.body?.newStartAt !== undefined ? { newStartAt: req.body.newStartAt } : {}),
+      ...(req.body?.newEndAt !== undefined ? { newEndAt: req.body.newEndAt } : {}),
+    };
+
+    if (flow === 'DIRECT_EDIT') {
+      const directResult = await applyDirectEdit(
+        {
+          id: existing.booking.id,
+          roomId: existing.booking.roomId,
+          startAt: existing.booking.startAt,
+          endAt: existing.booking.endAt,
+        },
+        changes,
+      );
+
+      if (!directResult.ok) {
+        res.status(directResult.error.status).json({
+          message: directResult.error.message,
+          code: directResult.error.code,
+        });
+        return;
+      }
+
+      res.json({
+        flow: 'DIRECT_EDIT',
+        booking: directResult.data,
+      });
+      return;
+    }
+
+    const requestResult = await createEditRequest(
+      { id: existing.booking.id },
+      changes,
+      { id: user.id },
+    );
+
+    if (!requestResult.ok) {
+      res.status(requestResult.error.status).json({
+        message: requestResult.error.message,
+        code: requestResult.error.code,
+      });
+      return;
+    }
+
+    res.status(201).json({
+      flow: 'REQUEST_EDIT',
+      request: requestResult.data,
+    });
   }
 
   async delete(req: Request, res: Response): Promise<void> {

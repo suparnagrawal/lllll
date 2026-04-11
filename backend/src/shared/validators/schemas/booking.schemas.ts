@@ -46,6 +46,30 @@ export const updateBookingSchema = z.object({
   path: ['startAt'],
 });
 
+export const editBookingSchema = z.object({
+  newRoomId: z.number().int().positive('newRoomId must be a positive integer').optional(),
+  newStartAt: dateTimeString.optional(),
+  newEndAt: dateTimeString.optional(),
+}).refine((data) => {
+  if (!data.newRoomId && !data.newStartAt && !data.newEndAt) {
+    return false;
+  }
+  return true;
+}, {
+  message: 'At least one edit field must be provided',
+  path: ['newRoomId'],
+}).refine((data) => {
+  if (data.newStartAt && data.newEndAt) {
+    const start = new Date(data.newStartAt);
+    const end = new Date(data.newEndAt);
+    return start < end;
+  }
+  return true;
+}, {
+  message: 'newStartAt must be before newEndAt',
+  path: ['newStartAt'],
+});
+
 export const listBookingsSchema = z.object({
   startAt: dateTimeString.optional(),
   endAt: dateTimeString.optional(),

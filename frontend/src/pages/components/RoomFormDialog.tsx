@@ -24,6 +24,7 @@ import {
 import { useCreateRoom, useUpdateRoom } from "../../hooks/useRooms";
 import { useBuildings } from "../../hooks/useBuildings";
 import type { Building, Room, RoomType } from "../../lib/api/types";
+import { formatError } from "../../utils/formatError";
 
 const ROOM_TYPES: { value: RoomType; label: string }[] = [
   { value: "LECTURE_HALL", label: "Lecture Hall" },
@@ -164,15 +165,7 @@ export function RoomFormDialog({
       reset();
       onOpenChange(false);
     } catch (err) {
-      let errorMessage = "An error occurred";
-      
-      if (err instanceof Error) {
-        errorMessage = err.message;
-      } else if (typeof err === 'object' && err !== null && 'message' in err) {
-        errorMessage = String((err as any).message);
-      }
-      
-      setError(errorMessage);
+      setError(formatError(err, "An error occurred"));
     }
   };
 

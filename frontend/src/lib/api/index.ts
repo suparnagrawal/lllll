@@ -19,36 +19,12 @@ export type {
   BookingSource,
   BookingRequest,
   Booking,
-  ChangeRequestStatus,
-  ChangeRequestCourseOption,
-  ChangeRequestBookingOption,
-  ChangeRequestRoomOption,
-  ChangeRequestRequester,
-  SlotChangeRequestRecord,
-  VenueChangeRequestRecord,
-  SlotChangeRequestListItem,
-  VenueChangeRequestListItem,
-  SlotChangeRequestDetail,
-  VenueChangeRequestDetail,
-  SlotChangeOptionsResponse,
-  VenueChangeOptionsResponse,
-  SlotChangeCreateInput,
-  SlotChangeBatchCreateInput,
-  VenueChangeCreateInput,
-  VenueChangeBatchCreateInput,
-  SlotChangeValidateInput,
-  SlotChangeValidationResponse,
-  SlotChangeAlternativeSuggestion,
-  VenueChangeValidateInput,
-  VenueChangeValidationResponse,
-  VenueChangeValidationSlot,
-  VenueSuggestion,
-  SlotChangeCreateResponse,
-  VenueChangeCreateResponse,
-  ChangeRequestBatchSuccess,
-  ChangeRequestBatchFailure,
-  ChangeRequestBatchCreateResponse,
-  ChangeRequestActionResponse,
+  BookingEditRequestStatus,
+  BookingEditRequest,
+  EditBookingPayload,
+  EditBookingDirectResponse,
+  EditBookingRequestResponse,
+  EditBookingResponse,
   NotificationType,
   AppNotification,
   NotificationsResponse,
@@ -194,32 +170,13 @@ export {
   cancelBookingRequest,
 } from "./booking-requests";
 
-// Slot change endpoints
+// Edit booking endpoints
 export {
-  getSlotChangeOptions,
-  getSlotChangeRequests,
-  getSlotChangeRequest,
-  createSlotChangeRequest,
-  createSlotChangeBatchRequest,
-  approveSlotChangeRequest,
-  rejectSlotChangeRequest,
-  cancelSlotChangeRequest,
-  validateSlotChangeRequest,
-} from "./slotChange";
-
-// Venue change endpoints
-export {
-  getVenueChangeOptions,
-  getVenueChangeRequests,
-  getVenueChangeRequest,
-  createVenueChangeRequest,
-  createVenueChangeBatchRequest,
-  approveVenueChangeRequest,
-  rejectVenueChangeRequest,
-  cancelVenueChangeRequest,
-  getVenueSuggestions,
-  validateVenueChangeRequest,
-} from "./venueChange";
+  editBooking,
+  getEditRequests,
+  approveEditRequest,
+  rejectEditRequest,
+} from "./editBooking";
 
 // Notifications endpoints
 export {

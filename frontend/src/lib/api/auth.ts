@@ -7,6 +7,7 @@ import {
   getRetryAfterSeconds,
 } from "./client";
 import type { AuthUser, SetupRole, LoginResponse, ApiErrorPayload } from "./types";
+import { formatError } from "../../utils/formatError";
 
 export async function login(email: string, password: string, authProvider: string = "email"): Promise<AuthUser> {
   const response = await request<LoginResponse>("/auth/login", {
@@ -48,10 +49,10 @@ export async function startGoogleOAuthLogin(): Promise<void> {
     const retryAfterSeconds = response.status === 429 
       ? getRetryAfterSeconds(response)
       : null;
-    const message =
-      apiPayload?.error ??
-      apiPayload?.message ??
-      httpErrorMessage(response.status, retryAfterSeconds);
+    const message = formatError(
+      apiPayload?.error ?? apiPayload?.message ?? payload,
+      httpErrorMessage(response.status, retryAfterSeconds),
+    );
 
     throw new Error(message);
   }
@@ -99,10 +100,10 @@ export async function completeOAuthSetup(input: {
 
   if (!response.ok) {
     const apiPayload = payload as ApiErrorPayload | null;
-    const message =
-      apiPayload?.error ??
-      apiPayload?.message ??
-      httpErrorMessage(response.status);
+    const message = formatError(
+      apiPayload?.error ?? apiPayload?.message ?? payload,
+      httpErrorMessage(response.status),
+    );
 
     throw new Error(message);
   }

@@ -11,6 +11,7 @@ import {
 import { getNotifications, markAllNotificationsRead, markNotificationRead } from '../../lib/api';
 import type { AppNotification } from '../../lib/api';
 import { Bell, LogOut, User, Settings, Mail } from 'lucide-react';
+import { formatError } from '../../utils/formatError';
 
 function formatNotificationTime(sentAt: string): string {
   const parsed = new Date(sentAt);
@@ -51,9 +52,7 @@ export function Header() {
         setNotificationsError(null);
       } catch (error) {
         if (!silent) {
-          setNotificationsError(
-            error instanceof Error ? error.message : 'Failed to fetch notifications',
-          );
+          setNotificationsError(formatError(error, 'Failed to fetch notifications'));
         }
       } finally {
         if (!silent) {
@@ -104,9 +103,7 @@ export function Header() {
       setNotificationCount((current) => Math.max(0, current - 1));
       setNotificationsError(null);
     } catch (error) {
-      setNotificationsError(
-        error instanceof Error ? error.message : 'Failed to mark notification as read',
-      );
+      setNotificationsError(formatError(error, 'Failed to mark notification as read'));
     }
   };
 
@@ -123,9 +120,7 @@ export function Header() {
       setNotificationCount(0);
       setNotificationsError(null);
     } catch (error) {
-      setNotificationsError(
-        error instanceof Error ? error.message : 'Failed to mark all notifications as read',
-      );
+      setNotificationsError(formatError(error, 'Failed to mark all notifications as read'));
     }
   };
 

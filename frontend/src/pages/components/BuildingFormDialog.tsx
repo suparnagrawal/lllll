@@ -18,6 +18,7 @@ import {
   useUpdateBuilding,
 } from "../../hooks/useBuildings";
 import type { Building } from "../../lib/api/types";
+import { formatError } from "../../utils/formatError";
 
 const buildingSchema = z.object({
   name: z.string().min(1, "Building name is required").max(100),
@@ -89,7 +90,7 @@ export function BuildingFormDialog({
       reset();
       onOpenChange(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "An error occurred");
+      setError(formatError(err, "An error occurred"));
     }
   };
 

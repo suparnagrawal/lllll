@@ -25,6 +25,7 @@ export function errorHandler(
   if (err instanceof AppError) {
     // Handle known application errors
     const response: Record<string, unknown> = {
+      message: err.message,
       error: {
         code: err.code,
         message: err.message,
@@ -38,10 +39,14 @@ export function errorHandler(
     res.status(err.statusCode).json(response);
   } else {
     // Handle unexpected errors
+    const fallbackMessage = 'An unexpected error occurred. Please try again later.';
+    const message = err.message?.trim() ? err.message : fallbackMessage;
+
     const response: Record<string, unknown> = {
+      message,
       error: {
         code: 'INTERNAL_SERVER_ERROR',
-        message: 'An unexpected error occurred. Please try again later.',
+        message,
       },
     };
 

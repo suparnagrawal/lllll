@@ -118,6 +118,7 @@ export type BookingRequest = {
   id: number;
   userId: number | null;
   facultyId: number | null;
+  bookingId?: number | null;
   roomId: number;
   startAt: string;
   endAt: string;
@@ -139,6 +140,39 @@ export type Booking = {
   source: BookingSource;
   sourceRef: string | null;
 };
+
+export type BookingEditRequestStatus = "PENDING" | "APPROVED" | "REJECTED";
+
+export type BookingEditRequest = {
+  id: number;
+  bookingId: number;
+  proposedRoomId: number | null;
+  proposedStartAt: string | null;
+  proposedEndAt: string | null;
+  status: BookingEditRequestStatus;
+  requestedBy: number;
+  reviewedBy: number | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type EditBookingPayload = {
+  newRoomId?: number;
+  newStartAt?: string;
+  newEndAt?: string;
+};
+
+export type EditBookingDirectResponse = {
+  flow: "DIRECT_EDIT";
+  booking: Booking;
+};
+
+export type EditBookingRequestResponse = {
+  flow: "REQUEST_EDIT";
+  request: BookingEditRequest;
+};
+
+export type EditBookingResponse = EditBookingDirectResponse | EditBookingRequestResponse;
 
 export type ChangeRequestStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
 

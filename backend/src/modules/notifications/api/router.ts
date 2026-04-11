@@ -63,7 +63,7 @@ router.get("/", async (req, res) => {
     });
   } catch (error) {
     logger.error(error);
-    return res.status(500).json({ error: "Failed to fetch notifications" });
+    return res.status(500).json({ message: "Failed to fetch notifications" });
   }
 });
 
@@ -71,7 +71,7 @@ router.post("/:id/read", async (req, res) => {
   const id = Number(req.params.id);
 
   if (!Number.isInteger(id) || id <= 0) {
-    return res.status(400).json({ error: "Invalid id" });
+    return res.status(400).json({ message: "Invalid id" });
   }
 
   try {
@@ -87,13 +87,13 @@ router.post("/:id/read", async (req, res) => {
       .returning();
 
     if (!updated[0]) {
-      return res.status(404).json({ error: "Notification not found" });
+      return res.status(404).json({ message: "Notification not found" });
     }
 
     return res.json(updated[0]);
   } catch (error) {
     logger.error(error);
-    return res.status(500).json({ error: "Failed to mark notification as read" });
+    return res.status(500).json({ message: "Failed to mark notification as read" });
   }
 });
 
@@ -115,7 +115,7 @@ router.post("/read-all", async (req, res) => {
     });
   } catch (error) {
     logger.error(error);
-    return res.status(500).json({ error: "Failed to mark all notifications as read" });
+    return res.status(500).json({ message: "Failed to mark all notifications as read" });
   }
 });
 

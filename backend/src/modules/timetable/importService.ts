@@ -3060,7 +3060,7 @@ async function synchronizePreviewedBatchRowsWithCurrentStructure(input: {
         typeof row.resolvedRoomId === "number" &&
         buildingLookup.roomById.has(row.resolvedRoomId);
 
-      let nextClassification = row.classification;
+      let nextClassification: PreviewClassification = row.classification;
 
       if (row.classification === "UNRESOLVED_SLOT") {
         if (!hasEffectiveSlot) {

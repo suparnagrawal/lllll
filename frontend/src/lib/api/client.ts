@@ -1,5 +1,18 @@
 import { API_BASE_URL, AUTH_TOKEN_KEY, AUTH_REFRESH_TOKEN_KEY, AUTH_USER_KEY } from "./constants";
 import type { AuthUser, ApiErrorPayload, RefreshTokenResponse } from "./types";
+import { formatError } from "../../utils/formatError";
+
+type EnhancedApiError = Error & { status?: number };
+
+function buildEnhancedError(message: string, status?: number): EnhancedApiError {
+  const enhancedError = new Error(message) as EnhancedApiError;
+
+  if (status !== undefined) {
+    enhancedError.status = status;
+  }
+
+  return enhancedError;
+}
 
 let onUnauthorizedCallback: (() => void) | null = null;
 let isRefreshing = false;
@@ -112,10 +125,6 @@ export async function refreshAccessToken(): Promise<boolean> {
       const refreshToken = getRefreshToken();
 
       if (!refreshToken) {
-        clearAuth();
-        if (onUnauthorizedCallback) {
-          onUnauthorizedCallback();
-        }
         return false;
       }
 
@@ -185,21 +194,28 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const payload = isJson ? ((await response.json()) as unknown) : null;
 
   if (!response.ok) {
+    const status = response.status;
+
     // Auto-logout on 401
-    if (response.status === 401 && shouldRefreshOnUnauthorized(path)) {
+    if (status === 401 && shouldRefreshOnUnauthorized(path)) {
+      console.warn("Session expired");
       clearAuth();
       if (onUnauthorizedCallback) {
         onUnauthorizedCallback();
+      }
+
+      if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+        window.location.href = "/login";
       }
     }
 
     const apiPayload = payload as ApiErrorPayload | null;
     const retryAfterSeconds = getRetryAfterSeconds(response);
-    const message =
-      apiPayload?.error ??
-      apiPayload?.message ??
-      httpErrorMessage(response.status, retryAfterSeconds);
-    throw new Error(message);
+    const message = formatError(
+      apiPayload?.error ?? apiPayload?.message ?? payload,
+      httpErrorMessage(response.status, retryAfterSeconds),
+    );
+    throw buildEnhancedError(message, status);
   }
 
   return payload as T;
@@ -235,21 +251,28 @@ export async function requestFormData<T>(
   const payload = isJson ? ((await response.json()) as unknown) : null;
 
   if (!response.ok) {
-    if (response.status === 401 && shouldRefreshOnUnauthorized(path)) {
+    const status = response.status;
+
+    if (status === 401 && shouldRefreshOnUnauthorized(path)) {
+      console.warn("Session expired");
       clearAuth();
       if (onUnauthorizedCallback) {
         onUnauthorizedCallback();
+      }
+
+      if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+        window.location.href = "/login";
       }
     }
 
     const apiPayload = payload as ApiErrorPayload | null;
     const retryAfterSeconds = getRetryAfterSeconds(response);
-    const message =
-      apiPayload?.error ??
-      apiPayload?.message ??
-      httpErrorMessage(response.status, retryAfterSeconds);
+    const message = formatError(
+      apiPayload?.error ?? apiPayload?.message ?? payload,
+      httpErrorMessage(response.status, retryAfterSeconds),
+    );
 
-    throw new Error(message);
+    throw buildEnhancedError(message, status);
   }
 
   return payload as T;

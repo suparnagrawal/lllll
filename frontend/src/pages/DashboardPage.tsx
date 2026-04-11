@@ -29,6 +29,7 @@ import {
   XCircle,
   Info,
 } from "lucide-react";
+import { formatError } from "../utils/formatError";
 
 export default function DashboardPage() {
   const { user } = useAuth();
@@ -57,7 +58,7 @@ export default function DashboardPage() {
         setActivities(data.activities);
       } catch (err) {
         console.error("Error loading dashboard:", err);
-        setError("Failed to load dashboard data");
+        setError(formatError(err, "Failed to load dashboard data"));
       } finally {
         setLoading(false);
       }

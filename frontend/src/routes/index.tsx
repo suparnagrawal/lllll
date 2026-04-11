@@ -16,10 +16,6 @@ const BookingRequestsPage = lazy(() => import('../pages/BookingRequestsPage'));
 // eslint-disable-next-line react-refresh/only-export-components
 const AvailabilityPage = lazy(() => import('../pages/AvailabilityPage'));
 // eslint-disable-next-line react-refresh/only-export-components
-const SlotChangePage = lazy(() => import('../pages/SlotChangePage'));
-// eslint-disable-next-line react-refresh/only-export-components
-const VenueChangePage = lazy(() => import('../pages/VenueChangePage'));
-// eslint-disable-next-line react-refresh/only-export-components
 const UsersPage = lazy(() => import('../pages/UsersPage'));
 // eslint-disable-next-line react-refresh/only-export-components
 const TimetableLayoutPage = lazy(() => import('../pages/timetable/TimetableLayoutPage'));
@@ -79,37 +75,15 @@ export const router = createBrowserRouter([
             path: 'rooms', 
             element: <Suspense fallback={<PageLoader />}><RoomsPage /></Suspense> 
           },
-
-          // Accessible to ADMIN and STAFF
           {
-            element: <RequireRole roles={['ADMIN', 'STAFF']} />,
-            children: [
-              { 
-                path: 'bookings', 
-                element: <Suspense fallback={<PageLoader />}><BookingsPage /></Suspense> 
-              },
-            ],
+            path: 'bookings',
+            element: <Suspense fallback={<PageLoader />}><BookingsPage /></Suspense>
           },
 
           // Accessible to all authenticated users (but page filters by role)
           { 
             path: 'requests', 
             element: <Suspense fallback={<PageLoader />}><BookingRequestsPage /></Suspense> 
-          },
-
-          // Accessible to FACULTY, STAFF, ADMIN
-          {
-            element: <RequireRole roles={['FACULTY', 'STAFF', 'ADMIN']} />,
-            children: [
-              {
-                path: 'slot-change',
-                element: <Suspense fallback={<PageLoader />}><SlotChangePage /></Suspense>,
-              },
-              {
-                path: 'venue-change',
-                element: <Suspense fallback={<PageLoader />}><VenueChangePage /></Suspense>,
-              },
-            ],
           },
 
           // ADMIN only

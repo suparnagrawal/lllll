@@ -1,56 +1,52 @@
 import { useCallback, useMemo, useState, useEffect } from "react";
 import type { FormEvent } from "react";
 import { useLocation } from "react-router-dom";
-import { useBookings, useCreateBooking, useDeleteBooking } from "../hooks/useBookings";
+import { useBookings, useCreateBooking, useDeleteBooking, useEditBooking } from "../hooks/useBookings";
 import { useBuildings } from "../hooks/useBuildings";
 import { useRooms } from "../hooks/useRooms";
 import { useManagedUsers } from "../hooks/useUsers";
-import type { Booking } from "../lib/api";
+import { getBookingRequests, type Booking, type BookingRequest } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { DateInput } from "../components/DateInput";
 import { formatDateTimeDDMMYYYY } from "../utils/datetime";
 import { formatRoomDisplayWithBuildingsArray } from "../utils/room";
 import type { BookingRequestPrefill } from "./bookingAvailabilityBridge";
+import { EditBookingModal } from "../components/EditBookingModal";
+import { useToast } from "../context/ToastContext";
+import { formatError } from "../utils/formatError";
 
 export function BookingsPage() {
   const { user } = useAuth();
+  const { pushToast } = useToast();
   const location = useLocation();
   const isAdmin = user?.role === "ADMIN";
-  const canMutate = user?.role === "ADMIN" || user?.role === "STAFF";
+  const canManageBookings = user?.role === "ADMIN" || user?.role === "STAFF";
 
   // Get prefill from location state if available
   const locationPrefill = (location.state as any)?.prefill as BookingRequestPrefill | undefined;
 
-  if (!canMutate) {
-    return (
-      <section>
-        <div className="page-header">
-          <h2>Bookings</h2>
-          <p>View and manage confirmed room bookings</p>
-        </div>
-        <div className="alert alert-warning">
-          <p>This page is only available to Admin and Staff users. Please contact your administrator if you need access.</p>
-        </div>
-      </section>
-    );
-  }
-
   return (
     <BookingsPageContent
+      currentUserId={user?.id ?? null}
+      userRole={user?.role ?? null}
       isAdmin={isAdmin}
-      canMutate={canMutate}
+      canManageBookings={canManageBookings}
       locationPrefill={locationPrefill}
+      pushToast={pushToast}
     />
   );
 }
 
 type BookingsPageContentProps = {
+  currentUserId: number | null;
+  userRole: "ADMIN" | "STAFF" | "FACULTY" | "STUDENT" | "PENDING_ROLE" | null;
   isAdmin: boolean;
-  canMutate: boolean;
+  canManageBookings: boolean;
   locationPrefill?: BookingRequestPrefill;
+  pushToast: (type: "success" | "error" | "info" | "warning", message: string) => void;
 };
 
-function BookingsPageContent({ isAdmin, canMutate, locationPrefill }: BookingsPageContentProps) {
+function BookingsPageContent({ currentUserId, userRole, isAdmin, canManageBookings, locationPrefill, pushToast }: BookingsPageContentProps) {
 
   // Filters
   const [filterRoomId, setFilterRoomId] = useState<number | "">("");
@@ -64,6 +60,15 @@ function BookingsPageContent({ isAdmin, canMutate, locationPrefill }: BookingsPa
   const [newEndAt, setNewEndAt] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [editTarget, setEditTarget] = useState<Booking | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [requestStatusesByBookingId, setRequestStatusesByBookingId] = useState<Map<number, BookingStatusInfo>>(new Map());
+
+  type BookingStatusInfo = {
+    status: string;
+    userId: number | null;
+    facultyId: number | null;
+  };
 
   // Build filters object for query
   const filters = useMemo<Record<string, number | string> | undefined>(() => {
@@ -106,6 +111,46 @@ function BookingsPageContent({ isAdmin, canMutate, locationPrefill }: BookingsPa
   // Mutations
   const createBookingMutation = useCreateBooking();
   const deleteBookingMutation = useDeleteBooking();
+  const editBookingMutation = useEditBooking();
+
+  useEffect(() => {
+    if (userRole !== "FACULTY" && userRole !== "STUDENT") {
+      setRequestStatusesByBookingId(new Map());
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const ownRequests = await getBookingRequests();
+        if (cancelled) {
+          return;
+        }
+
+        const nextMap = new Map<number, BookingStatusInfo>();
+        for (const req of ownRequests as Array<BookingRequest & { bookingId?: number | null }>) {
+          if (typeof req.bookingId === "number") {
+            nextMap.set(req.bookingId, {
+              status: req.status,
+              userId: req.userId,
+              facultyId: req.facultyId,
+            });
+          }
+        }
+
+        setRequestStatusesByBookingId(nextMap);
+      } catch {
+        if (!cancelled) {
+          setRequestStatusesByBookingId(new Map());
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userRole]);
 
   // Apply prefill from location state if available
   useEffect(() => {
@@ -141,9 +186,74 @@ function BookingsPageContent({ isAdmin, canMutate, locationPrefill }: BookingsPa
       setNewStartAt("");
       setNewEndAt("");
     } catch (e) {
-      setCreateError(e instanceof Error ? e.message : "Failed to create booking");
+      setCreateError(formatError(e, "Failed to create booking"));
     }
   };
+
+  const mapEditErrorMessage = useCallback((rawMessage: string): string => {
+    const upper = rawMessage.toUpperCase();
+
+    if (upper.includes("BOOKING_CONFLICT") || upper.includes("ALREADY BOOKED") || upper.includes("CONFLICT")) {
+      return "Slot/room conflict";
+    }
+
+    if (upper.includes("FORBIDDEN") || upper.includes("NOT ALLOWED") || upper.includes("CANNOT BE EDITED")) {
+      return "Editing not allowed";
+    }
+
+    return rawMessage;
+  }, []);
+
+  const handleEditSubmit = useCallback(async (payload: { newRoomId?: number; newStartAt?: string; newEndAt?: string }) => {
+    if (!editTarget) {
+      return;
+    }
+
+    setEditError(null);
+
+    try {
+      const response = await editBookingMutation.mutateAsync({
+        id: editTarget.id,
+        data: payload,
+      });
+
+      if ("booking" in response) {
+        pushToast("success", "Booking updated successfully");
+      } else {
+        pushToast("success", "Edit request submitted for approval");
+      }
+
+      setEditTarget(null);
+    } catch (error) {
+      const rawMessage = formatError(error, "Failed to edit booking");
+      setEditError(mapEditErrorMessage(rawMessage));
+    }
+  }, [editBookingMutation, editTarget, mapEditErrorMessage, pushToast]);
+
+  const canShowEditButton = useCallback((booking: Booking): boolean => {
+    if (userRole === "ADMIN" || userRole === "STAFF") {
+      return true;
+    }
+
+    if (userRole !== "FACULTY" && userRole !== "STUDENT") {
+      return false;
+    }
+
+    const linkedRequest = requestStatusesByBookingId.get(booking.id);
+    if (!linkedRequest) {
+      return false;
+    }
+
+    const isOwn =
+      (typeof linkedRequest.userId === "number" && currentUserId === linkedRequest.userId) ||
+      (typeof linkedRequest.facultyId === "number" && currentUserId === linkedRequest.facultyId);
+
+    if (!isOwn) {
+      return false;
+    }
+
+    return linkedRequest.status !== "REJECTED" && linkedRequest.status !== "CANCELLED";
+  }, [currentUserId, requestStatusesByBookingId, userRole]);
 
   const handleDelete = async (id: number) => {
     setDeletingId(id);
@@ -151,7 +261,7 @@ function BookingsPageContent({ isAdmin, canMutate, locationPrefill }: BookingsPa
     try {
       await deleteBookingMutation.mutateAsync(id);
     } catch (e) {
-      setCreateError(e instanceof Error ? e.message : "Failed to delete booking");
+      setCreateError(formatError(e, "Failed to delete booking"));
     } finally {
       setDeletingId(null);
     }
@@ -223,7 +333,7 @@ function BookingsPageContent({ isAdmin, canMutate, locationPrefill }: BookingsPa
       </form>
 
       {/* Create form */}
-      {canMutate && (
+      {canManageBookings && (
         <form className="card section-gap" onSubmit={handleCreate}>
           <div className="card-header">
             <h3>Create Booking</h3>
@@ -301,16 +411,31 @@ function BookingsPageContent({ isAdmin, canMutate, locationPrefill }: BookingsPa
                     </div>
                   )}
                 </div>
-                {canMutate && (
+                {(canManageBookings || canShowEditButton(b)) && (
                   <div className="data-item-actions">
-                    <button
-                      type="button"
-                      className="btn btn-danger btn-sm"
-                      disabled={isDeleting}
-                      onClick={() => void handleDelete(b.id)}
-                    >
-                      {isDeleting ? "Deleting…" : "Delete"}
-                    </button>
+                    {canShowEditButton(b) && (
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        disabled={editBookingMutation.isPending}
+                        onClick={() => {
+                          setEditError(null);
+                          setEditTarget(b);
+                        }}
+                      >
+                        Edit
+                      </button>
+                    )}
+                    {canManageBookings && (
+                      <button
+                        type="button"
+                        className="btn btn-danger btn-sm"
+                        disabled={isDeleting}
+                        onClick={() => void handleDelete(b.id)}
+                      >
+                        {isDeleting ? "Deleting…" : "Delete"}
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -318,6 +443,22 @@ function BookingsPageContent({ isAdmin, canMutate, locationPrefill }: BookingsPa
           })}
         </div>
       )}
+
+      <EditBookingModal
+        open={editTarget !== null}
+        booking={editTarget}
+        rooms={rooms}
+        buildings={buildings}
+        isSubmitting={editBookingMutation.isPending}
+        error={editError}
+        onClose={() => {
+          if (!editBookingMutation.isPending) {
+            setEditTarget(null);
+            setEditError(null);
+          }
+        }}
+        onSubmit={handleEditSubmit}
+      />
     </section>
   );
 }

@@ -49,6 +49,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const lastActivityRef = useRef<number>(Date.now());
   const timeoutWarningShownRef = useRef<boolean>(false);
 
+  const logout = useCallback(() => {
+    clearAuth();
+    setUser(null);
+    setShowTimeoutWarning(false);
+    localStorage.removeItem(LAST_ACTIVITY_KEY);
+  }, []);
+
   // Check initial auth state
   useEffect(() => {
     const checkAuth = async () => {
@@ -67,6 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (refreshed) {
             setUser(getAuthUser());
           } else {
+            clearAuth();
             setUser(null);
           }
         } else {
@@ -74,6 +82,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       } catch (error) {
         console.error("Auth check failed:", error);
+        clearAuth();
         setUser(null);
       } finally {
         setIsLoading(false);
@@ -123,7 +132,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const refreshed = await refreshAccessToken();
           if (refreshed) {
             setUser(getAuthUser());
-          } else {
+            return;
+          }
+
+          // Keep the current user if the access token is still valid.
+          const latestToken = getAuthToken();
+          if (!latestToken || isTokenExpired(latestToken)) {
+            clearAuth();
             setUser(null);
           }
         } catch (error) {
@@ -158,22 +173,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }, 60 * 1000); // Check every minute
 
     return () => clearInterval(interval);
-  }, []);
-
-  const logout = useCallback(() => {
-    clearAuth();
-    setUser(null);
-    setShowTimeoutWarning(false);
-    localStorage.removeItem(LAST_ACTIVITY_KEY);
-  }, []);
+  }, [user, logout]);
 
   // Wire up the 401 auto-logout callback
   useEffect(() => {
-    setOnUnauthorized(() => {
-      setUser(null);
-      setShowTimeoutWarning(false);
-    });
-  }, []);
+    setOnUnauthorized(logout);
+
+    return () => {
+      setOnUnauthorized(() => {});
+    };
+  }, [logout]);
 
   const login = useCallback(async (email: string, password: string, authProvider: string = "email") => {
     const loggedInUser = await apiLogin(email, password, authProvider);
@@ -213,7 +222,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (refreshed) {
         setUser(getAuthUser());
       } else {
-        setUser(null);
+        const token = getAuthToken();
+        if (!token || isTokenExpired(token)) {
+          clearAuth();
+          setUser(null);
+        }
       }
     } catch (error) {
       console.error("Token refresh failed:", error);

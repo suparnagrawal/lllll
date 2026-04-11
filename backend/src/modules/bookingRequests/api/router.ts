@@ -356,7 +356,7 @@ router.get("/:id", authMiddleware, async (req, res) => {
   const id = Number(req.params.id);
 
   if (isNaN(id)) {
-    return res.status(400).json({ error: "Invalid id" });
+    return res.status(400).json({ message: "Invalid id" });
   }
 
   try {
@@ -365,11 +365,11 @@ router.get("/:id", authMiddleware, async (req, res) => {
     const bookingRequest = row?.request;
 
     if (!bookingRequest) {
-      return res.status(404).json({ error: "Request not found" });
+      return res.status(404).json({ message: "Request not found" });
     }
 
     if (!canViewRequest(req.user!.role, req.user!.id, bookingRequest)) {
-      return res.status(403).json({ error: "Forbidden" });
+      return res.status(403).json({ message: "Forbidden" });
     }
 
     if (req.user!.role === "STAFF") {
@@ -379,14 +379,14 @@ router.get("/:id", authMiddleware, async (req, res) => {
         assignedBuildingIds.length === 0 ||
         !assignedBuildingIds.includes(row!.buildingId)
       ) {
-        return res.status(403).json({ error: "Forbidden" });
+        return res.status(403).json({ message: "Forbidden" });
       }
     }
 
     return res.json(bookingRequest);
   } catch (error) {
     logger.error(error);
-    return res.status(500).json({ error: "Failed to fetch request" });
+    return res.status(500).json({ message: "Failed to fetch request" });
   }
 });
 
@@ -399,7 +399,7 @@ router.get("/", authMiddleware, async (req, res) => {
   const { status } = req.query;
 
   if (status !== undefined && !isBookingRequestStatus(status)) {
-    return res.status(400).json({ error: "Invalid status" });
+    return res.status(400).json({ message: "Invalid status" });
   }
 
   try {
@@ -447,7 +447,7 @@ router.get("/", authMiddleware, async (req, res) => {
         )
       );
     } else {
-      return res.status(403).json({ error: "Forbidden" });
+      return res.status(403).json({ message: "Forbidden" });
     }
 
     const statusCondition = status
@@ -466,7 +466,7 @@ router.get("/", authMiddleware, async (req, res) => {
     return res.json(requests);
   } catch (error) {
     logger.error(error);
-    return res.status(500).json({ error: "Failed to fetch requests" });
+    return res.status(500).json({ message: "Failed to fetch requests" });
   }
 });
 
@@ -474,7 +474,7 @@ router.post("/:id/reject", authMiddleware, requireRole(["FACULTY", "STAFF"]), re
   const id = Number(req.params.id);
 
   if (isNaN(id)) {
-    return res.status(400).json({ error: "Invalid id" });
+    return res.status(400).json({ message: "Invalid id" });
   }
 
   try {
@@ -483,7 +483,7 @@ router.post("/:id/reject", authMiddleware, requireRole(["FACULTY", "STAFF"]), re
     const request = row?.request;
 
     if (!request) {
-      return res.status(404).json({ error: "Request not found" });
+      return res.status(404).json({ message: "Request not found" });
     }
 
     const role = req.user!.role;
@@ -494,7 +494,7 @@ router.post("/:id/reject", authMiddleware, requireRole(["FACULTY", "STAFF"]), re
       (role === "STAFF" && request.status !== "PENDING_STAFF")
     ) {
       return res.status(400).json({
-        error: "Invalid status for rejection",
+        message: "Invalid status for rejection",
       });
     }
 
@@ -503,7 +503,7 @@ router.post("/:id/reject", authMiddleware, requireRole(["FACULTY", "STAFF"]), re
       request.facultyId !== null &&
       request.facultyId !== req.user!.id
     ) {
-      return res.status(403).json({ error: "Forbidden" });
+      return res.status(403).json({ message: "Forbidden" });
     }
 
     if (role === "STAFF") {
@@ -513,7 +513,7 @@ router.post("/:id/reject", authMiddleware, requireRole(["FACULTY", "STAFF"]), re
         assignedBuildingIds.length === 0 ||
         !assignedBuildingIds.includes(row!.buildingId)
       ) {
-        return res.status(403).json({ error: "Forbidden" });
+        return res.status(403).json({ message: "Forbidden" });
       }
     }
 
@@ -558,7 +558,7 @@ router.post("/:id/reject", authMiddleware, requireRole(["FACULTY", "STAFF"]), re
 
   } catch (error) {
     logger.error(error);
-    return res.status(500).json({ error: "Reject failed" });
+    return res.status(500).json({ message: "Reject failed" });
   }
 });
 
@@ -573,18 +573,18 @@ router.post("/:id/approve", authMiddleware, requireRole("STAFF"), requireBooking
   const courseId = hasCourseId ? Number(courseIdRaw) : undefined;
 
   if (isNaN(id)) {
-    return res.status(400).json({ error: "Invalid id" });
+    return res.status(400).json({ message: "Invalid id" });
   }
 
   if (hasCourseId && (!Number.isInteger(courseId) || (courseId ?? 0) <= 0)) {
-    return res.status(400).json({ error: "Invalid courseId" });
+    return res.status(400).json({ message: "Invalid courseId" });
   }
 
   try {
     const scopeRow = await getRequestWithBuilding(id);
 
     if (!scopeRow) {
-      return res.status(404).json({ error: "Request not found" });
+      return res.status(404).json({ message: "Request not found" });
     }
 
     const assignedBuildingIds = await getAssignedBuildingIdsForStaff(req.user!.id);
@@ -593,7 +593,7 @@ router.post("/:id/approve", authMiddleware, requireRole("STAFF"), requireBooking
       assignedBuildingIds.length === 0 ||
       !assignedBuildingIds.includes(scopeRow.buildingId)
     ) {
-      return res.status(403).json({ error: "Forbidden" });
+      return res.status(403).json({ message: "Forbidden" });
     }
 
     const approvalResult = await db.transaction(async (tx) => {
@@ -732,41 +732,41 @@ router.post("/:id/approve", authMiddleware, requireRole("STAFF"), requireBooking
     const routeError = error as ApproveRouteError;
 
     if (routeError.type === "NOT_FOUND") {
-      return res.status(404).json({ error: "Request not found" });
+      return res.status(404).json({ message: "Request not found" });
     }
 
     if (routeError.type === "INVALID_STATUS") {
-      return res.status(400).json({ error: "Request is not pending staff approval" });
+      return res.status(400).json({ message: "Request is not pending staff approval" });
     }
 
     if (routeError.type === "ROOM_NOT_FOUND") {
-      return res.status(404).json({ error: "Room not found" });
+      return res.status(404).json({ message: "Room not found" });
     }
 
     if (routeError.type === "COURSE_NOT_FOUND") {
-      return res.status(404).json({ error: "Course not found" });
+      return res.status(404).json({ message: "Course not found" });
     }
 
     if (routeError.type === "ROOM_OVERLAP") {
       return res.status(409).json({
-        error: "Room already booked for this time range",
+        message: "Room already booked for this time range",
       });
     }
 
     if (routeError.type === "BOOKING_CREATE_FAILED") {
       return res.status(500).json({
-        error: routeError.message ?? "Approval failed",
+        message: routeError.message ?? "Approval failed",
       });
     }
 
     if (routeError.cause?.code === "23P01") {
       return res.status(409).json({
-        error: "Room already booked for this time range",
+        message: "Room already booked for this time range",
       });
     }
 
     logger.error(error);
-    return res.status(500).json({ error: "Approval failed" });
+    return res.status(500).json({ message: "Approval failed" });
   }
 });
 
@@ -774,7 +774,7 @@ router.post("/:id/forward", authMiddleware, requireRole("FACULTY"), async (req, 
   const id = Number(req.params.id);
 
   if (isNaN(id)) {
-    return res.status(400).json({ error: "Invalid id" });
+    return res.status(400).json({ message: "Invalid id" });
   }
 
   try {
@@ -782,12 +782,12 @@ router.post("/:id/forward", authMiddleware, requireRole("FACULTY"), async (req, 
     const request = row?.request;
 
     if (!request) {
-      return res.status(404).json({ error: "Request not found" });
+      return res.status(404).json({ message: "Request not found" });
     }
 
     if (request.status !== "PENDING_FACULTY") {
       return res.status(400).json({
-        error: "Only PENDING_FACULTY requests can be forwarded",
+        message: "Only PENDING_FACULTY requests can be forwarded",
       });
     }
 
@@ -795,7 +795,7 @@ router.post("/:id/forward", authMiddleware, requireRole("FACULTY"), async (req, 
       request.facultyId !== null &&
       request.facultyId !== req.user!.id
     ) {
-      return res.status(403).json({ error: "Forbidden" });
+      return res.status(403).json({ message: "Forbidden" });
     }
 
     // Update status
@@ -840,7 +840,7 @@ router.post("/:id/forward", authMiddleware, requireRole("FACULTY"), async (req, 
 
   } catch (error) {
     logger.error(error);
-    return res.status(500).json({ error: "Forward failed" });
+    return res.status(500).json({ message: "Forward failed" });
   }
 });
 
@@ -849,7 +849,7 @@ router.post("/:id/cancel",authMiddleware, requireBookingsUnfrozen(), async (req,
 
   // Validate id
   if (!Number.isInteger(id) || id <= 0) {
-    return res.status(400).json({ error: "Invalid request id" });
+    return res.status(400).json({ message: "Invalid request id" });
   }
 
   try {
@@ -857,7 +857,7 @@ router.post("/:id/cancel",authMiddleware, requireBookingsUnfrozen(), async (req,
     const existing = existingRow?.request;
 
     if (!existing) {
-      return res.status(404).json({ error: "Request not found" });
+      return res.status(404).json({ message: "Request not found" });
     }
 
     const actorRole = req.user!.role;
@@ -869,7 +869,7 @@ router.post("/:id/cancel",authMiddleware, requireBookingsUnfrozen(), async (req,
       (actorRole === "FACULTY" && existing.facultyId === actorId);
 
     if (!canCancelAsOwner) {
-      return res.status(403).json({ error: "Forbidden" });
+      return res.status(403).json({ message: "Forbidden" });
     }
 
     if (
@@ -878,7 +878,7 @@ router.post("/:id/cancel",authMiddleware, requireBookingsUnfrozen(), async (req,
       existing.status !== "APPROVED"
     ) {
       return res.status(400).json({
-        error: "Only pending or approved requests can be cancelled",
+        message: "Only pending or approved requests can be cancelled",
       });
     }
 
@@ -943,7 +943,7 @@ router.post("/:id/cancel",authMiddleware, requireBookingsUnfrozen(), async (req,
     return res.json(updated[0]);
   } catch (error) {
     logger.error("Cancel booking request error:", error);
-    return res.status(500).json({ error: "Failed to cancel request" });
+    return res.status(500).json({ message: "Failed to cancel request" });
   }
 });
 
@@ -964,7 +964,7 @@ router.post(
         (sourceRequestId !== null && sourceBookingId !== null)
       ) {
         return res.status(400).json({
-          error: "Provide exactly one source: sourceRequestId or sourceBookingId",
+          message: "Provide exactly one source: sourceRequestId or sourceBookingId",
         });
       }
 
@@ -976,13 +976,13 @@ router.post(
         const sourceRow = await getRequestWithBuilding(sourceRequestId);
 
         if (!sourceRow) {
-          return res.status(404).json({ error: "Source request not found" });
+          return res.status(404).json({ message: "Source request not found" });
         }
 
         sourceRequest = sourceRow.request;
 
         if (!canReferenceRequestForChange(actorRole, actorId, sourceRequest)) {
-          return res.status(403).json({ error: "Forbidden" });
+          return res.status(403).json({ message: "Forbidden" });
         }
 
         if (actorRole === "STAFF") {
@@ -992,7 +992,7 @@ router.post(
             assignedBuildingIds.length === 0 ||
             !assignedBuildingIds.includes(sourceRow.buildingId)
           ) {
-            return res.status(403).json({ error: "Forbidden" });
+            return res.status(403).json({ message: "Forbidden" });
           }
         }
       }
@@ -1013,7 +1013,7 @@ router.post(
         const bookingRow = bookingRows[0];
 
         if (!bookingRow) {
-          return res.status(404).json({ error: "Source booking not found" });
+          return res.status(404).json({ message: "Source booking not found" });
         }
 
         sourceBooking = bookingRow.booking;
@@ -1021,7 +1021,7 @@ router.post(
 
         if (actorRole === "STUDENT") {
           if (!bookingLinkedRequest || bookingLinkedRequest.userId !== actorId) {
-            return res.status(403).json({ error: "Forbidden" });
+            return res.status(403).json({ message: "Forbidden" });
           }
         }
 
@@ -1031,7 +1031,7 @@ router.post(
             (bookingLinkedRequest.userId !== actorId &&
               bookingLinkedRequest.facultyId !== actorId)
           ) {
-            return res.status(403).json({ error: "Forbidden" });
+            return res.status(403).json({ message: "Forbidden" });
           }
         }
 
@@ -1042,7 +1042,7 @@ router.post(
             assignedBuildingIds.length === 0 ||
             !assignedBuildingIds.includes(bookingRow.buildingId)
           ) {
-            return res.status(403).json({ error: "Forbidden" });
+            return res.status(403).json({ message: "Forbidden" });
           }
         }
       }
@@ -1051,25 +1051,25 @@ router.post(
       const roomId = parsedRoomId ?? sourceRequest?.roomId ?? sourceBooking?.roomId ?? null;
 
       if (roomId === null) {
-        return res.status(400).json({ error: "roomId is required" });
+        return res.status(400).json({ message: "roomId is required" });
       }
 
       const startAtRaw = req.body?.startAt ?? sourceRequest?.startAt ?? sourceBooking?.startAt;
       const endAtRaw = req.body?.endAt ?? sourceRequest?.endAt ?? sourceBooking?.endAt;
 
       if (!startAtRaw || !endAtRaw) {
-        return res.status(400).json({ error: "startAt and endAt are required" });
+        return res.status(400).json({ message: "startAt and endAt are required" });
       }
 
       const start = new Date(startAtRaw);
       const end = new Date(endAtRaw);
 
       if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-        return res.status(400).json({ error: "Invalid datetime format" });
+        return res.status(400).json({ message: "Invalid datetime format" });
       }
 
       if (start >= end) {
-        return res.status(400).json({ error: "startAt must be before endAt" });
+        return res.status(400).json({ message: "startAt must be before endAt" });
       }
 
       const roomRows = await db
@@ -1085,12 +1085,12 @@ router.post(
       const room = roomRows[0];
 
       if (!room) {
-        return res.status(404).json({ error: "Room not found" });
+        return res.status(404).json({ message: "Room not found" });
       }
 
       if (room.accessible === false) {
         return res.status(400).json({
-          error: "This room is currently not accessible and cannot accept bookings",
+          message: "This room is currently not accessible and cannot accept bookings",
         });
       }
 
@@ -1099,7 +1099,7 @@ router.post(
 
       if (eventTypeRaw !== undefined && eventTypeRaw !== null && String(eventTypeRaw).trim() !== "") {
         if (!isBookingEventType(eventTypeRaw)) {
-          return res.status(400).json({ error: "Invalid eventType" });
+          return res.status(400).json({ message: "Invalid eventType" });
         }
 
         eventTypeOverride = eventTypeRaw;
@@ -1112,7 +1112,7 @@ router.post(
       const purpose = providedPurpose || sourceRequest?.purpose || "";
 
       if (!purpose) {
-        return res.status(400).json({ error: "Purpose is required" });
+        return res.status(400).json({ message: "Purpose is required" });
       }
 
       let participantCount = sourceRequest?.participantCount ?? null;
@@ -1126,7 +1126,7 @@ router.post(
 
           if (!Number.isInteger(parsedParticipantCount) || parsedParticipantCount <= 0) {
             return res.status(400).json({
-              error: "participantCount must be a positive integer",
+              message: "participantCount must be a positive integer",
             });
           }
 
@@ -1145,7 +1145,7 @@ router.post(
           null;
 
         if (facultyId === null) {
-          return res.status(400).json({ error: "facultyId is required for student requests" });
+          return res.status(400).json({ message: "facultyId is required for student requests" });
         }
       } else if (actorRole === "FACULTY") {
         facultyId = actorId;
@@ -1161,7 +1161,7 @@ router.post(
         const validFaculty = await isActiveFacultyUser(facultyId);
 
         if (!validFaculty) {
-          return res.status(400).json({ error: "Selected faculty is invalid" });
+          return res.status(400).json({ message: "Selected faculty is invalid" });
         }
       }
 
@@ -1197,7 +1197,7 @@ router.post(
         sourceBooking.startAt.getTime() === start.getTime() &&
         sourceBooking.endAt.getTime() === end.getTime()
       ) {
-        return res.status(400).json({ error: "No changes detected" });
+        return res.status(400).json({ message: "No changes detected" });
       }
 
       const hasOverlap = await hasBookingOverlap(
@@ -1210,7 +1210,7 @@ router.post(
 
       if (hasOverlap) {
         return res.status(409).json({
-          error: "Room is not available in the selected time range",
+          message: "Room is not available in the selected time range",
         });
       }
 
@@ -1237,7 +1237,7 @@ router.post(
 
       if (pendingOverlap.length > 0) {
         return res.status(409).json({
-          error: "A pending request already exists for this time range",
+          message: "A pending request already exists for this time range",
         });
       }
 
@@ -1268,7 +1268,7 @@ router.post(
 
         if (!updated) {
           return res.status(409).json({
-            error: "Request is no longer editable",
+            message: "Request is no longer editable",
           });
         }
 
@@ -1302,11 +1302,11 @@ router.post(
       const pgError = error as PgCauseError;
 
       if (pgError.cause?.code === "23503") {
-        return res.status(404).json({ error: "Room not found" });
+        return res.status(404).json({ message: "Room not found" });
       }
 
       logger.error(error);
-      return res.status(500).json({ error: "Failed to process booking change" });
+      return res.status(500).json({ message: "Failed to process booking change" });
     }
   },
 );
@@ -1323,22 +1323,22 @@ router.post("/", authMiddleware, requireRole(["STUDENT", "FACULTY"]), async (req
 
     // Validation
     if (isNaN(roomId)) {
-      return res.status(400).json({ error: "Invalid roomId" });
+      return res.status(400).json({ message: "Invalid roomId" });
     }
 
     if (!startAt || !endAt) {
-      return res.status(400).json({ error: "startAt and endAt are required" });
+      return res.status(400).json({ message: "startAt and endAt are required" });
     }
 
     if (!purpose) {
-      return res.status(400).json({ error: "Purpose is required" });
+      return res.status(400).json({ message: "Purpose is required" });
     }
 
     let eventType: BookingEventType = "OTHER";
 
     if (eventTypeRaw !== undefined && eventTypeRaw !== null && eventTypeRaw !== "") {
       if (!isBookingEventType(eventTypeRaw)) {
-        return res.status(400).json({ error: "Invalid eventType" });
+        return res.status(400).json({ message: "Invalid eventType" });
       }
 
       eventType = eventTypeRaw;
@@ -1354,7 +1354,7 @@ router.post("/", authMiddleware, requireRole(["STUDENT", "FACULTY"]), async (req
       const parsedParticipantCount = Number(participantCountRaw);
 
       if (!Number.isInteger(parsedParticipantCount) || parsedParticipantCount <= 0) {
-        return res.status(400).json({ error: "participantCount must be a positive integer" });
+        return res.status(400).json({ message: "participantCount must be a positive integer" });
       }
 
       participantCount = parsedParticipantCount;
@@ -1364,11 +1364,11 @@ router.post("/", authMiddleware, requireRole(["STUDENT", "FACULTY"]), async (req
     const end = new Date(endAt);
 
     if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-      return res.status(400).json({ error: "Invalid datetime format" });
+      return res.status(400).json({ message: "Invalid datetime format" });
     }
 
     if (start >= end) {
-      return res.status(400).json({ error: "startAt must be before endAt" });
+      return res.status(400).json({ message: "startAt must be before endAt" });
     }
 
     const roomRows = await db
@@ -1384,13 +1384,13 @@ router.post("/", authMiddleware, requireRole(["STUDENT", "FACULTY"]), async (req
     const room = roomRows[0];
 
     if (!room) {
-      return res.status(404).json({ error: "Room not found" });
+      return res.status(404).json({ message: "Room not found" });
     }
 
     // Block booking requests for inaccessible rooms
     if (room.accessible === false) {
       return res.status(400).json({
-        error: "This room is currently not accessible and cannot accept bookings",
+        message: "This room is currently not accessible and cannot accept bookings",
       });
     }
 
@@ -1398,7 +1398,7 @@ router.post("/", authMiddleware, requireRole(["STUDENT", "FACULTY"]), async (req
 
     if (req.user!.role === "STUDENT") {
       if (!Number.isInteger(selectedFacultyId) || selectedFacultyId <= 0) {
-        return res.status(400).json({ error: "facultyId is required for student requests" });
+        return res.status(400).json({ message: "facultyId is required for student requests" });
       }
 
       const facultyRows = await db
@@ -1414,7 +1414,7 @@ router.post("/", authMiddleware, requireRole(["STUDENT", "FACULTY"]), async (req
         .limit(1);
 
       if (!facultyRows[0]) {
-        return res.status(400).json({ error: "Selected faculty is invalid" });
+        return res.status(400).json({ message: "Selected faculty is invalid" });
       }
 
       facultyId = selectedFacultyId;
@@ -1429,7 +1429,7 @@ router.post("/", authMiddleware, requireRole(["STUDENT", "FACULTY"]), async (req
 
     if (overlap) {
       return res.status(409).json({
-        error: "Room is not available in the selected time range",
+        message: "Room is not available in the selected time range",
       });
     }
 
@@ -1464,7 +1464,7 @@ router.post("/", authMiddleware, requireRole(["STUDENT", "FACULTY"]), async (req
 
     if (pendingOverlap.length > 0) {
       return res.status(409).json({
-        error: "A pending request already exists for this time range",
+        message: "A pending request already exists for this time range",
       });
     }
 
@@ -1486,7 +1486,7 @@ router.post("/", authMiddleware, requireRole(["STUDENT", "FACULTY"]), async (req
     const created = result[0];
 
     if (!created) {
-      return res.status(500).json({ error: "Insert failed" });
+      return res.status(500).json({ message: "Insert failed" });
     }
 
     const windowText = formatRequestWindow(created.startAt, created.endAt);
@@ -1543,11 +1543,11 @@ router.post("/", authMiddleware, requireRole(["STUDENT", "FACULTY"]), async (req
     const pgError = error as PgCauseError;
 
     if (pgError.cause?.code === "23503") {
-      return res.status(404).json({ error: "Room not found" });
+      return res.status(404).json({ message: "Room not found" });
     }
 
     logger.error(error);
-    return res.status(500).json({ error: "Insert failed" });
+    return res.status(500).json({ message: "Insert failed" });
   }
 });
 

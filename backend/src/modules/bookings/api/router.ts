@@ -7,6 +7,7 @@ import { idParamSchema } from '../../../shared/validators/schemas/common.schemas
 import {
   createBookingSchema,
   updateBookingSchema,
+  editBookingSchema,
   listBookingsSchema,
   bulkCreateBookingSchema,
   pruneBookingsSchema,
@@ -54,6 +55,17 @@ router.patch(
   validate({ params: idParamSchema, body: updateBookingSchema }),
   (req, res, next) => {
     controller.update(req, res).catch(next);
+  }
+);
+
+router.post(
+  '/:id/edit',
+  authMiddleware,
+  requireRole(['ADMIN', 'STAFF', 'FACULTY', 'STUDENT']),
+  requireBookingsUnfrozen(),
+  validate({ params: idParamSchema, body: editBookingSchema }),
+  (req, res, next) => {
+    controller.edit(req, res).catch(next);
   }
 );
 

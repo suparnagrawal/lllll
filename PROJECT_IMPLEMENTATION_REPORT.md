@@ -88,14 +88,9 @@ This is a **full-stack web application** for managing university room bookings a
 |-------|---------|-------------|
 | `bookings` | Confirmed room reservations | id, roomId, startAt, endAt, requestId, approvedBy, source (MANUAL_REQUEST/TIMETABLE_ALLOCATION/SLOT_CHANGE/VENUE_CHANGE) |
 | `booking_requests` | Pending booking requests | id, userId, roomId, startAt, endAt, eventType, purpose, status (PENDING_FACULTY/PENDING_STAFF/APPROVED/REJECTED/CANCELLED) |
+| `booking_edit_requests` | Unified booking edit requests | id, bookingId, proposedRoomId, proposedStartAt, proposedEndAt, status, requestedBy, reviewedBy |
 
 **Event Types**: QUIZ, SEMINAR, SPEAKER_SESSION, MEETING, CULTURAL_EVENT, WORKSHOP, CLASS, OTHER
-
-#### Change Requests
-| Table | Purpose | Key Columns |
-|-------|---------|-------------|
-| `slot_change_requests` | Request to change timetable slot | id, courseId, currentBookingId, proposedStart, proposedEnd, status |
-| `venue_change_requests` | Request to change room | id, courseId, currentBookingId, proposedRoomId, status |
 
 #### Courses & Enrollments
 | Table | Purpose | Key Columns |
@@ -121,7 +116,7 @@ This is a **full-stack web application** for managing university room bookings a
 |-------|---------|-------------|
 | `notifications` | System notifications | notificationId, recipientId, subject, message, type, isRead |
 
-**Notification Types**: BOOKING_REQUEST_CREATED/FORWARDED/APPROVED/REJECTED/CANCELLED, SLOT_CHANGE_*, VENUE_CHANGE_*
+**Notification Types**: BOOKING_REQUEST_CREATED/FORWARDED/APPROVED/REJECTED/CANCELLED, plus role-based booking edit notifications
 
 ---
 
@@ -180,26 +175,13 @@ This is a **full-stack web application** for managing university room bookings a
 | POST | `/:id/reject` | Reject request | FACULTY, STAFF |
 | POST | `/:id/cancel` | Cancel pending request | Owner, ADMIN |
 
-### Change Requests
-**Slot Changes** (`/api/slot-change-requests`):
+### Edit Booking (Unified System)
 | Method | Endpoint | Purpose | Roles |
 |--------|----------|---------|-------|
-| GET | `/` | List slot change requests | All authenticated |
-| GET | `/:id` | Get slot change request details | All authenticated |
-| POST | `/` | Request slot change | FACULTY |
-| POST | `/:id/approve` | Approve change | STAFF, ADMIN |
-| POST | `/:id/reject` | Reject change | STAFF, ADMIN |
-| POST | `/:id/cancel` | Cancel own pending request | FACULTY |
-
-**Venue Changes** (`/api/venue-change-requests`):
-| Method | Endpoint | Purpose | Roles |
-|--------|----------|---------|-------|
-| GET | `/` | List venue change requests | All authenticated |
-| GET | `/:id` | Get venue change request details | All authenticated |
-| POST | `/` | Request venue change | FACULTY |
-| POST | `/:id/approve` | Approve change | STAFF, ADMIN |
-| POST | `/:id/reject` | Reject change | STAFF, ADMIN |
-| POST | `/:id/cancel` | Cancel own pending request | FACULTY |
+| POST | `/api/bookings/:id/edit` | Create direct edit or edit request based on booking state | STAFF, ADMIN, FACULTY, STUDENT |
+| GET | `/api/booking-edit-requests` | List booking edit requests | STAFF, ADMIN (all), FACULTY/STUDENT (own) |
+| POST | `/api/booking-edit-requests/:id/approve` | Approve booking edit request | STAFF, ADMIN |
+| POST | `/api/booking-edit-requests/:id/reject` | Reject booking edit request | STAFF, ADMIN |
 
 ### Availability (`/api/availability`)
 | Method | Endpoint | Purpose | Roles |
@@ -339,11 +321,10 @@ This is a **full-stack web application** for managing university room bookings a
 
 **Email**: Nodemailer with SMTP (optional, configurable)
 
-### Slot/Venue Change Services
+### Edit Booking Service
 | Service | Purpose |
 |---------|---------|
-| `slotChangeService.ts` | Validate & apply timetable slot changes |
-| `venueChangeService.ts` | Validate & apply room changes |
+| `editBookingService.ts` | Decide edit mode, validate conflicts, create requests, approve/reject with transactional apply |
 
 ### Booking Freeze Service (`bookingFreezeService.ts`)
 - **Purpose**: Lock booking mutations during timetable import commits
@@ -805,11 +786,26 @@ PENDING_FACULTY or PENDING_STAFF
 
 - Note: In current booking-request routes, ADMIN can cancel but does not directly approve/reject booking requests.
 
-### Change Request Flows
+## Edit Booking Flow
 
-**Slot Change**: FACULTY creates `PENDING` → STAFF/ADMIN approve (old booking replaced with new slot booking) or reject → FACULTY may cancel while pending.
+- Users can modify existing bookings.
 
-**Venue Change**: FACULTY creates `PENDING` → STAFF/ADMIN approve (booking moved to proposed room) or reject → FACULTY may cancel while pending.
+### Direct Edit
+- Allowed for:
+   - STAFF / ADMIN
+   - PENDING_FACULTY bookings
+
+### Edit Request
+- Required for:
+   - PENDING_STAFF bookings
+   - APPROVED bookings
+
+### Approval Flow
+- On approval:
+   - old booking deleted
+   - new booking created
+- On rejection:
+   - no change applied
 
 ---
 
@@ -837,7 +833,15 @@ This system provides a complete solution for university room allocation with rob
 |------|---------|--------|
 | React hook order safety | `/frontend/src/pages/Bookings.tsx` | Fixed by keeping authorization guard in `BookingsPage` and moving hook usage into a rendered child component, preventing hooks from running after an early return. |
 | Session timeout countdown consistency | `/frontend/src/auth/AuthContext.tsx` | Countdown logic and UI were aligned; current working tree shows a smooth second-by-second 5-minute countdown display (`mm:ss`). |
-| Backend type safety (P0 scope) | `/backend/src/api/middleware/rateLimit.middleware.ts`, `/backend/src/routes/slotChangeRequests.ts`, `/backend/src/routes/venueChangeRequests.ts` | Fixed typed rate-limit configuration/middleware signatures and added explicit undefined guards for request lookup rows in cancel endpoints. |
+| Backend type safety (P0 scope) | `/backend/src/api/middleware/rateLimit.middleware.ts` | Fixed typed rate-limit configuration/middleware signatures and improved guard safety on request-processing paths. |
+
+### Known Issues Fixed (April 11, 2026)
+
+| Issue | File(s) | Resolution |
+|------|---------|------------|
+| `[object Object]` shown in UI error banners | `/frontend/src/lib/api/client.ts`, `/frontend/src/lib/api/auth.ts`, `/frontend/src/utils/formatError.ts`, `/frontend/src/pages/BookingRequests.tsx` | Added centralized error normalization and switched key pages/API handlers to use it, so object payloads are rendered as readable messages. |
+| Random session drops during refresh checks | `/frontend/src/auth/AuthContext.tsx`, `/frontend/src/lib/api/client.ts` | Refresh-failure handling now preserves authenticated state while the current access token is still valid, and only clears session when token is truly expired/unauthorized. |
+| Full-page reload from access-denied actions | `/frontend/src/components/auth/RequireRole.tsx` | Replaced anchor navigation with SPA routing links to keep auth/session context stable in-app. |
 
 ### Runtime and Build Validation
 
