@@ -451,6 +451,12 @@ export const bookingStatusEnum = pgEnum("booking_status", [
   "CANCELLED",
 ]);
 
+export const bookingEditRequestStatusEnum = pgEnum("booking_edit_request_status", [
+  "PENDING",
+  "APPROVED",
+  "REJECTED",
+]);
+
 export const bookingEventTypeEnum = pgEnum("booking_event_type", [
   "QUIZ",
   "SEMINAR",
@@ -510,6 +516,51 @@ export const bookingRequests = pgTable(
     participantCountPositiveCheck: check(
       "booking_requests_participant_count_positive_check",
       sql`${table.participantCount} IS NULL OR ${table.participantCount} > 0`,
+    ),
+  }),
+);
+
+export const bookingEditRequests = pgTable(
+  "booking_edit_requests",
+  {
+    id: serial("id").primaryKey(),
+
+    bookingId: integer("booking_id")
+      .notNull()
+      .references(() => bookings.id, { onDelete: "cascade" }),
+
+    proposedRoomId: integer("proposed_room_id").references(() => rooms.id, {
+      onDelete: "set null",
+    }),
+
+    proposedStartAt: timestamp("proposed_start_at", { withTimezone: false }),
+    proposedEndAt: timestamp("proposed_end_at", { withTimezone: false }),
+
+    status: bookingEditRequestStatusEnum("status").notNull().default("PENDING"),
+
+    requestedBy: integer("requested_by")
+      .notNull()
+      .references(() => users.id),
+
+    reviewedBy: integer("reviewed_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+
+    createdAt: timestamp("created_at", { withTimezone: false })
+      .notNull()
+      .defaultNow(),
+
+    updatedAt: timestamp("updated_at", { withTimezone: false })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    bookingIdIdx: index("booking_edit_requests_booking_id_idx").on(table.bookingId),
+    statusIdx: index("booking_edit_requests_status_idx").on(table.status),
+    requestedByIdx: index("booking_edit_requests_requested_by_idx").on(table.requestedBy),
+    proposedFieldsPresentCheck: check(
+      "booking_edit_requests_proposed_fields_present_check",
+      sql`${table.proposedRoomId} IS NOT NULL OR ${table.proposedStartAt} IS NOT NULL OR ${table.proposedEndAt} IS NOT NULL`,
     ),
   }),
 );

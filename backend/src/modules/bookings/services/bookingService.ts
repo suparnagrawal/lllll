@@ -422,6 +422,46 @@ async function ensureRoomCanHostBooking(
   }
 }
 
+export async function validateRoomCompatibility(
+  input: {
+    roomId: number;
+    courseId?: number | null;
+    auxiliaryData?: Record<string, unknown>;
+  },
+  executor: DbExecutor = db,
+) {
+  try {
+    await ensureRoomCanHostBooking(
+      input.roomId,
+      input.courseId ?? null,
+      input.auxiliaryData,
+      executor,
+    );
+
+    return {
+      ok: true as const,
+    };
+  } catch (error: unknown) {
+    const typedError = error as Partial<BookingServiceError>;
+
+    if (typeof typedError.status === "number" && typeof typedError.code === "string") {
+      return {
+        ok: false as const,
+        status: typedError.status,
+        code: typedError.code,
+        message: typedError.message ?? "Room validation failed",
+      };
+    }
+
+    return {
+      ok: false as const,
+      status: 500,
+      code: "ROOM_VALIDATION_FAILED",
+      message: "Room validation failed",
+    };
+  }
+}
+
 async function ensureCourseExists(courseId: number, executor: DbExecutor) {
   const row = await executor
     .select({ id: courses.id })
@@ -458,6 +498,21 @@ export async function hasBookingOverlap(
     .limit(1);
 
   return overlapping.length > 0;
+}
+
+export async function checkBookingConflict(input: {
+  roomId: number;
+  startAt: Date;
+  endAt: Date;
+  excludeBookingId?: number;
+}) {
+  return hasBookingOverlap(
+    input.roomId,
+    input.startAt,
+    input.endAt,
+    db,
+    input.excludeBookingId,
+  );
 }
 
 export async function createBooking(
