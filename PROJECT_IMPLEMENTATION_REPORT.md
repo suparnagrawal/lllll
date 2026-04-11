@@ -183,6 +183,12 @@ This is a **full-stack web application** for managing university room bookings a
 | POST | `/api/booking-edit-requests/:id/approve` | Approve booking edit request | STAFF, ADMIN |
 | POST | `/api/booking-edit-requests/:id/reject` | Reject booking edit request | STAFF, ADMIN |
 
+Additional endpoint reference:
+- POST /api/bookings/:id/edit
+- GET /api/booking-edit-requests
+- POST /api/booking-edit-requests/:id/approve
+- POST /api/booking-edit-requests/:id/reject
+
 ### Availability (`/api/availability`)
 | Method | Endpoint | Purpose | Roles |
 |--------|----------|---------|-------|
@@ -786,26 +792,33 @@ PENDING_FACULTY or PENDING_STAFF
 
 - Note: In current booking-request routes, ADMIN can cancel but does not directly approve/reject booking requests.
 
-## Edit Booking Flow
+## Edit Booking System
 
-- Users can modify existing bookings.
+The system provides a unified edit-booking workflow.
 
 ### Direct Edit
-- Allowed for:
-   - STAFF / ADMIN
-   - PENDING_FACULTY bookings
+Allowed when:
+- User is STAFF or ADMIN
+- Booking is in PENDING_FACULTY state
 
-### Edit Request
-- Required for:
-   - PENDING_STAFF bookings
-   - APPROVED bookings
+### Edit Request Required
+Triggered when:
+- Booking is in PENDING_STAFF
+- Booking is APPROVED
 
 ### Approval Flow
 - On approval:
-   - old booking deleted
-   - new booking created
+  - Old booking is deleted
+  - New booking is created
 - On rejection:
-   - no change applied
+  - No change applied
+
+### Key Benefits
+- Removes redundancy (no separate slot/venue modules)
+- Aligns with real-world institutional workflows
+- Maintains auditability via requests
+
+Note: Slot/Venue Change modules are deprecated and replaced by unified edit-booking system.
 
 ---
 
@@ -904,7 +917,7 @@ This system provides a complete solution for university room allocation with rob
 
 | Area | File(s) | Status |
 |------|---------|--------|
-| Backend safety and typing hardening | `/backend/src/api/middleware/rateLimit.middleware.ts`, `/backend/src/routes/slotChangeRequests.ts`, `/backend/src/routes/venueChangeRequests.ts` | Strengthened type-safety and null-guard paths in high-risk request handlers and middleware. |
+| Backend safety and typing hardening | `/backend/src/api/middleware/rateLimit.middleware.ts`, `/backend/src/services/editBookingService.ts`, `/backend/src/modules/bookingEditRequests/api/router.ts` | Strengthened type-safety and null-guard paths in high-risk request handlers and unified edit-booking flows. |
 | Runtime safety confidence | Backend routes + middleware | Confirmed no regressions in approval/change-request critical flows through backend test suite and type-check pass. |
 
 ### Task Group 5 Final Polish (Refactor Branch)
