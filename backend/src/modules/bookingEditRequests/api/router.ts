@@ -1,0 +1,81 @@
+import { Router } from "express";
+import { and, eq } from "drizzle-orm";
+import { authMiddleware } from "../../../middleware/auth";
+import { requireRole } from "../../../middleware/rbac";
+import { requireBookingsUnfrozen } from "../../../middleware/bookingFreeze";
+import { validate } from "../../../api/middleware/validation.middleware";
+import { idParamSchema } from "../../../shared/validators/schemas/common.schemas";
+import { bookingEditRequests } from "../../../db/schema";
+import { db } from "../../../db";
+import { approveEditRequest, rejectEditRequest } from "../../../services/editBookingService";
+
+const router = Router();
+
+router.get("/", authMiddleware, async (req, res) => {
+  const user = req.user;
+
+  if (!user) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const whereClause =
+    user.role === "ADMIN" || user.role === "STAFF"
+      ? undefined
+      : eq(bookingEditRequests.requestedBy, user.id);
+
+  const query = db
+    .select()
+    .from(bookingEditRequests);
+
+  const rows = whereClause
+    ? await query.where(whereClause)
+    : await query;
+
+  return res.json(rows);
+});
+
+router.post(
+  "/:id/approve",
+  authMiddleware,
+  requireRole(["ADMIN", "STAFF"]),
+  requireBookingsUnfrozen(),
+  validate({ params: idParamSchema }),
+  async (req, res) => {
+    const requestId = Number(req.params.id);
+
+    const result = await approveEditRequest(requestId, { id: req.user!.id });
+
+    if (!result.ok) {
+      return res.status(result.error.status).json({
+        error: result.error.message,
+        code: result.error.code,
+      });
+    }
+
+    return res.json(result.data);
+  },
+);
+
+router.post(
+  "/:id/reject",
+  authMiddleware,
+  requireRole(["ADMIN", "STAFF"]),
+  requireBookingsUnfrozen(),
+  validate({ params: idParamSchema }),
+  async (req, res) => {
+    const requestId = Number(req.params.id);
+
+    const result = await rejectEditRequest(requestId, { id: req.user!.id });
+
+    if (!result.ok) {
+      return res.status(result.error.status).json({
+        error: result.error.message,
+        code: result.error.code,
+      });
+    }
+
+    return res.json(result.data);
+  },
+);
+
+export default router;

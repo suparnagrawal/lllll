@@ -3,6 +3,7 @@ import { bookingCourseLink, bookingEditRequests, bookingRequests, bookings } fro
 import { and, eq } from "drizzle-orm";
 import {
   checkBookingConflict,
+  createBooking,
   type BookingUpdateSuccess,
   updateBooking,
   validateRoomCompatibility,
@@ -246,4 +247,184 @@ export async function getBookingRequestContextByBookingId(bookingId: number) {
     .limit(1);
 
   return rows[0] ?? null;
+}
+
+export async function approveEditRequest(
+  requestId: number,
+  reviewer: Pick<UserContext, "id">,
+) {
+  const requestRows = await db
+    .select()
+    .from(bookingEditRequests)
+    .where(eq(bookingEditRequests.id, requestId))
+    .limit(1);
+
+  const request = requestRows[0];
+
+  if (!request) {
+    return fail(404, "EDIT_REQUEST_NOT_FOUND", "Edit request not found");
+  }
+
+  if (request.status !== "PENDING") {
+    return fail(409, "EDIT_REQUEST_NOT_PENDING", "Edit request is already processed");
+  }
+
+  const bookingRows = await db
+    .select()
+    .from(bookings)
+    .where(eq(bookings.id, request.bookingId))
+    .limit(1);
+
+  const booking = bookingRows[0];
+
+  if (!booking) {
+    return fail(404, "BOOKING_NOT_FOUND", "Original booking not found");
+  }
+
+  const updated = {
+    roomId: request.proposedRoomId ?? booking.roomId,
+    startAt: request.proposedStartAt ?? booking.startAt,
+    endAt: request.proposedEndAt ?? booking.endAt,
+  };
+
+  if (updated.startAt >= updated.endAt) {
+    return fail(400, "INVALID_INTERVAL", "startAt must be before endAt");
+  }
+
+  const courseLinkRows = await db
+    .select({ courseId: bookingCourseLink.courseId })
+    .from(bookingCourseLink)
+    .where(eq(bookingCourseLink.bookingId, booking.id));
+
+  const primaryCourseId = courseLinkRows[0]?.courseId ?? null;
+
+  const compatibility = await validateRoomCompatibility({
+    roomId: updated.roomId,
+    courseId: primaryCourseId,
+  });
+
+  if (!compatibility.ok) {
+    return fail(compatibility.status, compatibility.code, compatibility.message);
+  }
+
+  const hasConflict = await checkBookingConflict({
+    roomId: updated.roomId,
+    startAt: updated.startAt,
+    endAt: updated.endAt,
+    excludeBookingId: booking.id,
+  });
+
+  if (hasConflict) {
+    return fail(409, "BOOKING_CONFLICT", "Room already booked for this time range");
+  }
+
+  const approvedAt = new Date();
+
+  const txResult = await db.transaction(async (tx) => {
+    const deletedRows = await tx
+      .delete(bookings)
+      .where(eq(bookings.id, booking.id))
+      .returning({ id: bookings.id });
+
+    if (deletedRows.length === 0) {
+      throw new Error("BOOKING_MISSING_DURING_APPROVAL");
+    }
+
+    const created = await createBooking(
+      {
+        roomId: updated.roomId,
+        startAt: updated.startAt,
+        endAt: updated.endAt,
+        requestId: booking.requestId,
+        metadata: {
+          source: booking.source,
+          approvedBy: reviewer.id,
+          approvedAt,
+          ...(booking.sourceRef ? { sourceRef: booking.sourceRef } : {}),
+          ...(primaryCourseId !== null ? { courseId: primaryCourseId } : {}),
+        },
+      },
+      tx,
+    );
+
+    if (!created.ok) {
+      throw new Error(`BOOKING_RECREATE_FAILED:${created.code}:${created.message}`);
+    }
+
+    const updatedRequestRows = await tx
+      .update(bookingEditRequests)
+      .set({
+        status: "APPROVED",
+        reviewedBy: reviewer.id,
+        updatedAt: approvedAt,
+      })
+      .where(
+        and(
+          eq(bookingEditRequests.id, requestId),
+          eq(bookingEditRequests.status, "PENDING"),
+        ),
+      )
+      .returning();
+
+    if (updatedRequestRows.length === 0) {
+      throw new Error("EDIT_REQUEST_ALREADY_PROCESSED");
+    }
+
+    return {
+      booking: created.booking,
+      editRequest: updatedRequestRows[0],
+    };
+  });
+
+  return {
+    ok: true as const,
+    data: txResult,
+  };
+}
+
+export async function rejectEditRequest(
+  requestId: number,
+  reviewer: Pick<UserContext, "id">,
+) {
+  const existingRows = await db
+    .select({ id: bookingEditRequests.id, status: bookingEditRequests.status })
+    .from(bookingEditRequests)
+    .where(eq(bookingEditRequests.id, requestId))
+    .limit(1);
+
+  const existing = existingRows[0];
+
+  if (!existing) {
+    return fail(404, "EDIT_REQUEST_NOT_FOUND", "Edit request not found");
+  }
+
+  if (existing.status !== "PENDING") {
+    return fail(409, "EDIT_REQUEST_NOT_PENDING", "Edit request is already processed");
+  }
+
+  const now = new Date();
+
+  const updatedRows = await db
+    .update(bookingEditRequests)
+    .set({
+      status: "REJECTED",
+      reviewedBy: reviewer.id,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(bookingEditRequests.id, requestId),
+        eq(bookingEditRequests.status, "PENDING"),
+      ),
+    )
+    .returning();
+
+  if (updatedRows.length === 0) {
+    return fail(409, "EDIT_REQUEST_NOT_PENDING", "Edit request is already processed");
+  }
+
+  return {
+    ok: true as const,
+    data: updatedRows[0],
+  };
 }

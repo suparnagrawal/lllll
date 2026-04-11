@@ -2,6 +2,7 @@ import type { ApiModule } from "./module.types";
 import { authModule } from "./auth";
 import { availabilityModule } from "./availability";
 import { bookingRequestsModule } from "./bookingRequests";
+import { bookingEditRequestsModule } from "./bookingEditRequests";
 import { bookingsModule } from "./bookings";
 import { buildingsModule } from "./buildings";
 import { dashboardModule } from "./dashboard";
@@ -22,6 +23,7 @@ export const apiModules: ApiModule[] = [
   roomsModule,
   bookingsModule,
   bookingRequestsModule,
+  bookingEditRequestsModule,
   slotChangeRequestsModule,
   venueChangeRequestsModule,
   availabilityModule,
