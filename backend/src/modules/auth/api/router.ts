@@ -90,19 +90,19 @@ router.post("/login", async (req, res) => {
 
     // Validation: email required for both methods
     if (!email) {
-      return res.status(400).json({ error: "Email is required" });
+      return res.status(400).json({ message: "Email is required" });
     }
 
     // Email domain validation
     if (!email.endsWith("@iitj.ac.in")) {
       return res.status(400).json({
-        error: "Please use your @iitj.ac.in email address",
+        message: "Please use your @iitj.ac.in email address",
       });
     }
 
     // Password required only for email auth
     if (authProvider === "email" && !password) {
-      return res.status(400).json({ error: "Password is required for email login" });
+      return res.status(400).json({ message: "Password is required for email login" });
     }
 
     // Find user
@@ -115,29 +115,29 @@ router.post("/login", async (req, res) => {
     const user = rows[0];
 
     if (!user) {
-      return res.status(401).json({ error: "Invalid credentials" });
+      return res.status(401).json({ message: "Invalid credentials" });
     }
 
     // Check if user's registered method matches auth provider
     if (authProvider === "email" && user.registeredVia === "google") {
       return res.status(403).json({
-        error: "This account uses Google login. Please continue with Google.",
+        message: "This account uses Google login. Please continue with Google.",
       });
     }
 
     if (authProvider === "google" && user.registeredVia === "email") {
       return res.status(403).json({
-        error: "This account uses email/password login. Please use email and password.",
+        message: "This account uses email/password login. Please use email and password.",
       });
     }
 
     if (!user.isActive) {
-      return res.status(403).json({ error: "Your account is inactive" });
+      return res.status(403).json({ message: "Your account is inactive" });
     }
 
     if (user.role === "PENDING_ROLE") {
       return res.status(403).json({
-        error: "Account setup is incomplete. Complete role setup first.",
+        message: "Account setup is incomplete. Complete role setup first.",
       });
     }
 
@@ -146,7 +146,7 @@ router.post("/login", async (req, res) => {
       const isMatch = await bcrypt.compare(password, user.passwordHash);
 
       if (!isMatch) {
-        return res.status(401).json({ error: "Invalid credentials" });
+        return res.status(401).json({ message: "Invalid credentials" });
       }
     }
 
@@ -167,7 +167,7 @@ router.post("/login", async (req, res) => {
 
   } catch (error) {
     logger.error(error);
-    return res.status(500).json({ error: "Login failed" });
+    return res.status(500).json({ message: "Login failed" });
   }
 });
 
@@ -177,7 +177,7 @@ router.post("/login", async (req, res) => {
 router.get("/me", authMiddleware, async (req, res) => {
   try {
     if (!req.user?.id) {
-      return res.status(401).json({ error: "Unauthorized" });
+      return res.status(401).json({ message: "Unauthorized" });
     }
 
     const rows = await db
@@ -189,11 +189,11 @@ router.get("/me", authMiddleware, async (req, res) => {
     const user = rows[0];
 
     if (!user) {
-      return res.status(404).json({ error: "User not found" });
+      return res.status(404).json({ message: "User not found" });
     }
 
     if (!user.isActive) {
-      return res.status(403).json({ error: "Your account is inactive" });
+      return res.status(403).json({ message: "Your account is inactive" });
     }
 
     // Fetch assigned buildings if user is STAFF
@@ -226,7 +226,7 @@ router.get("/me", authMiddleware, async (req, res) => {
     });
   } catch (error) {
     logger.error(error);
-    return res.status(500).json({ error: "Failed to fetch current user" });
+    return res.status(500).json({ message: "Failed to fetch current user" });
   }
 });
 
@@ -331,15 +331,15 @@ if (isGoogleOAuthConfigured) {
   });
 } else {
   router.get("/google", (_req, res) => {
-    return res.status(503).json({ error: "Google OAuth is not configured" });
+    return res.status(503).json({ message: "Google OAuth is not configured" });
   });
 
   router.get("/google/callback", (_req, res) => {
-    return res.status(503).json({ error: "Google OAuth is not configured" });
+    return res.status(503).json({ message: "Google OAuth is not configured" });
   });
 
   router.get("/google/failed", (_req, res) => {
-    return res.status(503).json({ error: "Google OAuth is not configured" });
+    return res.status(503).json({ message: "Google OAuth is not configured" });
   });
 }
 
@@ -351,13 +351,13 @@ router.post("/complete-setup", async (req, res) => {
     const token = readBearerToken(req);
 
     if (!token) {
-      return res.status(401).json({ error: "Setup token is required" });
+      return res.status(401).json({ message: "Setup token is required" });
     }
 
     const decoded = verifySetupToken(token);
 
     if (!decoded) {
-      return res.status(401).json({ error: "Invalid or expired setup token" });
+      return res.status(401).json({ message: "Invalid or expired setup token" });
     }
 
     const role = req.body?.role as string | undefined;
@@ -372,16 +372,16 @@ router.post("/complete-setup", async (req, res) => {
     const user = rows[0];
 
     if (!user) {
-      return res.status(404).json({ error: "User not found" });
+      return res.status(404).json({ message: "User not found" });
     }
 
     if (!user.isActive) {
-      return res.status(403).json({ error: "Your account is inactive" });
+      return res.status(403).json({ message: "Your account is inactive" });
     }
 
     if (user.role !== "PENDING_ROLE") {
       return res.status(400).json({
-        error: "Setup has already been completed for this account",
+        message: "Setup has already been completed for this account",
       });
     }
 
@@ -390,13 +390,13 @@ router.post("/complete-setup", async (req, res) => {
 
     if (role !== "STUDENT") {
       return res.status(400).json({
-        error: `role must be one of: ${allowedRoles.join(", ")}`,
+        message: `role must be one of: ${allowedRoles.join(", ")}`,
       });
     }
 
     if (rawDepartment !== undefined && typeof rawDepartment !== "string") {
       return res.status(400).json({
-        error: "department must be a string when provided",
+        message: "department must be a string when provided",
       });
     }
 
@@ -416,7 +416,7 @@ router.post("/complete-setup", async (req, res) => {
       .returning();
 
     if (!updated) {
-      return res.status(500).json({ error: "Failed to complete setup" });
+      return res.status(500).json({ message: "Failed to complete setup" });
     }
 
     const accessToken = signAuthToken({ id: updated.id, role: updated.role });
@@ -433,7 +433,7 @@ router.post("/complete-setup", async (req, res) => {
     });
   } catch (error) {
     logger.error(error);
-    return res.status(500).json({ error: "Complete setup failed" });
+    return res.status(500).json({ message: "Complete setup failed" });
   }
 });
 
@@ -445,13 +445,13 @@ router.post("/refresh", async (req, res) => {
     const refreshToken = req.body?.refreshToken;
 
     if (!refreshToken) {
-      return res.status(400).json({ error: "Refresh token is required" });
+      return res.status(400).json({ message: "Refresh token is required" });
     }
 
     const decoded = verifyRefreshToken(refreshToken);
 
     if (!decoded) {
-      return res.status(401).json({ error: "Invalid or expired refresh token" });
+      return res.status(401).json({ message: "Invalid or expired refresh token" });
     }
 
     const rows = await db
@@ -463,11 +463,11 @@ router.post("/refresh", async (req, res) => {
     const user = rows[0];
 
     if (!user) {
-      return res.status(404).json({ error: "User not found" });
+      return res.status(404).json({ message: "User not found" });
     }
 
     if (!user.isActive) {
-      return res.status(403).json({ error: "Your account is inactive" });
+      return res.status(403).json({ message: "Your account is inactive" });
     }
 
     const accessToken = signAuthToken({ id: user.id, role: user.role });
@@ -487,7 +487,7 @@ router.post("/refresh", async (req, res) => {
     });
   } catch (error) {
     logger.error(error);
-    return res.status(500).json({ error: "Token refresh failed" });
+    return res.status(500).json({ message: "Token refresh failed" });
   }
 });
 

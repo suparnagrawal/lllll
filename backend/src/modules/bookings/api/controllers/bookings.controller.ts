@@ -350,7 +350,7 @@ export class BookingsController {
 
       if (!directResult.ok) {
         res.status(directResult.error.status).json({
-          error: directResult.error.message,
+          message: directResult.error.message,
           code: directResult.error.code,
         });
         return;
@@ -371,7 +371,7 @@ export class BookingsController {
 
     if (!requestResult.ok) {
       res.status(requestResult.error.status).json({
-        error: requestResult.error.message,
+        message: requestResult.error.message,
         code: requestResult.error.code,
       });
       return;

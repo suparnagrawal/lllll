@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { authMiddleware } from "../../../middleware/auth";
 import { requireRole } from "../../../middleware/rbac";
 import { requireBookingsUnfrozen } from "../../../middleware/bookingFreeze";
@@ -15,7 +15,7 @@ router.get("/", authMiddleware, async (req, res) => {
   const user = req.user;
 
   if (!user) {
-    return res.status(401).json({ error: "Unauthorized" });
+    return res.status(401).json({ message: "Unauthorized" });
   }
 
   try {
@@ -36,7 +36,6 @@ router.get("/", authMiddleware, async (req, res) => {
   } catch (err) {
     console.error("DB ERROR:", err);
     return res.status(500).json({
-      error: "Failed to fetch booking edit requests",
       message: "Failed to fetch booking edit requests",
     });
   }
@@ -49,18 +48,25 @@ router.post(
   requireBookingsUnfrozen(),
   validate({ params: idParamSchema }),
   async (req, res) => {
-    const requestId = Number(req.params.id);
+    try {
+      const requestId = Number(req.params.id);
 
-    const result = await approveEditRequest(requestId, { id: req.user!.id });
+      const result = await approveEditRequest(requestId, { id: req.user!.id });
 
-    if (!result.ok) {
-      return res.status(result.error.status).json({
-        error: result.error.message,
-        code: result.error.code,
+      if (!result.ok) {
+        return res.status(result.error.status).json({
+          message: result.error.message,
+          code: result.error.code,
+        });
+      }
+
+      return res.json(result.data);
+    } catch (err) {
+      console.error("ERROR:", err);
+      return res.status(500).json({
+        message: err instanceof Error ? err.message : "Internal server error",
       });
     }
-
-    return res.json(result.data);
   },
 );
 
@@ -71,18 +77,25 @@ router.post(
   requireBookingsUnfrozen(),
   validate({ params: idParamSchema }),
   async (req, res) => {
-    const requestId = Number(req.params.id);
+    try {
+      const requestId = Number(req.params.id);
 
-    const result = await rejectEditRequest(requestId, { id: req.user!.id });
+      const result = await rejectEditRequest(requestId, { id: req.user!.id });
 
-    if (!result.ok) {
-      return res.status(result.error.status).json({
-        error: result.error.message,
-        code: result.error.code,
+      if (!result.ok) {
+        return res.status(result.error.status).json({
+          message: result.error.message,
+          code: result.error.code,
+        });
+      }
+
+      return res.json(result.data);
+    } catch (err) {
+      console.error("ERROR:", err);
+      return res.status(500).json({
+        message: err instanceof Error ? err.message : "Internal server error",
       });
     }
-
-    return res.json(result.data);
   },
 );
 
