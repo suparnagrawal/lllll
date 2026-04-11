@@ -38,6 +38,8 @@ export type TimetableCommitResolutionAction =
   | "FORCE_OVERWRITE"
   | "ALTERNATIVE_ROOM";
 
+export type TimetableCommitResolutionTarget = "COMMITTING" | "CLASHING";
+
 export type TimetableCommitConflict = {
   id: string;
   stage: TimetableCommitStage;
@@ -55,6 +57,7 @@ export type TimetableCommitConflict = {
 export type TimetableCommitResolution = {
   conflictId: string;
   action: TimetableCommitResolutionAction;
+  target?: TimetableCommitResolutionTarget;
   roomId?: number;
   startAt?: string;
   endAt?: string;
@@ -1287,6 +1290,87 @@ function applyConflictResolutions(input: {
   resolutions: TimetableCommitResolution[];
   allowedActions: TimetableCommitResolutionAction[];
 }) {
+  type ExternalClashingBookingEntry = {
+    bookingId: number;
+    roomId: number;
+    startAt: string;
+    endAt: string;
+    sourceRef: string;
+    rowId: number;
+    rowIndex: number;
+  };
+
+  const parseExternalClashingBookingEntries = (
+    metadata: Record<string, unknown>,
+    conflict: TimetableCommitConflict,
+  ): ExternalClashingBookingEntry[] => {
+    const entriesByBookingId = new Map<number, ExternalClashingBookingEntry>();
+
+    const rawEntries = Array.isArray(metadata.conflictingBookingEntries)
+      ? metadata.conflictingBookingEntries
+      : [];
+
+    for (const rawEntry of rawEntries) {
+      if (!rawEntry || typeof rawEntry !== "object") {
+        continue;
+      }
+
+      const entry = rawEntry as Record<string, unknown>;
+      const bookingId = Number(entry.bookingId);
+      const sourceRef = typeof entry.sourceRef === "string" ? entry.sourceRef : "";
+
+      if (!Number.isInteger(bookingId) || bookingId <= 0 || sourceRef.length === 0) {
+        continue;
+      }
+
+      const roomId = Number(entry.roomId);
+      const startAt = typeof entry.startAt === "string" ? entry.startAt : conflict.startAt;
+      const endAt = typeof entry.endAt === "string" ? entry.endAt : conflict.endAt;
+      const rowId = Number(entry.rowId);
+      const rowIndex = Number(entry.rowIndex);
+
+      entriesByBookingId.set(bookingId, {
+        bookingId,
+        roomId: Number.isInteger(roomId) && roomId > 0 ? roomId : conflict.roomId,
+        startAt,
+        endAt,
+        sourceRef,
+        rowId: Number.isInteger(rowId) && rowId > 0 ? rowId : conflict.rowId,
+        rowIndex: Number.isInteger(rowIndex) && rowIndex >= 0 ? rowIndex : conflict.rowIndex,
+      });
+    }
+
+    if (entriesByBookingId.size > 0) {
+      return Array.from(entriesByBookingId.values()).sort((a, b) => a.bookingId - b.bookingId);
+    }
+
+    const singleBookingId = Number(metadata.conflictingBookingId);
+    const singleSourceRef =
+      typeof metadata.conflictingSourceRef === "string"
+        ? metadata.conflictingSourceRef
+        : "";
+
+    if (
+      Number.isInteger(singleBookingId) &&
+      singleBookingId > 0 &&
+      singleSourceRef.length > 0
+    ) {
+      return [
+        {
+          bookingId: singleBookingId,
+          roomId: conflict.roomId,
+          startAt: conflict.startAt,
+          endAt: conflict.endAt,
+          sourceRef: singleSourceRef,
+          rowId: conflict.rowId,
+          rowIndex: conflict.rowIndex,
+        },
+      ];
+    }
+
+    return [];
+  };
+
   const conflictsById = new Map(input.conflicts.map((conflict) => [conflict.id, conflict]));
   const operationsById = new Map(input.operations.map((operation) => [operation.operationId, operation]));
 
@@ -1301,14 +1385,102 @@ function applyConflictResolutions(input: {
       throw createServiceError(400, `Action ${resolution.action} is not allowed in this stage`);
     }
 
-    const operation = operationsById.get(conflict.operationId);
+    const metadata = conflict.metadata ?? {};
+    const resolutionTarget =
+      resolution.target === "CLASHING" ? "CLASHING" : "COMMITTING";
 
-    if (!operation) {
-      continue;
+    const committingOperationIds = Array.isArray(metadata.affectedOperationIds)
+      ? metadata.affectedOperationIds.filter(
+          (value): value is string => typeof value === "string" && value.length > 0,
+        )
+      : [];
+
+    const committingTargetOperationIds =
+      committingOperationIds.length > 0
+        ? committingOperationIds
+        : [conflict.operationId];
+
+    let targetOperations = committingTargetOperationIds
+      .map((operationId) => operationsById.get(operationId))
+      .filter((operation): operation is SessionOperation => Boolean(operation));
+
+    if (resolutionTarget === "CLASHING" && conflict.stage !== "runtime") {
+      if (conflict.stage === "internal") {
+        const secondaryOperationIds = Array.isArray(metadata.secondaryOperationIds)
+          ? metadata.secondaryOperationIds.filter(
+              (value): value is string => typeof value === "string" && value.length > 0,
+            )
+          : [];
+
+        targetOperations = secondaryOperationIds
+          .map((operationId) => operationsById.get(operationId))
+          .filter((operation): operation is SessionOperation => Boolean(operation));
+      } else if (conflict.stage === "external") {
+        const clashingBookingEntries = parseExternalClashingBookingEntries(metadata, conflict);
+
+        if (clashingBookingEntries.length === 0) {
+          throw createServiceError(400, "No clashing allocation is available for this conflict");
+        }
+
+        for (const operation of targetOperations) {
+          for (const entry of clashingBookingEntries) {
+            if (!operation.forceOverwriteBookingIds.includes(entry.bookingId)) {
+              operation.forceOverwriteBookingIds.push(entry.bookingId);
+            }
+          }
+        }
+
+        const clashingTargetOperations: SessionOperation[] = [];
+
+        for (const entry of clashingBookingEntries) {
+          const syntheticOperationId = hashValue(
+            `external-clashing|booking:${entry.bookingId}|${entry.sourceRef}`,
+          );
+
+          let syntheticOperation = operationsById.get(syntheticOperationId);
+
+          if (!syntheticOperation) {
+            syntheticOperation = {
+              operationId: syntheticOperationId,
+              kind: "UPSERT",
+              rowId: entry.rowId,
+              rowIndex: entry.rowIndex,
+              courseCode: "",
+              slot: "",
+              classroom: "",
+              roomId: entry.roomId,
+              startAt: entry.startAt,
+              endAt: entry.endAt,
+              sourceRef: entry.sourceRef,
+              status: "ACTIVE",
+              forceOverwriteBookingIds: [entry.bookingId],
+              cleanupBookingIds: [],
+            };
+
+            input.operations.push(syntheticOperation);
+            operationsById.set(syntheticOperationId, syntheticOperation);
+          }
+
+          if (!syntheticOperation.forceOverwriteBookingIds.includes(entry.bookingId)) {
+            syntheticOperation.forceOverwriteBookingIds.push(entry.bookingId);
+          }
+
+          clashingTargetOperations.push(syntheticOperation);
+        }
+
+        targetOperations = clashingTargetOperations;
+      }
+    }
+
+    if (targetOperations.length === 0) {
+      throw createServiceError(400, "No matching operations found for the selected resolution target");
     }
 
     if (resolution.action === "SKIP") {
-      operation.status = "SKIPPED";
+      for (const operation of targetOperations) {
+        operation.status = "SKIPPED";
+      }
+
       continue;
     }
 
@@ -1319,19 +1491,37 @@ function applyConflictResolutions(input: {
         throw createServiceError(400, `roomId is required for ${resolution.action}`);
       }
 
-      operation.roomId = roomId;
+      for (const operation of targetOperations) {
+        operation.roomId = roomId;
+      }
+
       continue;
     }
 
     if (resolution.action === "FORCE_OVERWRITE") {
-      const bookingId = Number(conflict.metadata?.conflictingBookingId);
+      const metadataBookingIds = Array.isArray(metadata.conflictingBookingIds)
+        ? metadata.conflictingBookingIds
+            .map((value) => Number(value))
+            .filter((value) => Number.isInteger(value) && value > 0)
+        : [];
 
-      if (!Number.isInteger(bookingId) || bookingId <= 0) {
+      const singleBookingId = Number(metadata.conflictingBookingId);
+      const bookingIds = metadataBookingIds.length > 0
+        ? metadataBookingIds
+        : Number.isInteger(singleBookingId) && singleBookingId > 0
+          ? [singleBookingId]
+          : [];
+
+      if (bookingIds.length === 0) {
         throw createServiceError(400, "FORCE_OVERWRITE requires a conflicting booking");
       }
 
-      if (!operation.forceOverwriteBookingIds.includes(bookingId)) {
-        operation.forceOverwriteBookingIds.push(bookingId);
+      for (const operation of targetOperations) {
+        for (const bookingId of bookingIds) {
+          if (!operation.forceOverwriteBookingIds.includes(bookingId)) {
+            operation.forceOverwriteBookingIds.push(bookingId);
+          }
+        }
       }
 
       continue;
@@ -1348,8 +1538,11 @@ function applyConflictResolutions(input: {
         );
       }
 
-      operation.startAt = nextStart.toISOString();
-      operation.endAt = nextEnd.toISOString();
+      for (const operation of targetOperations) {
+        operation.startAt = nextStart.toISOString();
+        operation.endAt = nextEnd.toISOString();
+      }
+
       continue;
     }
   }
@@ -1362,6 +1555,35 @@ async function computeExternalConflicts(batchId: number, operations: SessionOper
     (operation) => operation.status === "ACTIVE" && operation.kind === "UPSERT",
   );
   const conflicts: TimetableCommitConflict[] = [];
+
+  type ExternalConflictGroup = {
+    rowId: number;
+    rowIndex: number;
+    roomId: number;
+    representativeOperationId: string;
+    affectedOperationIds: Set<string>;
+    conflictingBookingIds: Set<number>;
+    conflictingBatchIds: Set<number>;
+    conflictingSlotSystemIds: Set<number>;
+    conflictingSourceRefs: Set<string>;
+    conflictingBookingEntriesById: Map<number, {
+      bookingId: number;
+      roomId: number;
+      startAt: string;
+      endAt: string;
+      sourceRef: string;
+      batchId: number;
+      slotSystemId: number;
+      rowId: number;
+      rowIndex: number;
+    }>;
+    earliestOperationStart: Date;
+    latestOperationEnd: Date;
+    earliestConflictStart: Date;
+    latestConflictEnd: Date;
+  };
+
+  const groupedConflicts = new Map<string, ExternalConflictGroup>();
 
   const overlapRowsByOperationId = new Map<string, Array<{
     id: number;
@@ -1460,30 +1682,137 @@ async function computeExternalConflicts(batchId: number, operations: SessionOper
         continue;
       }
 
-      const conflictId = hashValue(`external|${operation.operationId}|${overlap.id}`);
+      const groupKey = `${operation.rowId}|${operation.roomId}`;
+      const operationStartAt = new Date(operation.startAt);
+      const operationEndAt = new Date(operation.endAt);
 
-      conflicts.push({
-        id: conflictId,
-        stage: "external",
-        type: "external",
-        operationId: operation.operationId,
-        rowId: operation.rowId,
-        rowIndex: operation.rowIndex,
-        roomId: operation.roomId,
-        startAt: operation.startAt,
-        endAt: operation.endAt,
-        reason: "Clashes with committed timetable allocation",
-        metadata: {
-          conflictingBookingId: overlap.id,
-          conflictingBatchId: overlapBatchId,
-          conflictingSlotSystemId: overlapBatch.slotSystemId,
-          conflictingBatchStatus: overlapBatch.status,
-          conflictingStartAt: overlap.startAt.toISOString(),
-          conflictingEndAt: overlap.endAt.toISOString(),
-          conflictingSourceRef: overlap.sourceRef,
-        },
-      });
+      let group = groupedConflicts.get(groupKey);
+      if (!group) {
+        group = {
+          rowId: operation.rowId,
+          rowIndex: operation.rowIndex,
+          roomId: operation.roomId,
+          representativeOperationId: operation.operationId,
+          affectedOperationIds: new Set<string>(),
+          conflictingBookingIds: new Set<number>(),
+          conflictingBatchIds: new Set<number>(),
+          conflictingSlotSystemIds: new Set<number>(),
+          conflictingSourceRefs: new Set<string>(),
+          conflictingBookingEntriesById: new Map(),
+          earliestOperationStart: operationStartAt,
+          latestOperationEnd: operationEndAt,
+          earliestConflictStart: overlap.startAt,
+          latestConflictEnd: overlap.endAt,
+        };
+
+        groupedConflicts.set(groupKey, group);
+      }
+
+      group.affectedOperationIds.add(operation.operationId);
+      group.conflictingBookingIds.add(overlap.id);
+      group.conflictingBatchIds.add(overlapBatchId);
+      group.conflictingSlotSystemIds.add(overlapBatch.slotSystemId);
+
+      if (typeof overlap.sourceRef === "string" && overlap.sourceRef.length > 0) {
+        group.conflictingSourceRefs.add(overlap.sourceRef);
+
+        const sourceRefRowMatch = /^batch:(\d+):row:(\d+):/.exec(overlap.sourceRef);
+        const parsedRowId = sourceRefRowMatch ? Number(sourceRefRowMatch[2]) : Number.NaN;
+
+        group.conflictingBookingEntriesById.set(overlap.id, {
+          bookingId: overlap.id,
+          roomId: overlap.roomId,
+          startAt: overlap.startAt.toISOString(),
+          endAt: overlap.endAt.toISOString(),
+          sourceRef: overlap.sourceRef,
+          batchId: overlapBatchId,
+          slotSystemId: overlapBatch.slotSystemId,
+          rowId: Number.isInteger(parsedRowId) && parsedRowId > 0 ? parsedRowId : operation.rowId,
+          rowIndex: operation.rowIndex,
+        });
+      }
+
+      if (operationStartAt < group.earliestOperationStart) {
+        group.earliestOperationStart = operationStartAt;
+      }
+
+      if (operationEndAt > group.latestOperationEnd) {
+        group.latestOperationEnd = operationEndAt;
+      }
+
+      if (overlap.startAt < group.earliestConflictStart) {
+        group.earliestConflictStart = overlap.startAt;
+      }
+
+      if (overlap.endAt > group.latestConflictEnd) {
+        group.latestConflictEnd = overlap.endAt;
+      }
     }
+  }
+
+  const sortedGroups = Array.from(groupedConflicts.values()).sort((a, b) => {
+    if (a.rowIndex !== b.rowIndex) {
+      return a.rowIndex - b.rowIndex;
+    }
+
+    if (a.rowId !== b.rowId) {
+      return a.rowId - b.rowId;
+    }
+
+    return a.roomId - b.roomId;
+  });
+
+  for (const group of sortedGroups) {
+    const affectedOperationIds = Array.from(group.affectedOperationIds).sort();
+    const conflictingBookingIds = Array.from(group.conflictingBookingIds).sort((a, b) => a - b);
+    const conflictingBatchIds = Array.from(group.conflictingBatchIds).sort((a, b) => a - b);
+    const conflictingSlotSystemIds = Array.from(group.conflictingSlotSystemIds).sort((a, b) => a - b);
+    const conflictingSourceRefs = Array.from(group.conflictingSourceRefs).sort();
+    const conflictingBookingEntries = Array.from(group.conflictingBookingEntriesById.values()).sort(
+      (a, b) => a.bookingId - b.bookingId,
+    );
+
+    const conflictId = hashValue(
+      `external|row:${group.rowId}|room:${group.roomId}|systems:${conflictingSlotSystemIds.join(",")}`,
+    );
+
+    const involvesMultipleSystems = conflictingSlotSystemIds.length > 1;
+
+    conflicts.push({
+      id: conflictId,
+      stage: "external",
+      type: "external",
+      operationId: affectedOperationIds[0] ?? group.representativeOperationId,
+      rowId: group.rowId,
+      rowIndex: group.rowIndex,
+      roomId: group.roomId,
+      startAt: group.earliestOperationStart.toISOString(),
+      endAt: group.latestOperationEnd.toISOString(),
+      reason: involvesMultipleSystems
+        ? "Clashes with committed timetable allocations from multiple slot systems"
+        : "Clashes with committed timetable allocation",
+      metadata: {
+        affectedOperationIds,
+        affectedOperationCount: affectedOperationIds.length,
+        conflictingBookingIds,
+        conflictingBookingCount: conflictingBookingIds.length,
+        conflictingBookingEntries,
+        conflictingBatchIds,
+        conflictingSlotSystemIds,
+        conflictingBatchStatus: "COMMITTED",
+        conflictingStartAt: group.earliestConflictStart.toISOString(),
+        conflictingEndAt: group.latestConflictEnd.toISOString(),
+        ...(conflictingBookingIds.length > 0
+          ? { conflictingBookingId: conflictingBookingIds[0] }
+          : {}),
+        ...(conflictingSourceRefs.length > 0
+          ? {
+              conflictingSourceRef: conflictingSourceRefs[0],
+              conflictingSourceRefs,
+            }
+          : {}),
+      },
+    });
   }
 
   return conflicts;
@@ -1494,7 +1823,22 @@ function computeInternalConflicts(operations: SessionOperation[]): TimetableComm
     (operation) => operation.status === "ACTIVE" && operation.kind === "UPSERT",
   );
   const conflicts: TimetableCommitConflict[] = [];
-  const emittedPairs = new Set<string>();
+
+  type InternalConflictGroup = {
+    rowId: number;
+    rowIndex: number;
+    roomId: number;
+    representativeOperationId: string;
+    affectedOperationIds: Set<string>;
+    secondaryRowIds: Set<number>;
+    secondaryRowIndexes: Set<number>;
+    secondaryOperationIds: Set<string>;
+    earliestStart: Date;
+    latestEnd: Date;
+    collisionCount: number;
+  };
+
+  const groupedConflicts = new Map<string, InternalConflictGroup>();
 
   for (let i = 0; i < activeOperations.length; i += 1) {
     const a = activeOperations[i];
@@ -1519,34 +1863,97 @@ function computeInternalConflicts(operations: SessionOperation[]): TimetableComm
         continue;
       }
 
-      const pairKey = [a.operationId, b.operationId].sort().join(":");
-      if (emittedPairs.has(pairKey)) {
-        continue;
+      const shouldSwapPrimary =
+        b.rowId < a.rowId ||
+        (b.rowId === a.rowId && b.rowIndex < a.rowIndex) ||
+        (b.rowId === a.rowId && b.rowIndex === a.rowIndex && b.operationId < a.operationId);
+
+      const primary = shouldSwapPrimary ? b : a;
+      const secondary = shouldSwapPrimary ? a : b;
+      const primaryStart = shouldSwapPrimary ? bStart : aStart;
+      const primaryEnd = shouldSwapPrimary ? bEnd : aEnd;
+
+      const groupKey = `${primary.rowId}|${primary.roomId}`;
+      let group = groupedConflicts.get(groupKey);
+
+      if (!group) {
+        group = {
+          rowId: primary.rowId,
+          rowIndex: primary.rowIndex,
+          roomId: primary.roomId,
+          representativeOperationId: primary.operationId,
+          affectedOperationIds: new Set<string>(),
+          secondaryRowIds: new Set<number>(),
+          secondaryRowIndexes: new Set<number>(),
+          secondaryOperationIds: new Set<string>(),
+          earliestStart: primaryStart,
+          latestEnd: primaryEnd,
+          collisionCount: 0,
+        };
+
+        groupedConflicts.set(groupKey, group);
       }
 
-      emittedPairs.add(pairKey);
+      group.affectedOperationIds.add(primary.operationId);
+      group.secondaryRowIds.add(secondary.rowId);
+      group.secondaryRowIndexes.add(secondary.rowIndex);
+      group.secondaryOperationIds.add(secondary.operationId);
+      group.collisionCount += 1;
 
-      const conflictId = hashValue(`internal|${pairKey}`);
-      conflicts.push({
-        id: conflictId,
-        stage: "internal",
-        type: "internal",
-        operationId: a.operationId,
-        rowId: a.rowId,
-        rowIndex: a.rowIndex,
-        roomId: a.roomId,
-        startAt: a.startAt,
-        endAt: a.endAt,
-        reason: "Internal room-time collision within current commit dataset",
-        metadata: {
-          secondaryOperationId: b.operationId,
-          secondaryRowId: b.rowId,
-          secondaryRowIndex: b.rowIndex,
-          secondaryStartAt: b.startAt,
-          secondaryEndAt: b.endAt,
-        },
-      });
+      if (primaryStart < group.earliestStart) {
+        group.earliestStart = primaryStart;
+      }
+
+      if (primaryEnd > group.latestEnd) {
+        group.latestEnd = primaryEnd;
+      }
     }
+  }
+
+  const sortedGroups = Array.from(groupedConflicts.values()).sort((a, b) => {
+    if (a.rowIndex !== b.rowIndex) {
+      return a.rowIndex - b.rowIndex;
+    }
+
+    if (a.rowId !== b.rowId) {
+      return a.rowId - b.rowId;
+    }
+
+    return a.roomId - b.roomId;
+  });
+
+  for (const group of sortedGroups) {
+    const affectedOperationIds = Array.from(group.affectedOperationIds).sort();
+    const secondaryRowIds = Array.from(group.secondaryRowIds).sort((a, b) => a - b);
+    const secondaryRowIndexes = Array.from(group.secondaryRowIndexes).sort((a, b) => a - b);
+    const secondaryOperationIds = Array.from(group.secondaryOperationIds).sort();
+
+    const conflictId = hashValue(
+      `internal|row:${group.rowId}|room:${group.roomId}|secondary:${secondaryRowIds.join(",")}`,
+    );
+
+    conflicts.push({
+      id: conflictId,
+      stage: "internal",
+      type: "internal",
+      operationId: affectedOperationIds[0] ?? group.representativeOperationId,
+      rowId: group.rowId,
+      rowIndex: group.rowIndex,
+      roomId: group.roomId,
+      startAt: group.earliestStart.toISOString(),
+      endAt: group.latestEnd.toISOString(),
+      reason: "Internal room-time collision with current timetable allocation",
+      metadata: {
+        affectedOperationIds,
+        affectedOperationCount: affectedOperationIds.length,
+        collisionCount: group.collisionCount,
+        secondaryOperationIds,
+        secondaryRowIds,
+        secondaryRowIndexes,
+        ...(secondaryRowIds.length > 0 ? { secondaryRowId: secondaryRowIds[0] } : {}),
+        ...(secondaryRowIndexes.length > 0 ? { secondaryRowIndex: secondaryRowIndexes[0] } : {}),
+      },
+    });
   }
 
   return conflicts;

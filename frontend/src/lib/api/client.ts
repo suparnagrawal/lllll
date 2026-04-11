@@ -272,9 +272,9 @@ export function httpErrorMessage(status: number, retryAfterSeconds?: number | nu
     case 409: return "Conflict with existing data";
     case 429: {
       if (retryAfterSeconds) {
-        return `Too many login attempts. Try again in ${retryAfterSeconds} second${retryAfterSeconds !== 1 ? 's' : ''}.`;
+        return `Too many requests. Try again in ${retryAfterSeconds} second${retryAfterSeconds !== 1 ? 's' : ''}.`;
       }
-      return "Too many login attempts. Please try again later.";
+      return "Too many requests. Please try again later.";
     }
     default:  return `Request failed (${status})`;
   }

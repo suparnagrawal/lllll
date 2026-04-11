@@ -93,6 +93,7 @@ export type {
   CommitSessionStatus,
   CommitSessionStage,
   CommitResolutionAction,
+  CommitResolutionTarget,
   CommitSessionSummary,
   CommitSessionConflict,
   CommitStageReport,

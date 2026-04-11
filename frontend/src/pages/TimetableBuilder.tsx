@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import {
   addDayLane as apiAddDayLane,
   createBooking as apiCreateBooking,
+  createRoom as apiCreateRoom,
 
   getTimetableImportBatch as apiGetTimetableImportBatch,
   getTimetableImportBatches as apiGetTimetableImportBatches,
@@ -61,6 +62,7 @@ import type {
   CommitStageReport,
   CommitSessionResolutionDecision,
   CommitResolutionAction,
+  CommitResolutionTarget,
   CommitSessionStage,
   ChangePreviewResult,
   EditCommitSessionStartResponse,
@@ -115,6 +117,17 @@ type ProcessedBookingEditState = {
 };
 
 type RowDecisionAction = "AUTO" | "IGNORE" | "RESOLVE" | "SKIP";
+
+type ConflictResolutionDraft = {
+  action: CommitResolutionAction;
+  target?: CommitResolutionTarget;
+  roomId?: number;
+  startAt?: string;
+  endAt?: string;
+  roomResolutionMode?: "SELECT_EXISTING" | "CREATE_ROOM";
+  createRoomBuildingId?: number | "";
+  createRoomName?: string;
+};
 
 type RowDecisionState = {
   action: RowDecisionAction;
@@ -422,6 +435,20 @@ function readMetadataString(metadata: Record<string, unknown>, key: string): str
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
+function isRateLimitError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const normalized = error.message.toLowerCase();
+  return (
+    normalized.includes("too many requests") ||
+    normalized.includes("rate limit") ||
+    normalized.includes("request failed (429)") ||
+    normalized.includes(" 429")
+  );
+}
+
 export type TimetableBuilderView = "all" | "structure" | "imports" | "processed" | "workspace";
 
 type TimetableBuilderPageProps = {
@@ -553,7 +580,7 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
   const [conflictStage, setConflictStage] = useState<CommitSessionStage | null>(null);
   const [conflictReport, setConflictReport] = useState<CommitStageReport | null>(null);
   const [conflictResolutions, setConflictResolutions] = useState<
-    Record<string, { action: CommitResolutionAction; roomId?: number }>
+    Record<string, ConflictResolutionDraft>
   >({});
   const [conflictLoading, setConflictLoading] = useState(false);
   const [showConflictDialog, setShowConflictDialog] = useState(false);
@@ -1926,6 +1953,19 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
     setCommitTargetSlotSystemId(null);
   };
 
+  const cleanupAfterRateLimitedCommitFailure = async (activeCommitSessionId: number | null) => {
+    if (activeCommitSessionId !== null) {
+      try {
+        await apiCancelCommitSession(activeCommitSessionId);
+      } catch {
+        // If cancellation is also throttled, still reset local state to avoid a stuck running UI.
+      }
+    }
+
+    clearCommitConflictState();
+    setEditSessionStatus("VIEW");
+  };
+
   const hydrateAfterFinalize = async (batchId: number) => {
     const refreshedReport = await apiGetTimetableImportBatch(batchId);
     hydratePreviewFromBatch(refreshedReport);
@@ -2059,9 +2099,12 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
     setImportInfo(null);
     setCommitPipelineStep("SESSION_STARTED");
 
+    let startedCommitSessionId: number | null = null;
+
     try {
       const decisions = buildImportDecisionsPayload();
       const session = await apiStartCommitSession(previewReport.batchId, decisions);
+      startedCommitSessionId = session.commitSessionId;
 
       setCommitSessionId(session.commitSessionId);
       setCommitFlowContext("import");
@@ -2082,7 +2125,17 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
       await runInternalThenFinalize(session.commitSessionId, previewReport.batchId);
     } catch (e) {
       setCommitPipelineStep("FAILED");
-      setImportError(e instanceof Error ? e.message : "Failed to start staged commit");
+
+      const message = e instanceof Error ? e.message : "Failed to start staged commit";
+
+      if (isRateLimitError(e)) {
+        await cleanupAfterRateLimitedCommitFailure(startedCommitSessionId);
+        setImportError(
+          `${message} Commit session was reset to avoid a stuck running state. Retry once the cooldown ends.`,
+        );
+      } else {
+        setImportError(message);
+      }
     } finally {
       setCommitLoading(false);
     }
@@ -2114,7 +2167,15 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
         return resolution.action === "ALTERNATIVE_ROOM" && !resolution.roomId;
       }
 
-      return resolution.action === "CHANGE_ROOM" && !resolution.roomId;
+      if (resolution.action !== "CHANGE_ROOM") {
+        return false;
+      }
+
+      if (resolution.roomResolutionMode === "CREATE_ROOM") {
+        return false;
+      }
+
+      return !resolution.roomId;
     });
 
     if (missingRoom.length > 0) {
@@ -2122,20 +2183,112 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
       return;
     }
 
+    const missingCreateRoomInputs = conflictReport.conflicts.filter((conflict) => {
+      const resolution = conflictResolutions[conflict.id];
+      if (!resolution || conflictStage === "runtime") {
+        return false;
+      }
+
+      if (resolution.action !== "CHANGE_ROOM" || resolution.roomResolutionMode !== "CREATE_ROOM") {
+        return false;
+      }
+
+      const buildingId = Number(resolution.createRoomBuildingId);
+      const roomName = resolution.createRoomName?.trim() ?? "";
+
+      return !Number.isInteger(buildingId) || buildingId <= 0 || roomName.length === 0;
+    });
+
+    if (missingCreateRoomInputs.length > 0) {
+      setImportError("Please provide building and room name for all create-room resolutions");
+      return;
+    }
+
+    const missingSlotRange = conflictReport.conflicts.filter((conflict) => {
+      const resolution = conflictResolutions[conflict.id];
+      if (!resolution || conflictStage === "runtime") {
+        return false;
+      }
+
+      if (
+        resolution.action !== "CHANGE_SLOT_EXISTING" &&
+        resolution.action !== "CREATE_SLOT_AND_USE"
+      ) {
+        return false;
+      }
+
+      const nextStart = resolution.startAt ? new Date(resolution.startAt) : null;
+      const nextEnd = resolution.endAt ? new Date(resolution.endAt) : null;
+
+      if (!nextStart || !nextEnd) {
+        return true;
+      }
+
+      if (Number.isNaN(nextStart.getTime()) || Number.isNaN(nextEnd.getTime())) {
+        return true;
+      }
+
+      return nextStart >= nextEnd;
+    });
+
+    if (missingSlotRange.length > 0) {
+      setImportError("Please provide a valid start/end window for all slot-change resolutions");
+      return;
+    }
+
     setConflictLoading(true);
     setImportError(null);
 
     try {
-      const resolutions: CommitSessionResolutionDecision[] = conflictReport.conflicts.map(
-        (conflict) => {
-          const resolution = conflictResolutions[conflict.id]!;
-          return {
-            conflictId: conflict.id,
-            action: resolution.action,
-            ...(resolution.roomId ? { roomId: resolution.roomId } : {}),
-          };
-        },
-      );
+      const resolutions: CommitSessionResolutionDecision[] = [];
+
+      for (const conflict of conflictReport.conflicts) {
+        const resolution = conflictResolutions[conflict.id]!;
+        let resolvedRoomId = resolution.roomId;
+
+        if (
+          conflictStage !== "runtime" &&
+          resolution.action === "CHANGE_ROOM" &&
+          resolution.roomResolutionMode === "CREATE_ROOM"
+        ) {
+          const buildingId = Number(resolution.createRoomBuildingId);
+          const roomName = resolution.createRoomName?.trim() ?? "";
+
+          const createdRoom = await apiCreateRoom({
+            buildingId,
+            name: roomName,
+          });
+
+          resolvedRoomId = createdRoom.id;
+
+          setRooms((prevRooms) => {
+            if (prevRooms.some((room) => room.id === createdRoom.id)) {
+              return prevRooms;
+            }
+
+            return [...prevRooms, createdRoom];
+          });
+        }
+
+        const nextResolution: CommitSessionResolutionDecision = {
+          conflictId: conflict.id,
+          action: resolution.action,
+          ...(resolution.target ? { target: resolution.target } : {}),
+          ...(resolvedRoomId ? { roomId: resolvedRoomId } : {}),
+        };
+
+        if (
+          (resolution.action === "CHANGE_SLOT_EXISTING" ||
+            resolution.action === "CREATE_SLOT_AND_USE") &&
+          resolution.startAt &&
+          resolution.endAt
+        ) {
+          nextResolution.startAt = new Date(resolution.startAt).toISOString();
+          nextResolution.endAt = new Date(resolution.endAt).toISOString();
+        }
+
+        resolutions.push(nextResolution);
+      }
 
       if (conflictStage === "external") {
         setCommitPipelineStep("EXTERNAL_RESOLVED");
@@ -2247,7 +2400,17 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
       }
     } catch (e) {
       setCommitPipelineStep("FAILED");
-      setImportError(e instanceof Error ? e.message : "Failed to resolve staged conflicts");
+
+      const message = e instanceof Error ? e.message : "Failed to resolve staged conflicts";
+
+      if (isRateLimitError(e)) {
+        await cleanupAfterRateLimitedCommitFailure(commitSessionId);
+        setImportError(
+          `${message} Commit session was reset to avoid a stuck running state. Retry once the cooldown ends.`,
+        );
+      } else {
+        setImportError(message);
+      }
     } finally {
       setConflictLoading(false);
     }
@@ -2349,6 +2512,8 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
     setImportError(null);
     setCommitPipelineStep("SESSION_STARTED");
 
+    let startedCommitSessionId: number | null = null;
+
     try {
       let snapshot = toSnapshotStateFromGrid(grid);
 
@@ -2386,6 +2551,7 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
       }
 
       setEditStartResult(result);
+      startedCommitSessionId = result.session.commitSessionId;
       setCommitSessionId(result.session.commitSessionId);
       setCommitFlowContext("edit");
       setCommitTargetSlotSystemId(selectedSystemId);
@@ -2414,7 +2580,15 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
     } catch (e) {
       setCommitPipelineStep("FAILED");
       const errorMsg = e instanceof Error ? e.message : "Failed to start edit commit";
-      setChangeError(mapEditStartErrorToMessage(errorMsg));
+
+      if (isRateLimitError(e)) {
+        await cleanupAfterRateLimitedCommitFailure(startedCommitSessionId);
+        setChangeError(
+          `${mapEditStartErrorToMessage(errorMsg)} Commit session was reset to avoid a stuck running state. Retry once the cooldown ends.`,
+        );
+      } else {
+        setChangeError(mapEditStartErrorToMessage(errorMsg));
+      }
     } finally {
       setEditStartLoading(false);
       setEditSessionStatus("VIEW");
@@ -2435,11 +2609,11 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
     setShowPruneConfirmation(false);
     setEditSessionStatus("EDITING");
 
-    try {
-      const commitSessionId = editStartResult.session.commitSessionId;
+    const activeCommitSessionId = editStartResult.session.commitSessionId;
 
+    try {
       setCommitPipelineStep("EXTERNAL_CHECK");
-      const externalReport = await apiRunExternalCommitCheck(commitSessionId);
+      const externalReport = await apiRunExternalCommitCheck(activeCommitSessionId);
 
       if (externalReport.conflictCount > 0) {
         setCommitPipelineStep("EXTERNAL_CONFLICTS");
@@ -2451,10 +2625,20 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
         return;
       }
 
-      await runInternalThenFinalizeForEdit(commitSessionId, selectedSystemId);
+      await runInternalThenFinalizeForEdit(activeCommitSessionId, selectedSystemId);
     } catch (e) {
       setCommitPipelineStep("FAILED");
-      setChangeError(e instanceof Error ? e.message : "Failed to proceed with prune confirmation");
+
+      const message = e instanceof Error ? e.message : "Failed to proceed with prune confirmation";
+
+      if (isRateLimitError(e)) {
+        await cleanupAfterRateLimitedCommitFailure(activeCommitSessionId);
+        setChangeError(
+          `${message} Commit session was reset to avoid a stuck running state. Retry once the cooldown ends.`,
+        );
+      } else {
+        setChangeError(message);
+      }
     } finally {
       setEditSessionStatus("VIEW");
     }
@@ -3985,6 +4169,13 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
                 : "Resolve pre-freeze clashes before moving to the next stage."}
             </p>
 
+            {conflictStage !== "runtime" && (
+              <div className="mb-4 rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+                Pre-freeze clashes are grouped by timetable allocation. Any resolution here is applied
+                across all linked occurrences in the current timetable system.
+              </div>
+            )}
+
             {conflictStage === "runtime" && (
               <div className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                 <div className="font-semibold">Grouped Runtime Conflicts</div>
@@ -4010,6 +4201,11 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
                 const conflictingStartAt = readMetadataString(metadata, "conflictingStartAt");
                 const conflictingEndAt = readMetadataString(metadata, "conflictingEndAt");
                 const secondaryRowIndex = readMetadataNumber(metadata, "secondaryRowIndex");
+                const affectedOperationCount = readMetadataNumber(metadata, "affectedOperationCount");
+                const activeTarget: CommitResolutionTarget = resolution?.target ?? "COMMITTING";
+                const roomResolutionMode = resolution?.roomResolutionMode ?? "SELECT_EXISTING";
+                const slotStartDraft = resolution?.startAt ?? toDateInputValue(conflict.startAt);
+                const slotEndDraft = resolution?.endAt ?? toDateInputValue(conflict.endAt);
 
                 return (
                   <div
@@ -4035,96 +4231,303 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
                       </div>
                     )}
 
-                    <div className="flex gap-3 flex-wrap items-center">
-                      {conflictStage === "runtime" && (
-                        <label className="flex items-center gap-1 cursor-pointer">
-                          <input
-                            type="radio"
-                            name={`resolution-${conflict.id}`}
-                            checked={resolution?.action === "FORCE_OVERWRITE"}
-                            onChange={() =>
-                              setConflictResolutions((prev) => ({
-                                ...prev,
-                                [conflict.id]: { action: "FORCE_OVERWRITE" },
-                              }))
-                            }
-                          />
-                          <span className="text-sm font-medium">Force Overwrite</span>
-                        </label>
+                    {conflictStage !== "runtime" &&
+                      affectedOperationCount !== null &&
+                      affectedOperationCount > 0 && (
+                        <div className="text-xs text-blue-700 mb-3">
+                          Resolution scope: {affectedOperationCount} grouped occurrence(s).
+                        </div>
                       )}
 
+                    <div className="space-y-3">
                       {conflictStage !== "runtime" && (
-                        <label className="flex items-center gap-1 cursor-pointer">
-                          <input
-                            type="radio"
-                            name={`resolution-${conflict.id}`}
-                            checked={resolution?.action === "CHANGE_ROOM"}
-                            onChange={() =>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium">Apply To</span>
+                          <select
+                            className="input"
+                            style={{ maxWidth: "220px" }}
+                            value={activeTarget}
+                            onChange={(e) => {
+                              const nextTarget = e.target.value as CommitResolutionTarget;
                               setConflictResolutions((prev) => ({
                                 ...prev,
-                                [conflict.id]: { action: "CHANGE_ROOM" },
-                              }))
-                            }
-                          />
-                          <span className="text-sm font-medium">Change Room</span>
-                        </label>
+                                [conflict.id]: {
+                                  ...(prev[conflict.id] ?? { action: "SKIP" }),
+                                  target: nextTarget,
+                                },
+                              }));
+                            }}
+                          >
+                            <option value="COMMITTING">Committing Allocation</option>
+                            <option value="CLASHING">Clashing Allocation</option>
+                          </select>
+                        </div>
                       )}
 
-                      <label className="flex items-center gap-1 cursor-pointer">
-                        <input
-                          type="radio"
-                          name={`resolution-${conflict.id}`}
-                          checked={resolution?.action === "SKIP"}
-                          onChange={() =>
-                            setConflictResolutions((prev) => ({
-                              ...prev,
-                              [conflict.id]: { action: "SKIP" },
-                            }))
-                          }
-                        />
-                        <span className="text-sm font-medium">Skip</span>
-                      </label>
+                      <div className="flex gap-3 flex-wrap items-center">
+                        {conflictStage === "runtime" && (
+                          <label className="flex items-center gap-1 cursor-pointer">
+                            <input
+                              type="radio"
+                              name={`resolution-${conflict.id}`}
+                              checked={resolution?.action === "FORCE_OVERWRITE"}
+                              onChange={() =>
+                                setConflictResolutions((prev) => ({
+                                  ...prev,
+                                  [conflict.id]: {
+                                    ...(prev[conflict.id] ?? {}),
+                                    action: "FORCE_OVERWRITE",
+                                  },
+                                }))
+                              }
+                            />
+                            <span className="text-sm font-medium">Force Overwrite</span>
+                          </label>
+                        )}
 
-                      {conflictStage === "runtime" && (
+                        {conflictStage !== "runtime" && (
+                          <label className="flex items-center gap-1 cursor-pointer">
+                            <input
+                              type="radio"
+                              name={`resolution-${conflict.id}`}
+                              checked={resolution?.action === "CHANGE_ROOM"}
+                              onChange={() =>
+                                setConflictResolutions((prev) => ({
+                                  ...prev,
+                                  [conflict.id]: {
+                                    ...(prev[conflict.id] ?? {}),
+                                    action: "CHANGE_ROOM",
+                                    target: activeTarget,
+                                    roomResolutionMode:
+                                      prev[conflict.id]?.roomResolutionMode ?? "SELECT_EXISTING",
+                                  },
+                                }))
+                              }
+                            />
+                            <span className="text-sm font-medium">Change Room</span>
+                          </label>
+                        )}
+
+                        {conflictStage !== "runtime" && (
+                          <label className="flex items-center gap-1 cursor-pointer">
+                            <input
+                              type="radio"
+                              name={`resolution-${conflict.id}`}
+                              checked={resolution?.action === "CHANGE_SLOT_EXISTING"}
+                              onChange={() =>
+                                setConflictResolutions((prev) => ({
+                                  ...prev,
+                                  [conflict.id]: {
+                                    ...(prev[conflict.id] ?? {}),
+                                    action: "CHANGE_SLOT_EXISTING",
+                                    target: activeTarget,
+                                    startAt: prev[conflict.id]?.startAt ?? slotStartDraft,
+                                    endAt: prev[conflict.id]?.endAt ?? slotEndDraft,
+                                  },
+                                }))
+                              }
+                            />
+                            <span className="text-sm font-medium">Change Slot (Existing)</span>
+                          </label>
+                        )}
+
+                        {conflictStage !== "runtime" && (
+                          <label className="flex items-center gap-1 cursor-pointer">
+                            <input
+                              type="radio"
+                              name={`resolution-${conflict.id}`}
+                              checked={resolution?.action === "CREATE_SLOT_AND_USE"}
+                              onChange={() =>
+                                setConflictResolutions((prev) => ({
+                                  ...prev,
+                                  [conflict.id]: {
+                                    ...(prev[conflict.id] ?? {}),
+                                    action: "CREATE_SLOT_AND_USE",
+                                    target: activeTarget,
+                                    startAt: prev[conflict.id]?.startAt ?? slotStartDraft,
+                                    endAt: prev[conflict.id]?.endAt ?? slotEndDraft,
+                                  },
+                                }))
+                              }
+                            />
+                            <span className="text-sm font-medium">Create Slot And Use</span>
+                          </label>
+                        )}
+
                         <label className="flex items-center gap-1 cursor-pointer">
                           <input
                             type="radio"
                             name={`resolution-${conflict.id}`}
-                            checked={resolution?.action === "ALTERNATIVE_ROOM"}
+                            checked={resolution?.action === "SKIP"}
                             onChange={() =>
                               setConflictResolutions((prev) => ({
                                 ...prev,
-                                [conflict.id]: { action: "ALTERNATIVE_ROOM" },
+                                [conflict.id]: {
+                                  ...(prev[conflict.id] ?? {}),
+                                  action: "SKIP",
+                                  ...(conflictStage !== "runtime" ? { target: activeTarget } : {}),
+                                },
                               }))
                             }
                           />
-                          <span className="text-sm font-medium">Alternative Room</span>
+                          <span className="text-sm font-medium">Skip</span>
                         </label>
+
+                        {conflictStage === "runtime" && (
+                          <label className="flex items-center gap-1 cursor-pointer">
+                            <input
+                              type="radio"
+                              name={`resolution-${conflict.id}`}
+                              checked={resolution?.action === "ALTERNATIVE_ROOM"}
+                              onChange={() =>
+                                setConflictResolutions((prev) => ({
+                                  ...prev,
+                                  [conflict.id]: {
+                                    ...(prev[conflict.id] ?? {}),
+                                    action: "ALTERNATIVE_ROOM",
+                                  },
+                                }))
+                              }
+                            />
+                            <span className="text-sm font-medium">Alternative Room</span>
+                          </label>
+                        )}
+                      </div>
+
+                      {(resolution?.action === "CHANGE_SLOT_EXISTING" ||
+                        resolution?.action === "CREATE_SLOT_AND_USE") && (
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div>
+                            <label className="block text-xs font-medium mb-1">Slot Start</label>
+                            <DateInput
+                              mode="datetime"
+                              value={slotStartDraft}
+                              onChange={(nextValue) =>
+                                setConflictResolutions((prev) => ({
+                                  ...prev,
+                                  [conflict.id]: {
+                                    ...(prev[conflict.id] ?? {
+                                      action: resolution?.action ?? "CHANGE_SLOT_EXISTING",
+                                    }),
+                                    startAt: nextValue,
+                                  },
+                                }))
+                              }
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium mb-1">Slot End</label>
+                            <DateInput
+                              mode="datetime"
+                              value={slotEndDraft}
+                              onChange={(nextValue) =>
+                                setConflictResolutions((prev) => ({
+                                  ...prev,
+                                  [conflict.id]: {
+                                    ...(prev[conflict.id] ?? {
+                                      action: resolution?.action ?? "CHANGE_SLOT_EXISTING",
+                                    }),
+                                    endAt: nextValue,
+                                  },
+                                }))
+                              }
+                            />
+                          </div>
+                        </div>
                       )}
 
                       {(resolution?.action === "ALTERNATIVE_ROOM" ||
                         resolution?.action === "CHANGE_ROOM") && (
-                        <select
-                          className="input"
-                          style={{ maxWidth: "200px" }}
-                          value={resolution.roomId ?? ""}
-                          onChange={(e) =>
-                            setConflictResolutions((prev) => ({
-                              ...prev,
-                              [conflict.id]: {
-                                action: resolution.action,
-                                roomId: Number(e.target.value) || undefined,
-                              },
-                            }))
-                          }
-                        >
-                          <option value="">Select room...</option>
-                          {rooms.map((room: Room) => (
-                            <option key={room.id} value={room.id}>
-                              {roomLabelById.get(room.id) ?? room.name}
-                            </option>
-                          ))}
-                        </select>
+                        <div className="space-y-2">
+                          {conflictStage !== "runtime" && resolution?.action === "CHANGE_ROOM" && (
+                            <select
+                              className="input"
+                              style={{ maxWidth: "260px" }}
+                              value={roomResolutionMode}
+                              onChange={(e) =>
+                                setConflictResolutions((prev) => ({
+                                  ...prev,
+                                  [conflict.id]: {
+                                    ...(prev[conflict.id] ?? { action: "CHANGE_ROOM" }),
+                                    roomResolutionMode: e.target.value as "SELECT_EXISTING" | "CREATE_ROOM",
+                                  },
+                                }))
+                              }
+                            >
+                              <option value="SELECT_EXISTING">Select Existing Room</option>
+                              <option value="CREATE_ROOM">Create Room</option>
+                            </select>
+                          )}
+
+                          {(conflictStage === "runtime" || roomResolutionMode === "SELECT_EXISTING") && (
+                            <select
+                              className="input"
+                              style={{ maxWidth: "260px" }}
+                              value={resolution?.roomId ?? ""}
+                              onChange={(e) =>
+                                setConflictResolutions((prev) => ({
+                                  ...prev,
+                                  [conflict.id]: {
+                                    ...(prev[conflict.id] ?? {
+                                      action: resolution?.action ?? "CHANGE_ROOM",
+                                    }),
+                                    roomId: Number(e.target.value) || undefined,
+                                  },
+                                }))
+                              }
+                            >
+                              <option value="">Select room...</option>
+                              {rooms.map((room: Room) => (
+                                <option key={room.id} value={room.id}>
+                                  {roomLabelById.get(room.id) ?? room.name}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+
+                          {conflictStage !== "runtime" &&
+                            resolution?.action === "CHANGE_ROOM" &&
+                            roomResolutionMode === "CREATE_ROOM" && (
+                              <div className="grid gap-2 sm:grid-cols-2">
+                                <select
+                                  className="input"
+                                  value={resolution?.createRoomBuildingId ?? ""}
+                                  onChange={(e) =>
+                                    setConflictResolutions((prev) => ({
+                                      ...prev,
+                                      [conflict.id]: {
+                                        ...(prev[conflict.id] ?? { action: "CHANGE_ROOM" }),
+                                        createRoomBuildingId:
+                                          e.target.value === "" ? "" : Number(e.target.value),
+                                      },
+                                    }))
+                                  }
+                                >
+                                  <option value="">Select building...</option>
+                                  {buildings.map((building) => (
+                                    <option key={building.id} value={building.id}>
+                                      {building.name}
+                                    </option>
+                                  ))}
+                                </select>
+                                <input
+                                  className="input"
+                                  type="text"
+                                  value={resolution?.createRoomName ?? ""}
+                                  placeholder="New room name"
+                                  onChange={(e) =>
+                                    setConflictResolutions((prev) => ({
+                                      ...prev,
+                                      [conflict.id]: {
+                                        ...(prev[conflict.id] ?? { action: "CHANGE_ROOM" }),
+                                        createRoomName: e.target.value,
+                                      },
+                                    }))
+                                  }
+                                />
+                              </div>
+                            )}
+                        </div>
                       )}
                     </div>
                   </div>

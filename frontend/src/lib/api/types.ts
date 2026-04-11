@@ -740,6 +740,8 @@ export type CommitResolutionAction =
   | "FORCE_OVERWRITE"
   | "ALTERNATIVE_ROOM";
 
+export type CommitResolutionTarget = "COMMITTING" | "CLASHING";
+
 export type CommitSessionSummary = {
   commitSessionId: number;
   batchId: number;
@@ -775,6 +777,7 @@ export type CommitStageReport = {
 export type CommitSessionResolutionDecision = {
   conflictId: string;
   action: CommitResolutionAction;
+  target?: CommitResolutionTarget;
   roomId?: number;
   startAt?: string;
   endAt?: string;

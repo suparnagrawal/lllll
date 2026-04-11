@@ -102,5 +102,5 @@ export const timetableImportMutationLimiter = createRateLimiter({
 export const timetableImportCommitLimiter = createRateLimiter({
   prefix: 'rl:timetable:imports:commit:',
   windowMs: 15 * 60 * 1000,
-  max: 12,
+  max: 30,
 });

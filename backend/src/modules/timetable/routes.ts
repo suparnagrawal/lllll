@@ -117,7 +117,7 @@ router.post(
 	timetableImportCommitLimiter,
 	handleCommitWithResolutions,
 );
-router.post("/imports/:id/cancel-commit", timetableImportCommitLimiter, handleCancelCommit);
+router.post("/imports/:id/cancel-commit", timetableImportMutationLimiter, handleCancelCommit);
 router.get("/imports/:id/freeze-status", timetableImportReadLimiter, handleGetFreezeStatus);
 
 // New staged commit session flow (external -> internal -> freeze -> runtime -> finalize)
@@ -125,37 +125,37 @@ router.post("/commit/start", timetableImportCommitLimiter, handleStartCommitSess
 router.post("/edit/start", timetableImportCommitLimiter, handleStartEditCommitSession);
 router.post(
 	"/commit/external-check",
-	timetableImportCommitLimiter,
+	timetableImportMutationLimiter,
 	handleExternalCommitCheck,
 );
 router.post(
 	"/commit/external-resolve",
-	timetableImportCommitLimiter,
+	timetableImportMutationLimiter,
 	handleExternalCommitResolve,
 );
 router.post(
 	"/commit/internal-check",
-	timetableImportCommitLimiter,
+	timetableImportMutationLimiter,
 	handleInternalCommitCheck,
 );
 router.post(
 	"/commit/internal-resolve",
-	timetableImportCommitLimiter,
+	timetableImportMutationLimiter,
 	handleInternalCommitResolve,
 );
 router.post("/commit/freeze", timetableImportCommitLimiter, handleStartCommitFreeze);
 router.post(
 	"/commit/runtime-check",
-	timetableImportCommitLimiter,
+	timetableImportMutationLimiter,
 	handleRuntimeCommitCheck,
 );
 router.post(
 	"/commit/runtime-resolve",
-	timetableImportCommitLimiter,
+	timetableImportMutationLimiter,
 	handleRuntimeCommitResolve,
 );
 router.post("/commit/finalize", timetableImportCommitLimiter, handleFinalizeCommitSession);
-router.post("/commit/cancel", timetableImportCommitLimiter, handleCancelCommitSession);
+router.post("/commit/cancel", timetableImportMutationLimiter, handleCancelCommitSession);
 router.get("/commit/:id/status", timetableImportReadLimiter, handleGetCommitSessionStatus);
 
 // Slot system change workspace
