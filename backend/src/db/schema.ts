@@ -72,6 +72,9 @@ export const rooms = pgTable(
   })
 );
 
+// Deprecated: Slot/Venue change system removed
+// retained only for backward compatibility
+// not used in current system
 export const bookingSourceEnum = pgEnum("booking_source", [
   "MANUAL_REQUEST",
   "TIMETABLE_ALLOCATION",
@@ -620,6 +623,9 @@ export const users = pgTable(
   }),
 );
 
+// Deprecated: Slot/Venue change system removed
+// retained only for backward compatibility
+// not used in current system
 export const notificationTypeEnum = pgEnum("notification_type", [
   "BOOKING_REQUEST_CREATED",
   "BOOKING_REQUEST_FORWARDED",

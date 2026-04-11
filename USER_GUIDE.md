@@ -42,7 +42,7 @@ If this is your first time signing in with Google:
 | Role | What You Can Do |
 |------|-----------------|
 | **Student** | View rooms, check availability, submit booking requests |
-| **Faculty** | All student permissions + approve student requests, request slot/venue changes |
+| **Faculty** | All student permissions + approve student requests, edit eligible bookings |
 | **Staff** | Manage rooms & buildings, approve requests, create direct bookings |
 | **Admin** | Full system access including user management and timetable import |
 
@@ -148,6 +148,27 @@ Once your request is approved, it becomes a booking:
    - Date and time
    - Event information
 
+## Edit Booking Flow
+
+- Users can modify existing bookings.
+
+### Direct Edit
+- Allowed for:
+   - STAFF / ADMIN
+   - PENDING_FACULTY bookings
+
+### Edit Request
+- Required for:
+   - PENDING_STAFF bookings
+   - APPROVED bookings
+
+### Approval Flow
+- On approval:
+   - old booking deleted
+   - new booking created
+- On rejection:
+   - no change applied
+
 ---
 
 ## For Faculty Members
@@ -164,28 +185,6 @@ When a student from your department submits a request:
    - **Approve** - If you support the request
    - **Forward to Staff** - Send for final approval
    - **Reject** - Decline with a reason
-
-### Requesting Slot Changes
-
-If you need to change a class time:
-
-1. Go to the booking you want to change
-2. Click **"Request Slot Change"**
-3. Select the new date/time
-4. Provide a reason for the change
-5. Submit for staff approval
-
-### Requesting Venue Changes
-
-If you need a different room:
-
-1. Go to the booking you want to change
-2. Click **"Request Venue Change"**
-3. Select the new room
-4. Provide a reason for the change
-5. Submit for staff approval
-
----
 
 ## For Staff Members
 
@@ -257,7 +256,7 @@ If you need a different room:
 You'll receive notifications when:
 - ✉️ Your booking request status changes
 - ✉️ A request needs your approval (Faculty/Staff)
-- ✉️ Your slot/venue change request is processed
+- ✉️ Your booking edit request is processed
 
 ### Viewing Notifications
 
@@ -394,8 +393,7 @@ For the best experience, use:
 | **Slot** | A specific time period in the schedule |
 | **Venue** | The room/location for an event |
 | **Building** | A physical structure containing rooms |
-| **Slot Change** | Changing the time of an existing booking |
-| **Venue Change** | Changing the room of an existing booking |
+| **Edit Booking** | Unified process for changing booking time and/or room |
 
 ---
 
