@@ -66,31 +66,31 @@ export function Sidebar({ isMobile = false, onClose }: SidebarProps) {
       {/* Mobile overlay */}
       {isMobile && (
         <div
-          className="fixed inset-0 bg-black/50 z-30 lg:hidden"
+          className="fixed inset-0 bg-black/25 z-30 lg:hidden"
           onClick={onClose}
         />
       )}
 
       {/* Sidebar */}
       <aside
-        className={`bg-gray-900 text-white w-64 flex flex-col transition-all duration-300 ${
+        className={`bg-white text-slate-900 w-64 flex flex-col border-r border-slate-200 transition-colors duration-100 ${
           isMobile
-            ? 'fixed left-0 top-0 h-screen z-40 shadow-lg'
+            ? 'fixed left-0 top-0 h-screen z-40 shadow-sm'
             : 'relative h-full overflow-y-auto'
         }`}
       >
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-800">
+        <div className="flex items-center justify-between p-6 border-b border-slate-200">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded bg-blue-500 flex items-center justify-center font-bold">
+            <div className="w-8 h-8 rounded-md bg-slate-700 text-white flex items-center justify-center font-semibold">
               RB
             </div>
-            <span className="font-semibold text-lg hidden sm:inline">Rooms</span>
+            <span className="font-semibold text-base tracking-tight hidden sm:inline">Rooms</span>
           </div>
           {isMobile && (
             <button
               onClick={onClose}
-              className="p-1 hover:bg-gray-800 rounded-lg transition-colors lg:hidden"
+              className="p-1 hover:bg-slate-100 rounded-md transition-colors duration-100 lg:hidden"
             >
               <X className="w-5 h-5" />
             </button>
@@ -111,8 +111,8 @@ export function Sidebar({ isMobile = false, onClose }: SidebarProps) {
                 }}
                 className={`w-full text-left px-4 py-3 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-3 ${
                   active
-                    ? 'bg-blue-600 text-white shadow-md'
-                    : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                    ? 'bg-slate-100 border border-slate-200 text-slate-900'
+                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
                 }`}
               >
                 <Icon className="w-4 h-4" />
@@ -124,14 +124,14 @@ export function Sidebar({ isMobile = false, onClose }: SidebarProps) {
 
         {/* User Profile Section */}
         {user && (
-          <div className="border-t border-gray-800 p-4 space-y-3">
-            <div className="px-4 py-2 rounded-lg bg-gray-800">
-              <p className="text-sm font-medium text-gray-200">{user.name}</p>
-              <p className="text-xs text-gray-400">{user.role}</p>
+          <div className="border-t border-slate-200 p-4 space-y-3">
+            <div className="px-4 py-2 rounded-md bg-slate-50 border border-slate-200">
+              <p className="text-sm font-medium text-slate-900">{user.name}</p>
+              <p className="text-xs text-slate-500">{user.role}</p>
             </div>
             <button
               onClick={handleLogout}
-              className="w-full px-4 py-2 rounded-lg text-sm font-medium text-gray-300 hover:bg-gray-800 hover:text-white transition-all duration-200 flex items-center gap-2"
+              className="w-full px-4 py-2 rounded-md text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors duration-100 flex items-center gap-2"
             >
               <LogOut className="w-4 h-4" />
               <span>Logout</span>
@@ -150,9 +150,9 @@ export function MobileSidebarToggle() {
     <>
       <button
         onClick={() => setIsOpen(true)}
-        className="lg:hidden p-2 hover:bg-gray-100 rounded-lg transition-colors"
+        className="lg:hidden p-2 hover:bg-slate-100 rounded-md border border-slate-200 transition-colors duration-100"
       >
-        <Menu className="w-5 h-5 text-gray-600" />
+        <Menu className="w-5 h-5 text-slate-600" />
       </button>
       {isOpen && (
         <Sidebar isMobile={true} onClose={() => setIsOpen(false)} />
