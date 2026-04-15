@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { useLocation } from "react-router-dom";
 import {
@@ -8,12 +8,14 @@ import {
   createBookingRequest,
   forwardBookingRequest,
   getFacultyUsers,
+  getBuildingMatrixAvailability,
   getManagedUsers,
   getBookingRequests,
   getBookings,
   getEditRequests,
   getRooms,
   getBuildings,
+  getUserBuildingAssignments,
   rejectEditRequest,
   rejectBookingRequest,
 } from "../lib/api";
@@ -30,9 +32,12 @@ import type {
 import { useAuth } from "../auth/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { DateInput } from "../components/DateInput";
-import { formatDateTimeDDMMYYYY } from "../utils/datetime";
+import { formatDateTimeDDMMYYYY, getCurrentISTDateInputValue } from "../utils/datetime";
 import { formatError } from "../utils/formatError";
+import { buildHolidayWarningPrompt, isHolidayWarningError } from "../utils/holidayWarning";
 import { formatRoomDisplayWithBuildingsArray } from "../utils/room";
+import { BuildingSelector } from "./components/BuildingSelector";
+import { RoomAvailabilityCard } from "./components/RoomAvailabilityCard";
 import type {
   AvailabilityPrefill,
   BookingRequestPrefill,
@@ -80,6 +85,117 @@ const EVENT_TYPE_OPTIONS: BookingEventType[] = [
   "OTHER",
 ];
 
+const BOOKING_REQUESTS_PREFERENCES_KEY = "qol.bookingRequests.preferences.v1";
+
+type BookingRequestPreferences = {
+  statusFilter: StatusFilter;
+  roomId: number | null;
+  facultyId: number | null;
+  startAt: string;
+  endAt: string;
+  eventType: BookingEventType;
+  purpose: string;
+  participantCount: string;
+};
+
+const DEFAULT_BOOKING_REQUEST_PREFERENCES: BookingRequestPreferences = {
+  statusFilter: "ALL",
+  roomId: null,
+  facultyId: null,
+  startAt: "",
+  endAt: "",
+  eventType: "OTHER",
+  purpose: "",
+  participantCount: "",
+};
+
+const BAND_FINDER_SLOT_GRANULARITY_MINUTES = 15;
+
+type BandFinderOption = {
+  roomId: number;
+  roomName: string;
+  buildingId: number;
+  buildingName: string;
+  capacity: number | null;
+  roomType: string | null;
+  startAt: string;
+  endAt: string;
+};
+
+function pad2(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+function toLocalDateTimeKey(dateKey: string, timeKey: string): string {
+  return `${dateKey}T${timeKey}`;
+}
+
+function addMinutesToLocalDateTime(dateKey: string, timeKey: string, minutes: number): string {
+  const base = new Date(`${dateKey}T${timeKey}:00`);
+
+  if (Number.isNaN(base.getTime())) {
+    return toLocalDateTimeKey(dateKey, timeKey);
+  }
+
+  base.setMinutes(base.getMinutes() + minutes);
+
+  const year = base.getFullYear();
+  const month = pad2(base.getMonth() + 1);
+  const day = pad2(base.getDate());
+  const hours = pad2(base.getHours());
+  const mins = pad2(base.getMinutes());
+
+  return `${year}-${month}-${day}T${hours}:${mins}`;
+}
+
+function isStatusFilter(value: unknown): value is StatusFilter {
+  return typeof value === "string" && (STATUS_OPTIONS as string[]).includes(value);
+}
+
+function isBookingEventType(value: unknown): value is BookingEventType {
+  return typeof value === "string" && (EVENT_TYPE_OPTIONS as string[]).includes(value);
+}
+
+function readBookingRequestPreferences(): BookingRequestPreferences {
+  if (typeof window === "undefined") {
+    return DEFAULT_BOOKING_REQUEST_PREFERENCES;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(BOOKING_REQUESTS_PREFERENCES_KEY);
+
+    if (!raw) {
+      return DEFAULT_BOOKING_REQUEST_PREFERENCES;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<BookingRequestPreferences>;
+
+    return {
+      statusFilter: isStatusFilter(parsed.statusFilter)
+        ? parsed.statusFilter
+        : "ALL",
+      roomId:
+        typeof parsed.roomId === "number" && Number.isFinite(parsed.roomId)
+          ? parsed.roomId
+          : null,
+      facultyId:
+        typeof parsed.facultyId === "number" && Number.isFinite(parsed.facultyId)
+          ? parsed.facultyId
+          : null,
+      startAt: typeof parsed.startAt === "string" ? parsed.startAt : "",
+      endAt: typeof parsed.endAt === "string" ? parsed.endAt : "",
+      eventType: isBookingEventType(parsed.eventType)
+        ? parsed.eventType
+        : "OTHER",
+      purpose: typeof parsed.purpose === "string" ? parsed.purpose : "",
+      participantCount:
+        typeof parsed.participantCount === "string" ? parsed.participantCount : "",
+    };
+  } catch {
+    return DEFAULT_BOOKING_REQUEST_PREFERENCES;
+  }
+}
+
 function statusBadgeVariant(status: BookingStatus): "default" | "secondary" | "destructive" | "outline" | "ghost" | "link" {
   const map: Record<BookingStatus, "default" | "secondary" | "destructive" | "outline" | "ghost" | "link"> = {
     PENDING_FACULTY: "outline",
@@ -102,13 +218,18 @@ export function BookingRequestsPage({
   onPrefillApplied,
   onOpenAvailability,
 }: BookingRequestsPageProps) {
+  const [initialPreferences] = useState<BookingRequestPreferences>(() =>
+    readBookingRequestPreferences(),
+  );
   const { user } = useAuth();
   const { pushToast } = useToast();
   const location = useLocation();
   const currentRole = user?.role ?? null;
   const isAdmin = currentRole === "ADMIN";
+  const isStaff = currentRole === "STAFF";
   const isStudent = currentRole === "STUDENT";
-  const canCreate = currentRole === "STUDENT" || currentRole === "FACULTY";
+  const canCreate =
+    currentRole === "STUDENT" || currentRole === "FACULTY" || currentRole === "STAFF";
 
   // Get prefill from location state if available
   const locationPrefill = (location.state as any)?.prefill as BookingRequestPrefill | undefined;
@@ -120,23 +241,45 @@ export function BookingRequestsPage({
   const [editRequests, setEditRequests] = useState<BookingEditRequest[]>([]);
   const [bookingsById, setBookingsById] = useState<Record<number, Booking>>({});
   const [adminUserNameById, setAdminUserNameById] = useState<Record<number, string>>({});
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(initialPreferences.statusFilter);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [roomId, setRoomId] = useState<number | "">(""); 
-  const [facultyId, setFacultyId] = useState<number | "">("");
-  const [startAt, setStartAt] = useState("");
-  const [endAt, setEndAt] = useState("");
-  const [eventType, setEventType] = useState<BookingEventType>("OTHER");
-  const [purpose, setPurpose] = useState("");
-  const [participantCount, setParticipantCount] = useState("");
+  const [roomId, setRoomId] = useState<number | "">(initialPreferences.roomId ?? "");
+  const [facultyId, setFacultyId] = useState<number | "">(initialPreferences.facultyId ?? "");
+  const [startAt, setStartAt] = useState(initialPreferences.startAt);
+  const [endAt, setEndAt] = useState(initialPreferences.endAt);
+  const [eventType, setEventType] = useState<BookingEventType>(initialPreferences.eventType);
+  const [purpose, setPurpose] = useState(initialPreferences.purpose);
+  const [participantCount, setParticipantCount] = useState(initialPreferences.participantCount);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [actingId, setActingId] = useState<number | null>(null);
   const [prefillMessage, setPrefillMessage] = useState<string | null>(null);
 
+  const [staffBuildingIds, setStaffBuildingIds] = useState<number[]>([]);
+
+  const [finderDate, setFinderDate] = useState(getCurrentISTDateInputValue());
+  const [finderWindowStart, setFinderWindowStart] = useState("16:00");
+  const [finderWindowEnd, setFinderWindowEnd] = useState("20:00");
+  const [finderBandMinutes, setFinderBandMinutes] = useState<number>(60);
+  const [finderMinCapacity, setFinderMinCapacity] = useState("");
+  const [finderBuildingIds, setFinderBuildingIds] = useState<number[]>([]);
+  const [finderBuildingsInitialized, setFinderBuildingsInitialized] = useState(false);
+  const [finderOptions, setFinderOptions] = useState<BandFinderOption[]>([]);
+  const [finderLoading, setFinderLoading] = useState(false);
+  const [finderError, setFinderError] = useState<string | null>(null);
+  const [finderNotice, setFinderNotice] = useState<string | null>(null);
+
   const roomNameById = new Map(rooms.map((r) => [r.id, formatRoomDisplayWithBuildingsArray(r, buildings)]));
+  const roomById = useMemo(() => new Map(rooms.map((room) => [room.id, room])), [rooms]);
+  const visibleFinderBuildings = useMemo(
+    () =>
+      isStaff
+        ? buildings.filter((building) => staffBuildingIds.includes(building.id))
+        : buildings,
+    [buildings, isStaff, staffBuildingIds],
+  );
 
   const loadAdminUsers = async () => {
     if (!isAdmin) {
@@ -210,7 +353,6 @@ export function BookingRequestsPage({
     void (async () => {
       await loadRooms();
       await loadBuildings();
-      await loadRequests("ALL");
       await loadEditRequests();
 
       if (isStudent) {
@@ -223,9 +365,75 @@ export function BookingRequestsPage({
   }, [isStudent]);
 
   useEffect(() => {
+    void loadRequests(statusFilter);
+  }, [statusFilter]);
+
+  useEffect(() => {
     void loadAdminUsers();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isStaff || !user) {
+      setStaffBuildingIds([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const response = await getUserBuildingAssignments(user.id);
+        if (!cancelled) {
+          setStaffBuildingIds(response.buildingIds);
+        }
+      } catch {
+        if (!cancelled) {
+          setStaffBuildingIds([]);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isStaff, user]);
+
+  useEffect(() => {
+    const visibleBuildingIdSet = new Set(visibleFinderBuildings.map((building) => building.id));
+    setFinderBuildingIds((prev) => prev.filter((id) => visibleBuildingIdSet.has(id)));
+  }, [visibleFinderBuildings]);
+
+  useEffect(() => {
+    if (finderBuildingsInitialized || visibleFinderBuildings.length === 0) {
+      return;
+    }
+
+    setFinderBuildingIds(visibleFinderBuildings.map((building) => building.id));
+    setFinderBuildingsInitialized(true);
+  }, [finderBuildingsInitialized, visibleFinderBuildings]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const payload: BookingRequestPreferences = {
+      statusFilter,
+      roomId: roomId === "" ? null : roomId,
+      facultyId: facultyId === "" ? null : facultyId,
+      startAt,
+      endAt,
+      eventType,
+      purpose,
+      participantCount,
+    };
+
+    window.localStorage.setItem(
+      BOOKING_REQUESTS_PREFERENCES_KEY,
+      JSON.stringify(payload),
+    );
+  }, [statusFilter, roomId, facultyId, startAt, endAt, eventType, purpose, participantCount]);
 
   useEffect(() => {
     // Use locationPrefill if available, otherwise use prop prefill
@@ -246,7 +454,237 @@ export function BookingRequestsPage({
 
   const handleFilterChange = (value: StatusFilter) => {
     setStatusFilter(value);
-    void loadRequests(value);
+  };
+
+  const clearRequestForm = () => {
+    setRoomId("");
+    setFacultyId("");
+    setStartAt("");
+    setEndAt("");
+    setEventType("OTHER");
+    setPurpose("");
+    setParticipantCount("");
+    setPrefillMessage(null);
+  };
+
+  const applyFinderOption = (option: BandFinderOption) => {
+    setRoomId(option.roomId);
+    setStartAt(option.startAt);
+    setEndAt(option.endAt);
+    setError(null);
+    setPrefillMessage(
+      `Form prefilled from time-band finder: ${option.buildingName} - ${option.roomName} (${option.startAt.slice(11, 16)} to ${option.endAt.slice(11, 16)}).`,
+    );
+  };
+
+  const resetBandFinder = () => {
+    setFinderDate(getCurrentISTDateInputValue());
+    setFinderWindowStart("16:00");
+    setFinderWindowEnd("20:00");
+    setFinderBandMinutes(60);
+    setFinderMinCapacity("");
+    setFinderOptions([]);
+    setFinderError(null);
+    setFinderNotice(null);
+    setFinderBuildingIds(visibleFinderBuildings.map((building) => building.id));
+  };
+
+  const handleBandFinderSearch = async () => {
+    setFinderError(null);
+    setFinderNotice(null);
+    setFinderOptions([]);
+
+    if (!finderDate) {
+      setFinderError("Date is required.");
+      return;
+    }
+
+    if (finderBuildingIds.length === 0) {
+      setFinderError("Select at least one building.");
+      return;
+    }
+
+    if (!finderWindowStart || !finderWindowEnd) {
+      setFinderError("Start and end time are required.");
+      return;
+    }
+
+    const windowStart = new Date(`${finderDate}T${finderWindowStart}:00`);
+    const windowEnd = new Date(`${finderDate}T${finderWindowEnd}:00`);
+
+    if (
+      Number.isNaN(windowStart.getTime()) ||
+      Number.isNaN(windowEnd.getTime()) ||
+      windowStart.getTime() >= windowEnd.getTime()
+    ) {
+      setFinderError("Time range is invalid. End time must be after start time.");
+      return;
+    }
+
+    const requestedBandMinutes = Number(finderBandMinutes);
+    if (
+      !Number.isInteger(requestedBandMinutes) ||
+      requestedBandMinutes < BAND_FINDER_SLOT_GRANULARITY_MINUTES
+    ) {
+      setFinderError(`Band duration must be at least ${BAND_FINDER_SLOT_GRANULARITY_MINUTES} minutes.`);
+      return;
+    }
+
+    const normalizedBandMinutes =
+      Math.ceil(requestedBandMinutes / BAND_FINDER_SLOT_GRANULARITY_MINUTES) *
+      BAND_FINDER_SLOT_GRANULARITY_MINUTES;
+
+    const windowDurationMinutes = Math.floor(
+      (windowEnd.getTime() - windowStart.getTime()) / (1000 * 60),
+    );
+
+    if (normalizedBandMinutes > windowDurationMinutes) {
+      setFinderError("Band duration exceeds the selected time range.");
+      return;
+    }
+
+    const parsedMinCapacity =
+      finderMinCapacity.trim().length > 0 ? Number(finderMinCapacity) : null;
+
+    if (
+      parsedMinCapacity !== null &&
+      (!Number.isInteger(parsedMinCapacity) || parsedMinCapacity <= 0)
+    ) {
+      setFinderError("Minimum capacity must be a positive integer.");
+      return;
+    }
+
+    setFinderLoading(true);
+
+    try {
+      const results = await Promise.allSettled(
+        finderBuildingIds.map((buildingId) =>
+          getBuildingMatrixAvailability(
+            buildingId,
+            finderDate,
+            finderWindowStart,
+            finderWindowEnd,
+            BAND_FINDER_SLOT_GRANULARITY_MINUTES,
+          ),
+        ),
+      );
+
+      const requiredSlotCount = Math.max(
+        1,
+        normalizedBandMinutes / BAND_FINDER_SLOT_GRANULARITY_MINUTES,
+      );
+      let skippedBuildings = 0;
+      const rawOptions: BandFinderOption[] = [];
+
+      for (const result of results) {
+        if (result.status !== "fulfilled") {
+          skippedBuildings += 1;
+          continue;
+        }
+
+        const matrixReport = result.value;
+
+        for (const matrixRoom of matrixReport.matrix) {
+          const roomMeta = roomById.get(matrixRoom.roomId);
+
+          if (parsedMinCapacity !== null) {
+            const roomCapacity = roomMeta?.capacity;
+            if (roomCapacity === null || roomCapacity === undefined || roomCapacity < parsedMinCapacity) {
+              continue;
+            }
+          }
+
+          for (let startIdx = 0; startIdx <= matrixRoom.slots.length - requiredSlotCount; startIdx += 1) {
+            let allAvailable = true;
+
+            for (let offset = 0; offset < requiredSlotCount; offset += 1) {
+              if (matrixRoom.slots[startIdx + offset]?.status !== "available") {
+                allAvailable = false;
+                break;
+              }
+            }
+
+            if (!allAvailable) {
+              continue;
+            }
+
+            const startTime = matrixRoom.slots[startIdx]?.time;
+            if (!startTime) {
+              continue;
+            }
+
+            const startAt = toLocalDateTimeKey(finderDate, startTime);
+            const endAt = addMinutesToLocalDateTime(
+              finderDate,
+              startTime,
+              normalizedBandMinutes,
+            );
+
+            const computedEnd = new Date(`${endAt}:00`);
+            if (
+              Number.isNaN(computedEnd.getTime()) ||
+              computedEnd.getTime() > windowEnd.getTime()
+            ) {
+              continue;
+            }
+
+            rawOptions.push({
+              roomId: matrixRoom.roomId,
+              roomName: matrixRoom.roomName,
+              buildingId: matrixReport.buildingId,
+              buildingName: matrixReport.buildingName,
+              capacity: roomMeta?.capacity ?? null,
+              roomType: roomMeta?.roomType ?? null,
+              startAt,
+              endAt,
+            });
+          }
+        }
+      }
+
+      const dedupedOptions = Array.from(
+        rawOptions.reduce((map, option) => {
+          const key = `${option.roomId}-${option.startAt}-${option.endAt}`;
+          if (!map.has(key)) {
+            map.set(key, option);
+          }
+          return map;
+        }, new Map<string, BandFinderOption>()),
+      )
+        .map(([, option]) => option)
+        .sort((a, b) => {
+          const byStart = a.startAt.localeCompare(b.startAt);
+          if (byStart !== 0) return byStart;
+
+          const byBuilding = a.buildingName.localeCompare(b.buildingName);
+          if (byBuilding !== 0) return byBuilding;
+
+          return a.roomName.localeCompare(b.roomName);
+        });
+
+      setFinderOptions(dedupedOptions);
+
+      const roundedMessage =
+        normalizedBandMinutes !== requestedBandMinutes
+          ? ` Duration rounded to ${normalizedBandMinutes} minutes (15-minute granularity).`
+          : "";
+
+      if (dedupedOptions.length === 0) {
+        setFinderNotice(
+          `No available options found for the selected constraints.${roundedMessage}`,
+        );
+      } else if (skippedBuildings > 0) {
+        setFinderNotice(
+          `Found ${dedupedOptions.length} option(s). ${skippedBuildings} selected building(s) were skipped due to access or data issues.${roundedMessage}`,
+        );
+      } else {
+        setFinderNotice(`Found ${dedupedOptions.length} option(s).${roundedMessage}`);
+      }
+    } catch (searchError) {
+      setFinderError(formatError(searchError, "Failed to search band options"));
+    } finally {
+      setFinderLoading(false);
+    }
   };
 
   const handleCreate = async (event: FormEvent<HTMLFormElement>) => {
@@ -296,15 +734,26 @@ export function BookingRequestsPage({
         payload.facultyId = Number(facultyId);
       }
 
-      await createBookingRequest(payload);
-      setRoomId("");
-      setFacultyId("");
-      setStartAt("");
-      setEndAt("");
-      setEventType("OTHER");
-      setPurpose("");
-      setParticipantCount("");
-      setPrefillMessage(null);
+      try {
+        await createBookingRequest(payload);
+      } catch (error) {
+        if (!isHolidayWarningError(error)) {
+          throw error;
+        }
+
+        const continueAnyway = window.confirm(buildHolidayWarningPrompt(error));
+
+        if (!continueAnyway) {
+          return;
+        }
+
+        await createBookingRequest({
+          ...payload,
+          overrideHolidayWarning: true,
+        });
+      }
+
+      clearRequestForm();
       await loadRequests(statusFilter);
     } catch (e) {
       setError(formatError(e, "Failed to create request"));
@@ -376,6 +825,38 @@ export function BookingRequestsPage({
     }
   };
 
+  const handleApproveRequest = async (requestId: number) => {
+    setActingId(requestId);
+    setError(null);
+
+    try {
+      try {
+        await approveBookingRequest(requestId);
+      } catch (error) {
+        if (!isHolidayWarningError(error)) {
+          throw error;
+        }
+
+        const continueAnyway = window.confirm(buildHolidayWarningPrompt(error));
+
+        if (!continueAnyway) {
+          return;
+        }
+
+        await approveBookingRequest(requestId, {
+          overrideHolidayWarning: true,
+        });
+      }
+
+      await loadRequests(statusFilter);
+      await loadEditRequests();
+    } catch (error) {
+      setError(formatError(error, "Action failed"));
+    } finally {
+      setActingId(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -399,7 +880,159 @@ export function BookingRequestsPage({
             {s === "ALL" ? "All" : STATUS_LABELS[s]}
           </Button>
         ))}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={statusFilter === "ALL"}
+          onClick={() => setStatusFilter("ALL")}
+        >
+          Reset Filter
+        </Button>
       </div>
+
+      {/* Time-Band Finder */}
+      {canCreate && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Find Available Time Bands</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="finderDate">Date</Label>
+                <Input
+                  id="finderDate"
+                  type="date"
+                  value={finderDate}
+                  onChange={(event) => setFinderDate(event.target.value)}
+                  disabled={finderLoading}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="finderWindowStart">Window Start</Label>
+                <Input
+                  id="finderWindowStart"
+                  type="time"
+                  value={finderWindowStart}
+                  onChange={(event) => setFinderWindowStart(event.target.value)}
+                  disabled={finderLoading}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="finderWindowEnd">Window End</Label>
+                <Input
+                  id="finderWindowEnd"
+                  type="time"
+                  value={finderWindowEnd}
+                  onChange={(event) => setFinderWindowEnd(event.target.value)}
+                  disabled={finderLoading}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="finderBandMinutes">Band Duration (minutes)</Label>
+                <Input
+                  id="finderBandMinutes"
+                  type="number"
+                  min={15}
+                  step={15}
+                  value={finderBandMinutes}
+                  onChange={(event) => setFinderBandMinutes(Number(event.target.value || 0))}
+                  disabled={finderLoading}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="finderMinCapacity">Minimum Capacity</Label>
+                <Input
+                  id="finderMinCapacity"
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={finderMinCapacity}
+                  onChange={(event) => setFinderMinCapacity(event.target.value)}
+                  placeholder="Optional"
+                  disabled={finderLoading}
+                />
+              </div>
+            </div>
+
+            <div>
+              <p className="text-sm font-medium text-gray-700 mb-2">Allowed Buildings</p>
+              {visibleFinderBuildings.length === 0 ? (
+                <p className="text-sm text-gray-500">
+                  No buildings available for this account.
+                </p>
+              ) : (
+                <BuildingSelector
+                  buildings={visibleFinderBuildings}
+                  selectedBuildingIds={finderBuildingIds}
+                  onSelectionChange={setFinderBuildingIds}
+                />
+              )}
+            </div>
+
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                onClick={() => void handleBandFinderSearch()}
+                disabled={finderLoading || visibleFinderBuildings.length === 0}
+              >
+                {finderLoading ? "Searching..." : "Search Options"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={resetBandFinder}
+                disabled={finderLoading}
+              >
+                Reset Finder
+              </Button>
+            </div>
+
+            {finderError && (
+              <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-md">
+                {finderError}
+              </div>
+            )}
+
+            {finderNotice && !finderError && (
+              <div className="bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded-md">
+                {finderNotice}
+              </div>
+            )}
+
+            {finderOptions.length > 0 && (
+              <div className="space-y-3">
+                <p className="text-sm text-gray-600">
+                  Click a card to prefill the request form with that room and time band.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {finderOptions.map((option) => (
+                    <RoomAvailabilityCard
+                      key={`${option.roomId}-${option.startAt}-${option.endAt}`}
+                      room={{
+                        id: option.roomId,
+                        name: option.roomName,
+                        capacity: option.capacity,
+                        roomType: option.roomType,
+                      }}
+                      buildingName={option.buildingName}
+                      isFullyAvailable={true}
+                      availableFrom={option.startAt.slice(11, 16)}
+                      availableTo={option.endAt.slice(11, 16)}
+                      onClick={() => applyFinderOption(option)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Create Form */}
       {canCreate && (
@@ -553,7 +1186,7 @@ export function BookingRequestsPage({
                     isSubmitting || (isStudent && facultyUsers.length === 0)
                   }
                 >
-                  {isSubmitting ? "Submitting…" : "Submit Request"}
+                  {isSubmitting ? "Submitting..." : "Submit Request"}
                 </Button>
                 <Button
                   type="button"
@@ -562,6 +1195,14 @@ export function BookingRequestsPage({
                   onClick={handleCheckAvailability}
                 >
                   Check Availability
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={isSubmitting}
+                  onClick={clearRequestForm}
+                >
+                  Clear Form
                 </Button>
               </div>
             </form>
@@ -583,7 +1224,7 @@ export function BookingRequestsPage({
 
       {/* Loading and Empty States */}
       {loading && (
-        <p className="text-gray-600 text-center py-8">Loading requests…</p>
+        <p className="text-gray-600 text-center py-8">Loading requests...</p>
       )}
       {!loading && requests.length === 0 && (
         <p className="text-gray-600 text-center py-8">No booking requests found.</p>
@@ -602,10 +1243,13 @@ export function BookingRequestsPage({
             const isActing = actingId === req.id;
 
             const canForward = currentRole === "FACULTY" && isPendingFaculty;
-            const canApprove = currentRole === "STAFF" && isPendingStaff;
+            const canApprove =
+              (currentRole === "STAFF" || currentRole === "ADMIN") &&
+              isPendingStaff;
             const canReject =
               (currentRole === "FACULTY" && isPendingFaculty) ||
-              (currentRole === "STAFF" && isPendingStaff);
+              ((currentRole === "STAFF" || currentRole === "ADMIN") &&
+                isPendingStaff);
             const canCancel =
               (currentRole === "ADMIN" || isOwnRequest || isFacultyApprover) &&
               isCancellableStatus;
@@ -679,7 +1323,7 @@ export function BookingRequestsPage({
                   {req.purpose && (
                     <div className="border-t pt-3 text-sm">
                       <span className="font-semibold">Purpose:</span>{" "}
-                      <p className="mt-1">💬 {req.purpose}</p>
+                      <p className="mt-1">{req.purpose}</p>
                     </div>
                   )}
 
@@ -698,7 +1342,7 @@ export function BookingRequestsPage({
                             )
                           }
                         >
-                          {isActing ? "Working…" : "Forward to Staff"}
+                          {isActing ? "Processing..." : "Forward to Staff"}
                         </Button>
                       )}
                       {canApprove && (
@@ -707,13 +1351,9 @@ export function BookingRequestsPage({
                           size="sm"
                           variant="default"
                           disabled={isActing}
-                          onClick={() =>
-                            void runAction(req.id, () =>
-                              approveBookingRequest(req.id)
-                            )
-                          }
+                          onClick={() => void handleApproveRequest(req.id)}
                         >
-                          {isActing ? "Working…" : "Approve"}
+                          {isActing ? "Processing..." : "Approve"}
                         </Button>
                       )}
                       {canReject && (
@@ -728,7 +1368,7 @@ export function BookingRequestsPage({
                             )
                           }
                         >
-                          {isActing ? "Working…" : "Reject"}
+                          {isActing ? "Processing..." : "Reject"}
                         </Button>
                       )}
                       {canCancel && (
@@ -743,7 +1383,7 @@ export function BookingRequestsPage({
                             )
                           }
                         >
-                          {isActing ? "Working…" : "Cancel"}
+                          {isActing ? "Processing..." : "Cancel"}
                         </Button>
                       )}
                     </div>
@@ -831,7 +1471,7 @@ export function BookingRequestsPage({
                           })
                         }
                       >
-                        {isActing ? "Working…" : "Approve"}
+                        {isActing ? "Processing..." : "Approve"}
                       </Button>
                       <Button
                         type="button"
@@ -845,7 +1485,7 @@ export function BookingRequestsPage({
                           })
                         }
                       >
-                        {isActing ? "Working…" : "Reject"}
+                        {isActing ? "Processing..." : "Reject"}
                       </Button>
                     </div>
                   )}

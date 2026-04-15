@@ -70,7 +70,7 @@ import type {
 
 } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
-import { formatDateDDMMYYYY } from "../utils/datetime";
+import { formatDateDDMMYYYY, formatDateTimeDDMMYYYY } from "../utils/datetime";
 import { DateInput } from "../components/DateInput";
 import {
   formatBookingImpactMessage,
@@ -89,6 +89,12 @@ const DAY_OF_WEEK_OPTIONS: DayOfWeek[] = [
   "SAT",
   "SUN",
 ];
+
+const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000;
+
+function toISTShiftedDate(date: Date): Date {
+  return new Date(date.getTime() + IST_OFFSET_MS);
+}
 
 const DAY_LABELS: Record<DayOfWeek, string> = {
   MON: "Monday",
@@ -307,11 +313,13 @@ function toDateInputValue(value: string): string {
     return "";
   }
 
-  const year = parsed.getFullYear();
-  const month = String(parsed.getMonth() + 1).padStart(2, "0");
-  const day = String(parsed.getDate()).padStart(2, "0");
-  const hours = String(parsed.getHours()).padStart(2, "0");
-  const minutes = String(parsed.getMinutes()).padStart(2, "0");
+  const shifted = toISTShiftedDate(parsed);
+
+  const year = shifted.getUTCFullYear();
+  const month = String(shifted.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(shifted.getUTCDate()).padStart(2, "0");
+  const hours = String(shifted.getUTCHours()).padStart(2, "0");
+  const minutes = String(shifted.getUTCMinutes()).padStart(2, "0");
 
   return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
@@ -323,9 +331,11 @@ function toDateOnlyInputValue(value: string): string {
     return "";
   }
 
-  const year = parsed.getFullYear();
-  const month = String(parsed.getMonth() + 1).padStart(2, "0");
-  const day = String(parsed.getDate()).padStart(2, "0");
+  const shifted = toISTShiftedDate(parsed);
+
+  const year = shifted.getUTCFullYear();
+  const month = String(shifted.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(shifted.getUTCDate()).padStart(2, "0");
 
   return `${year}-${month}-${day}`;
 }
@@ -354,7 +364,7 @@ function toConflictWindowRange(startAt: string, endAt: string): string {
     return `${startAt} - ${endAt}`;
   }
 
-  return `${start.toLocaleString()} - ${end.toLocaleString()}`;
+  return `${formatDateTimeDDMMYYYY(start)} - ${formatDateTimeDDMMYYYY(end)}`;
 }
 
 function toSnapshotStateFromGrid(grid: SlotFullGrid): TimetableSnapshotState {
@@ -2680,7 +2690,7 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
               <option value="">Select a slot system</option>
               {slotSystems.map((system) => (
                 <option key={system.id} value={system.id}>
-                  {system.isLocked ? "🔒 " : ""}{system.name}
+                  {system.isLocked ? "[Locked] " : ""}{system.name}
                 </option>
               ))}
             </select>
@@ -2726,7 +2736,7 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
               onClick={() => void handlePreviewChanges()}
               disabled={changeLoading || actionLoading}
             >
-              {changeLoading ? "Loading..." : "✏️ Edit Structure"}
+              {changeLoading ? "Loading..." : "Edit Structure"}
             </button>
           )}
         </div>
@@ -2740,7 +2750,7 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
          <div
            className="bg-white rounded-lg shadow-2xl p-6 w-full max-w-md"
          >
-           <h3 className="text-lg font-bold mb-4 text-red-600">⚠️ Confirm Pruning</h3>
+             <h3 className="text-lg font-bold mb-4 text-red-600">Confirm Pruning</h3>
            <p className="text-gray-700 mb-2">
              You have enabled booking pruning. This will remove <strong>{pendingPruneBookingCount}</strong> existing booking{pendingPruneBookingCount !== 1 ? "s" : ""} that no longer fit the new slot structure.
            </p>
@@ -2769,7 +2779,7 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
      )}
         {isSystemLocked && (
           <div className="mt-3 p-3 rounded" style={{ backgroundColor: "#fef3cd", border: "1px solid #ffc107" }}>
-            <strong>🔒 Locked System:</strong> This slot system has been committed and is locked.
+            <strong>Locked System:</strong> This slot system has been committed and is locked.
             Direct day/band/block edits are disabled. Use <strong>"Edit Structure"</strong> to make changes through the change workspace.
           </div>
         )}
@@ -2809,7 +2819,7 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
                 <option value="">Select a slot system</option>
                 {slotSystems.map((system) => (
                   <option key={system.id} value={system.id}>
-                    {system.isLocked ? "🔒 " : ""}
+                    {system.isLocked ? "[Locked] " : ""}
                     {system.name}
                   </option>
                 ))}
@@ -3887,7 +3897,7 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
                             title="Delete day"
                             aria-label={`Delete ${DAY_LABELS[day.dayOfWeek]}`}
                           >
-                            ×
+                            x
                           </button>
                         </div>
                       </div>
@@ -4145,7 +4155,7 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
           className="fixed top-0 left-0 right-0 z-40 p-3 text-center text-white"
           style={{ backgroundColor: "#dc3545" }}
         >
-          ⚠️ <strong>Booking Freeze Active:</strong> Commit session is currently frozen for final validation.
+          <strong>Booking Freeze Active:</strong> Commit session is currently frozen for final validation.
           New booking operations are blocked until commit completes or is cancelled.
         </div>
       )}
@@ -4161,7 +4171,7 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
             id="conflictResolutionDialog"
           >
             <h3 className="text-xl font-bold mb-4">
-              ⚠️ {toCommitStageLabel(conflictStage ?? "runtime")} Conflicts ({conflictReport.conflictCount})
+              {toCommitStageLabel(conflictStage ?? "runtime")} Conflicts ({conflictReport.conflictCount})
             </h3>
             <p className="text-gray-600 mb-4">
               {conflictStage === "runtime"
@@ -4217,7 +4227,7 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
                       Affected Row: #{conflict.rowIndex} ·
                       {" "}
                       Requested Slot - Room: {conflictRoomLabel},{" "}
-                      {new Date(conflict.startAt).toLocaleString()} → {new Date(conflict.endAt).toLocaleString()}
+                      {formatDateTimeDDMMYYYY(conflict.startAt)} → {formatDateTimeDDMMYYYY(conflict.endAt)}
                     </div>
                     <div className="text-sm text-gray-500 mb-2">
                       {conflict.reason}
@@ -4226,8 +4236,8 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
                     </div>
                     {conflictingStartAt && conflictingEndAt && (
                       <div className="text-xs text-gray-500 mb-3">
-                        Existing overlap window: {new Date(conflictingStartAt).toLocaleString()} →{" "}
-                        {new Date(conflictingEndAt).toLocaleString()}
+                        Existing overlap window: {formatDateTimeDDMMYYYY(conflictingStartAt)} →{" "}
+                        {formatDateTimeDDMMYYYY(conflictingEndAt)}
                       </div>
                     )}
 
@@ -4569,7 +4579,7 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
             className="bg-white rounded-lg shadow-xl p-6 w-full max-w-2xl max-h-[80vh] overflow-y-auto"
             id="changeWorkspacePanel"
           >
-            <h3 className="text-xl font-bold mb-4">✏️ Slot System Change Workspace</h3>
+            <h3 className="text-xl font-bold mb-4">Slot System Change Workspace</h3>
                        {editSessionStatus !== "VIEW" && (
                          <div className="p-3 rounded mb-4 text-sm" style={{ backgroundColor: "#e3f2fd", color: "#1565c0" }}>
                            <strong>Status:</strong> Edit in progress · {editSessionStatus === "EDITING" ? "Running conflict checks" : "Finalizing changes"}
@@ -4611,7 +4621,7 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
                 {changePreview.warnings.length > 0 && (
                   <div className="mt-2">
                     {changePreview.warnings.map((w, i) => (
-                      <p key={i} className="text-sm text-amber-600">⚠️ {w}</p>
+                      <p key={i} className="text-sm text-amber-600">Warning: {w}</p>
                     ))}
                   </div>
                 )}

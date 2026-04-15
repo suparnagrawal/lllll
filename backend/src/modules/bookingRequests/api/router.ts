@@ -6,6 +6,11 @@ import { authMiddleware } from "../../../middleware/auth";
 import { requireRole } from "../../../middleware/rbac";
 import { requireBookingsUnfrozen } from "../../../middleware/bookingFreeze";
 import { createBooking, hasBookingOverlap } from "../../bookings/services/bookingService";
+import {
+  buildHolidayWarningPayload,
+  getOverlappingHolidaysForInterval,
+  isHolidayOverrideAccepted,
+} from "../../holidays/service";
 import { getAssignedBuildingIdsForStaff } from "../../users/services/staffBuildingScope";
 import {
   getActiveAdminIds,
@@ -14,6 +19,7 @@ import {
   type NotificationDraft,
 } from "../../notifications/services/notificationService";
 import logger from "../../../shared/utils/logger";
+import { formatISTDateTime } from "../../../shared/utils/istDateTime";
 
 const router = Router();
 
@@ -118,7 +124,7 @@ function canViewRequest(
 }
 
 function formatDateTimeForNotification(value: Date): string {
-  return value.toISOString().replace("T", " ").slice(0, 16);
+  return formatISTDateTime(value);
 }
 
 function formatRequestWindow(startAt: Date, endAt: Date): string {
@@ -562,7 +568,7 @@ router.post("/:id/reject", authMiddleware, requireRole(["FACULTY", "STAFF"]), re
   }
 });
 
-router.post("/:id/approve", authMiddleware, requireRole("STAFF"), requireBookingsUnfrozen(), async (req, res) => {
+router.post("/:id/approve", authMiddleware, requireRole(["STAFF", "ADMIN"]), requireBookingsUnfrozen(), async (req, res) => {
   const id = Number(req.params.id);
   const courseIdRaw = req.body?.courseId;
   const hasCourseId =
@@ -587,13 +593,27 @@ router.post("/:id/approve", authMiddleware, requireRole("STAFF"), requireBooking
       return res.status(404).json({ message: "Request not found" });
     }
 
-    const assignedBuildingIds = await getAssignedBuildingIdsForStaff(req.user!.id);
+    if (req.user!.role === "STAFF") {
+      const assignedBuildingIds = await getAssignedBuildingIdsForStaff(req.user!.id);
+
+      if (
+        assignedBuildingIds.length === 0 ||
+        !assignedBuildingIds.includes(scopeRow.buildingId)
+      ) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+    }
+
+    const approvalHolidays = await getOverlappingHolidaysForInterval(
+      new Date(scopeRow.request.startAt),
+      new Date(scopeRow.request.endAt),
+    );
 
     if (
-      assignedBuildingIds.length === 0 ||
-      !assignedBuildingIds.includes(scopeRow.buildingId)
+      approvalHolidays.length > 0 &&
+      !isHolidayOverrideAccepted(req.body?.overrideHolidayWarning)
     ) {
-      return res.status(403).json({ message: "Forbidden" });
+      return res.status(409).json(buildHolidayWarningPayload(approvalHolidays));
     }
 
     const approvalResult = await db.transaction(async (tx) => {
@@ -1094,6 +1114,15 @@ router.post(
         });
       }
 
+      const changeHolidays = await getOverlappingHolidaysForInterval(start, end);
+
+      if (
+        changeHolidays.length > 0 &&
+        !isHolidayOverrideAccepted(req.body?.overrideHolidayWarning)
+      ) {
+        return res.status(409).json(buildHolidayWarningPayload(changeHolidays));
+      }
+
       const eventTypeRaw = req.body?.eventType;
       let eventTypeOverride: BookingEventType | null = null;
 
@@ -1311,7 +1340,7 @@ router.post(
   },
 );
 
-router.post("/", authMiddleware, requireRole(["STUDENT", "FACULTY"]), async (req, res) => {
+router.post("/", authMiddleware, requireRole(["STUDENT", "FACULTY", "STAFF"]), async (req, res) => {
   try {
     const roomId = Number(req.body?.roomId);
     const startAt = req.body?.startAt;
@@ -1387,11 +1416,31 @@ router.post("/", authMiddleware, requireRole(["STUDENT", "FACULTY"]), async (req
       return res.status(404).json({ message: "Room not found" });
     }
 
+    if (req.user!.role === "STAFF") {
+      const assignedBuildingIds = await getAssignedBuildingIdsForStaff(req.user!.id);
+
+      if (
+        assignedBuildingIds.length === 0 ||
+        !assignedBuildingIds.includes(room.buildingId)
+      ) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+    }
+
     // Block booking requests for inaccessible rooms
     if (room.accessible === false) {
       return res.status(400).json({
         message: "This room is currently not accessible and cannot accept bookings",
       });
+    }
+
+    const createHolidays = await getOverlappingHolidaysForInterval(start, end);
+
+    if (
+      createHolidays.length > 0 &&
+      !isHolidayOverrideAccepted(req.body?.overrideHolidayWarning)
+    ) {
+      return res.status(409).json(buildHolidayWarningPayload(createHolidays));
     }
 
     let facultyId: number | null = null;
@@ -1418,8 +1467,10 @@ router.post("/", authMiddleware, requireRole(["STUDENT", "FACULTY"]), async (req
       }
 
       facultyId = selectedFacultyId;
-    } else {
+    } else if (req.user!.role === "FACULTY") {
       facultyId = req.user!.id;
+    } else {
+      facultyId = null;
     }
 
     /**
@@ -1479,7 +1530,8 @@ router.post("/", authMiddleware, requireRole(["STUDENT", "FACULTY"]), async (req
         eventType,
         purpose,
         participantCount,
-        status: req.user!.role === "STUDENT" ? "PENDING_FACULTY" : "PENDING_STAFF",
+        status:
+          req.user!.role === "STUDENT" ? "PENDING_FACULTY" : "PENDING_STAFF",
       })
       .returning();
 

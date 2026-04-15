@@ -9,6 +9,7 @@ import {
   index,
   check,
   integer,
+  date,
   timestamp,
   jsonb,
   varchar,
@@ -107,6 +108,36 @@ export const bookings = pgTable("bookings", {
 
   sourceRef: text("source_ref"),
 });
+
+export const holidays = pgTable(
+  "holidays",
+  {
+    id: serial("id").primaryKey(),
+
+    name: text("name").notNull(),
+    description: text("description"),
+
+    startDate: date("start_date").notNull(),
+    endDate: date("end_date").notNull(),
+
+    createdBy: integer("created_by").references((): AnyPgColumn => users.id, {
+      onDelete: "set null",
+    }),
+
+    createdAt: timestamp("created_at", { withTimezone: false })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    nameIdx: index("holidays_name_idx").on(table.name),
+    startDateIdx: index("holidays_start_date_idx").on(table.startDate),
+    endDateIdx: index("holidays_end_date_idx").on(table.endDate),
+    dateRangeCheck: check(
+      "holidays_date_range_check",
+      sql`${table.startDate} <= ${table.endDate}`,
+    ),
+  }),
+);
 
 export const timetableImportBatchStatusEnum = pgEnum(
   "timetable_import_batch_status",

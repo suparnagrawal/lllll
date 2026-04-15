@@ -26,6 +26,8 @@ import {
 } from "./services/bookingFreezeService";
 import { lockSlotSystem } from "./service";
 import logger from "../../shared/utils/logger";
+import { findFirstHolidayOverlap, listHolidays } from "../holidays/service";
+import { toISTDateKey } from "../../shared/utils/istDateTime";
 
 export type TimetableCommitStage = "external" | "internal" | "runtime";
 export type TimetableCommitConflictType = "external" | "internal" | "runtime";
@@ -287,6 +289,10 @@ function buildOccurrenceIntervals(input: {
 
 function rangesOverlap(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date): boolean {
   return aStart < bEnd && aEnd > bStart;
+}
+
+function buildHolidaySkipReason(holiday: { name: string; startDate: string; endDate: string }): string {
+  return `Skipped due to holiday: ${holiday.name} (${holiday.startDate} to ${holiday.endDate})`;
 }
 
 function parseOptionalDate(value: string | undefined): Date | null {
@@ -628,6 +634,28 @@ async function buildEditOperations(input: {
 }> {
   const committedRows = await getCommittedRowsForEdit(input.slotSystemId);
   const descriptorsByLabel = buildSnapshotDescriptorLookup(input.newSnapshot);
+  let minTermStart: Date | null = null;
+  let maxTermEnd: Date | null = null;
+
+  for (const row of committedRows) {
+    if (!minTermStart || row.termStartDate < minTermStart) {
+      minTermStart = row.termStartDate;
+    }
+
+    if (!maxTermEnd || row.termEndDate > maxTermEnd) {
+      maxTermEnd = row.termEndDate;
+    }
+  }
+
+  const minTermStartDateKey = minTermStart ? toISTDateKey(minTermStart) : null;
+  const maxTermEndDateKey = maxTermEnd ? toISTDateKey(maxTermEnd) : null;
+  const holidaysForEditOperations =
+    minTermStartDateKey && maxTermEndDateKey
+      ? await listHolidays({
+          fromDate: minTermStartDateKey,
+          toDate: maxTermEndDateKey,
+        })
+      : [];
 
   const operations: SessionOperation[] = [];
   let actionableRows = 0;
@@ -702,6 +730,16 @@ async function buildEditOperations(input: {
       });
 
       for (const interval of intervals) {
+        const overlappingHoliday = findFirstHolidayOverlap(
+          holidaysForEditOperations,
+          interval.startAt,
+          interval.endAt,
+        );
+
+        if (overlappingHoliday) {
+          continue;
+        }
+
         const overlapBookingIds = input.pruneBookings
           ? allExistingBookingIds
           : existingRowBookings
@@ -1000,6 +1038,16 @@ async function buildOperations(batchId: number): Promise<{ operations: SessionOp
     storedResolutions.map((resolution) => [resolution.rowId, resolution]),
   );
 
+  const termStartDateKey = toISTDateKey(batch.termStartDate);
+  const termEndDateKey = toISTDateKey(batch.termEndDate);
+  const holidaysForOperations =
+    termStartDateKey && termEndDateKey
+      ? await listHolidays({
+          fromDate: termStartDateKey,
+          toDate: termEndDateKey,
+        })
+      : [];
+
   const descriptorLookup = await getSlotDescriptorLookup(batch.slotSystemId);
   const operations: SessionOperation[] = [];
 
@@ -1037,6 +1085,16 @@ async function buildOperations(batchId: number): Promise<{ operations: SessionOp
       });
 
       for (const interval of intervals) {
+        const overlappingHoliday = findFirstHolidayOverlap(
+          holidaysForOperations,
+          interval.startAt,
+          interval.endAt,
+        );
+
+        if (overlappingHoliday) {
+          continue;
+        }
+
         const operationId = hashValue(
           `${batch.id}|${row.id}|${resolvedRoomId}|${interval.startAt.toISOString()}|${interval.endAt.toISOString()}`,
         );
@@ -2634,7 +2692,43 @@ export async function finalizeCommitSession(input: {
   const activeDeleteOnlyOperations = activeOperations.filter(
     (operation) => operation.kind === "DELETE_ONLY",
   );
-  const skippedOperations = operations.filter((operation) => operation.status === "SKIPPED").length;
+  let skippedOperations = operations.filter((operation) => operation.status === "SKIPPED").length;
+
+  let holidaysForFinalize: Awaited<ReturnType<typeof listHolidays>> = [];
+
+  if (activeUpsertOperations.length > 0) {
+    let minOperationStart: Date | null = null;
+    let maxOperationEnd: Date | null = null;
+
+    for (const operation of activeUpsertOperations) {
+      const parsedStart = new Date(operation.startAt);
+      const parsedEnd = new Date(operation.endAt);
+
+      if (Number.isNaN(parsedStart.getTime()) || Number.isNaN(parsedEnd.getTime())) {
+        continue;
+      }
+
+      if (!minOperationStart || parsedStart < minOperationStart) {
+        minOperationStart = parsedStart;
+      }
+
+      if (!maxOperationEnd || parsedEnd > maxOperationEnd) {
+        maxOperationEnd = parsedEnd;
+      }
+    }
+
+    const minOperationStartDateKey = minOperationStart
+      ? toISTDateKey(minOperationStart)
+      : null;
+    const maxOperationEndDateKey = maxOperationEnd ? toISTDateKey(maxOperationEnd) : null;
+
+    if (minOperationStartDateKey && maxOperationEndDateKey) {
+      holidaysForFinalize = await listHolidays({
+        fromDate: minOperationStartDateKey,
+        toDate: maxOperationEndDateKey,
+      });
+    }
+  }
 
   const deleteBookingIds = Array.from(
     new Set(
@@ -2671,6 +2765,57 @@ export async function finalizeCommitSession(input: {
         const startAt = new Date(operation.startAt);
         const endAt = new Date(operation.endAt);
 
+        const dedupeKey = hashValue(
+          `${session.batchId}|${operation.rowId}|${operation.roomId}|${operation.startAt}|${operation.endAt}`,
+        );
+
+        const overlappingHoliday = findFirstHolidayOverlap(
+          holidaysForFinalize,
+          startAt,
+          endAt,
+        );
+
+        if (overlappingHoliday) {
+          const skipReason = buildHolidaySkipReason(overlappingHoliday);
+          skippedOperations += 1;
+
+          const [existingOccurrenceForSkip] = await tx
+            .select({ id: timetableImportOccurrences.id })
+            .from(timetableImportOccurrences)
+            .where(eq(timetableImportOccurrences.dedupeKey, dedupeKey))
+            .limit(1);
+
+          if (existingOccurrenceForSkip) {
+            await tx
+              .update(timetableImportOccurrences)
+              .set({
+                status: "SKIPPED",
+                bookingId: null,
+                errorMessage: skipReason,
+                roomId: operation.roomId,
+                startAt,
+                endAt,
+                sourceRef: operation.sourceRef,
+              })
+              .where(eq(timetableImportOccurrences.id, existingOccurrenceForSkip.id));
+          } else {
+            await tx.insert(timetableImportOccurrences).values({
+              batchId: session.batchId,
+              rowId: operation.rowId,
+              roomId: operation.roomId,
+              startAt,
+              endAt,
+              source: "TIMETABLE_ALLOCATION",
+              sourceRef: operation.sourceRef,
+              dedupeKey,
+              status: "SKIPPED",
+              errorMessage: skipReason,
+            });
+          }
+
+          continue;
+        }
+
         const [createdBooking] = await tx
           .insert(bookings)
           .values({
@@ -2687,10 +2832,6 @@ export async function finalizeCommitSession(input: {
         if (!createdBooking) {
           throw createServiceError(500, "Failed to create booking during finalize");
         }
-
-        const dedupeKey = hashValue(
-          `${session.batchId}|${operation.rowId}|${operation.roomId}|${operation.startAt}|${operation.endAt}`,
-        );
 
         const [existingOccurrence] = await tx
           .select({ id: timetableImportOccurrences.id })

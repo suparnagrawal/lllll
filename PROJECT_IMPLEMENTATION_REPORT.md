@@ -1,947 +1,413 @@
-# Universal Room Allocation System - Implementation Report
+# Universal Room Allocation System - Implementation Report (Code-Verified)
 
-## Executive Summary
-
-This is a **full-stack web application** for managing university room bookings and timetable allocations at IIT Jodhpur. The system handles room reservations, booking requests with approval workflows, timetable imports from Excel files, and role-based access control.
-
-| Component | Technology Stack |
-|-----------|------------------|
-| **Backend** | Node.js + Express + TypeScript |
-| **Frontend** | React + Vite + TypeScript |
-| **Database** | PostgreSQL (via Drizzle ORM) |
-| **Cache** | Redis |
-| **Authentication** | JWT + Google OAuth 2.0 |
-| **Infrastructure** | Docker Compose |
+Audit date: 2026-04-15
+Scope: full repository analysis, architecture verification, and runtime/build checks
 
 ---
 
-## 1. PROJECT STRUCTURE
+## 1. Executive Summary
 
-```
-/workspace/
-├── backend/                    # Node.js/Express API server
-│   ├── Dockerfile              # Container image definition (build + runtime)
-│   ├── src/
-│   │   ├── server.ts           # Express entry point
-│   │   ├── api/                # Controllers, routes, middleware
-│   │   ├── auth/               # JWT + OAuth authentication
-│   │   ├── config/             # Environment configuration
-│   │   ├── db/                 # Database schema (Drizzle ORM)
-│   │   ├── data/               # Cache, queries, repositories
-│   │   ├── domain/             # Business logic services
-│   │   ├── middleware/         # Global middleware
-│   │   ├── modules/            # Feature modules (timetable)
-│   │   ├── routes/             # Express route definitions
-│   │   └── shared/             # Utilities, validators, types
-│   └── drizzle/                # Database migrations (25 journal entries, 29 SQL files incl. compatibility files)
-│
-├── frontend/                   # React SPA
-│   ├── Dockerfile              # Frontend build + Nginx runtime image
-│   ├── nginx.conf              # SPA + /api reverse proxy config
-│   ├── src/
-│   │   ├── main.tsx            # React entry point
-│   │   ├── App.tsx             # Root component with providers
-│   │   ├── api/                # API client modules
-│   │   ├── auth/               # Authentication context
-│   │   ├── components/         # UI components (shadcn/ui)
-│   │   ├── pages/              # Page components
-│   │   ├── routes/             # React Router configuration
-│   │   ├── hooks/              # Custom React hooks
-│   │   ├── lib/                # Utilities & API clients
-│   │   └── context/            # React context providers
-│   └── public/                 # Static assets
-│
-├── shared/                     # Code shared between FE/BE
-│   ├── utils/                  # Logger, pagination, response utils
-│   └── validators/             # Zod validation schemas
-│
-├── docker-compose.yml          # PostgreSQL + Redis + backend + frontend
-└── HOW_TO_RUN.md               # Setup instructions
-```
+The project is a production-oriented full-stack room allocation platform for IIT Jodhpur with:
+
+- modular Express + TypeScript backend
+- React + Vite frontend with route-level and API-level access control
+- PostgreSQL + Drizzle ORM persistence
+- Redis-backed (with graceful in-memory fallback) rate limiting and cache helpers
+- timetable import and staged commit workflows with freeze and conflict resolution
+
+This report replaces older status-log style content and reflects only the implementation currently present in this repository.
 
 ---
 
-## 2. DATABASE SCHEMA
+## 2. Analysis Method
 
-**ORM**: Drizzle ORM  
-**Location**: `/backend/src/db/schema.ts`
+The report is based on direct inspection of:
 
-### Core Tables
+- backend bootstrap and module registry
+- all active module routers
+- database schema and migrations
+- frontend providers, routes, auth/session, API clients, and timetable pages
+- container and compose deployment artifacts
+- current automated test and build runs
 
-#### Users & Access Control
-| Table | Purpose | Key Columns |
-|-------|---------|-------------|
-| `users` | User accounts | id, name, email, passwordHash, role (ADMIN/STAFF/FACULTY/STUDENT/PENDING_ROLE), googleId, department, isActive |
-| `user_sessions` | OAuth session store | sid, sess, expire |
-| `staff_building_assignments` | Staff-to-building mapping | staffId, buildingId, assignedBy |
-
-#### Buildings & Rooms
-| Table | Purpose | Key Columns |
-|-------|---------|-------------|
-| `buildings` | Physical locations | id, name, description, location, managedByStaffId |
-| `rooms` | Classrooms/spaces | id, name, buildingId, capacity, roomType (enum), hasProjector, hasMic, accessible |
-
-**Room Types**: LECTURE_HALL, CLASSROOM, SEMINAR_ROOM, COMPUTER_LAB, CONFERENCE_ROOM, AUDITORIUM, WORKSHOP, OTHER
-
-#### Bookings & Requests
-| Table | Purpose | Key Columns |
-|-------|---------|-------------|
-| `bookings` | Confirmed room reservations | id, roomId, startAt, endAt, requestId, approvedBy, source (MANUAL_REQUEST/TIMETABLE_ALLOCATION/SLOT_CHANGE/VENUE_CHANGE) |
-| `booking_requests` | Pending booking requests | id, userId, roomId, startAt, endAt, eventType, purpose, status (PENDING_FACULTY/PENDING_STAFF/APPROVED/REJECTED/CANCELLED) |
-| `booking_edit_requests` | Unified booking edit requests | id, bookingId, proposedRoomId, proposedStartAt, proposedEndAt, status, requestedBy, reviewedBy |
-
-**Event Types**: QUIZ, SEMINAR, SPEAKER_SESSION, MEETING, CULTURAL_EVENT, WORKSHOP, CLASS, OTHER
-
-#### Courses & Enrollments
-| Table | Purpose | Key Columns |
-|-------|---------|-------------|
-| `courses` | Academic courses | id, code, name, department, credits |
-| `course_faculty` | Faculty teaching courses | courseId, facultyId |
-| `course_enrollments` | Student enrollments | courseId, studentId |
-| `booking_course_link` | Links bookings to courses | bookingId, courseId |
-
-#### Timetable Import Pipeline
-| Table | Purpose | Key Columns |
-|-------|---------|-------------|
-| `slot_systems` | Academic slot structure | id, name |
-| `slot_days` | Days in slot system | id, slotSystemId, dayOfWeek |
-| `slot_time_bands` | Time periods | id, startTime, endTime |
-| `slot_blocks` | Label-based slot groupings | id, dayId, startBandId, label |
-| `timetable_import_batches` | Upload batches | id, batchKey, slotSystemId, termStartDate, termEndDate, status |
-| `timetable_import_rows` | Parsed import rows | id, batchId, rawRow, classification, resolvedRoomId |
-| `timetable_import_occurrences` | Generated booking instances | id, rowId, roomId, startAt, endAt, bookingId, status |
-
-#### Notifications
-| Table | Purpose | Key Columns |
-|-------|---------|-------------|
-| `notifications` | System notifications | notificationId, recipientId, subject, message, type, isRead |
-
-**Notification Types**: BOOKING_REQUEST_CREATED/FORWARDED/APPROVED/REJECTED/CANCELLED, plus role-based booking edit notifications
+Validation commands were executed in this workspace and results are summarized in Section 8.
 
 ---
 
-## 3. API ENDPOINTS
+## 3. Current System Architecture
 
-**Base URL**: `http://localhost:5000/api`
+### 3.1 Backend Runtime Architecture
 
-### Authentication (`/auth` or `/api/auth`)
-| Method | Endpoint | Purpose | Auth |
-|--------|----------|---------|------|
-| POST | `/auth/login` | Email/password login | None |
-| GET | `/auth/google` | Initiate Google OAuth | None |
-| GET | `/auth/google/callback` | OAuth callback | None |
-| POST | `/auth/complete-setup` | Complete first-time setup | Setup token |
-| POST | `/auth/refresh` | Refresh tokens | Refresh token |
-| GET | `/auth/me` | Get current user | JWT |
+Backend entrypoint: `backend/src/server.ts`
 
-### Buildings (`/api/buildings`)
-| Method | Endpoint | Purpose | Roles |
-|--------|----------|---------|-------|
-| GET | `/` | List all buildings | All authenticated |
-| GET | `/:id` | Get building details | All authenticated |
-| GET | `/:id/rooms` | Get rooms in building | All authenticated |
-| POST | `/` | Create building | ADMIN |
-| PATCH | `/:id` | Update building | ADMIN, STAFF |
-| DELETE | `/:id` | Delete building | ADMIN, STAFF |
+Startup and middleware order (verified):
 
-### Rooms (`/api/rooms`)
-| Method | Endpoint | Purpose | Roles |
-|--------|----------|---------|-------|
-| GET | `/` | List rooms with filters | All authenticated |
-| GET | `/:id` | Get room details | All authenticated |
-| POST | `/` | Create room | ADMIN, STAFF |
-| PATCH | `/:id` | Update room | ADMIN, STAFF |
-| DELETE | `/:id` | Delete room | ADMIN, STAFF |
+1. Environment load (`import "./config/env"`)
+2. Session store (`express-session` + `connect-pg-simple` table `user_sessions`)
+3. Passport init/session restore
+4. JSON parser
+5. Performance middleware
+6. Request logger middleware
+7. Internal-operation marker
+8. API rate limiters (`/api` general, `/api/auth` auth)
+9. Feature module registration (`/api/<basePath>`)
+10. Health routes (`/health`)
+11. Global error handler
 
-### Bookings (`/api/bookings`)
-| Method | Endpoint | Purpose | Roles |
-|--------|----------|---------|-------|
-| GET | `/` | List bookings | All (STAFF filtered by assigned buildings) |
-| GET | `/:id` | Get booking details | All authenticated |
-| POST | `/` | Create booking | ADMIN, STAFF |
-| POST | `/bulk` | Bulk create bookings | ADMIN, STAFF |
-| PATCH | `/:id` | Update booking | ADMIN, STAFF |
-| DELETE | `/:id` | Delete booking | ADMIN, STAFF |
-| DELETE | `/prune` | Prune bookings by date range | ADMIN |
+### 3.2 Module Registry Pattern
 
-### Booking Requests (`/api/booking-requests`)
-| Method | Endpoint | Purpose | Roles |
-|--------|----------|---------|-------|
-| GET | `/` | List requests | All authenticated |
-| GET | `/:id` | Get request details | All authenticated |
-| POST | `/` | Submit booking request | STUDENT, FACULTY |
-| POST | `/:id/forward` | Forward request to staff queue | FACULTY |
-| POST | `/:id/approve` | Approve request and create booking | STAFF |
-| POST | `/:id/reject` | Reject request | FACULTY, STAFF |
-| POST | `/:id/cancel` | Cancel pending request | Owner, ADMIN |
+Feature mounting is centralized in `backend/src/modules/index.ts` and `backend/src/modules/registerModules.ts`.
 
-### Edit Booking (Unified System)
-| Method | Endpoint | Purpose | Roles |
-|--------|----------|---------|-------|
-| POST | `/api/bookings/:id/edit` | Create direct edit or edit request based on booking state | STAFF, ADMIN, FACULTY, STUDENT |
-| GET | `/api/booking-edit-requests` | List booking edit requests | STAFF, ADMIN (all), FACULTY/STUDENT (own) |
-| POST | `/api/booking-edit-requests/:id/approve` | Approve booking edit request | STAFF, ADMIN |
-| POST | `/api/booking-edit-requests/:id/reject` | Reject booking edit request | STAFF, ADMIN |
+Active registered modules (11):
 
-Additional endpoint reference:
-- POST /api/bookings/:id/edit
-- GET /api/booking-edit-requests
-- POST /api/booking-edit-requests/:id/approve
-- POST /api/booking-edit-requests/:id/reject
+- auth
+- buildings
+- rooms
+- bookings
+- bookingRequests
+- bookingEditRequests
+- availability
+- users
+- notifications
+- timetable
+- dashboard
 
-### Availability (`/api/availability`)
-| Method | Endpoint | Purpose | Roles |
-|--------|----------|---------|-------|
-| GET | `/` | Query available time slots | All authenticated |
+Important implementation note:
 
-### Timetable (`/api/timetable`) - ADMIN Only
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| POST | `/slot-systems` | Create slot system |
-| GET | `/slot-systems` | List slot systems (includes `isLocked`) |
-| DELETE | `/slot-systems/:id` | Delete slot system |
-| GET | `/slot-systems/:id/full` | Full grid view |
-| POST | `/slot-systems/:id/preview-changes` | Preview structural changes |
-| POST | `/slot-systems/:id/apply-changes` | Apply changes (freeze + mutate) |
-| POST | `/days` | Create day (blocked if locked) |
-| GET | `/days` | List days |
-| DELETE | `/days/:id` | Delete day (blocked if locked) |
-| POST | `/days/:id/lanes` | Add lane to a day |
-| DELETE | `/days/:id/lanes` | Remove lane from a day |
-| POST | `/time-bands` | Create time band (blocked if locked) |
-| GET | `/time-bands` | List time bands |
-| PATCH | `/time-bands/:id` | Update time band (blocked if locked) |
-| DELETE | `/time-bands/:id` | Delete time band (blocked if locked) |
-| POST | `/blocks` | Create block (blocked if locked) |
-| DELETE | `/blocks/:id` | Delete block (blocked if locked) |
-| GET | `/imports` | List import batches |
-| POST | `/imports/preview` | Preview Excel import |
-| GET | `/imports/:id` | Get import batch details |
-| PUT | `/imports/:id/decisions` | Save row-level decisions |
-| POST | `/imports/:id/rows/:rowId/transfer` | Transfer a row to another batch/system |
-| POST | `/imports/:id/reallocate` | Re-run allocation for unresolved rows |
-| POST | `/imports/:id/commit` | Commit import |
-| DELETE | `/imports/:id` | Delete import batch |
-| GET | `/imports/:id/processed-rows` | Get processed rows with outcomes |
-| POST | `/imports/:id/detect-conflicts` | Detect booking conflicts |
-| POST | `/imports/:id/commit-with-resolutions` | Commit with conflict resolutions |
-| POST | `/imports/:id/cancel-commit` | Cancel commit, release freeze |
-| GET | `/imports/:id/freeze-status` | Check booking freeze state |
+- `backend/src/modules/holidays` exists but is not registered in `apiModules`; it is currently dormant at runtime.
 
-### Users (`/api/users`)
-| Method | Endpoint | Purpose | Roles |
-|--------|----------|---------|-------|
-| GET | `/faculty` | List active faculty users | All authenticated |
-| GET | `/profile` | Get current user profile | All authenticated |
-| PATCH | `/profile` | Update current user profile | All authenticated |
-| DELETE | `/profile` | Delete own account (anonymize + deactivate) | All authenticated |
-| GET | `/profile/export` | Export own user data | All authenticated |
-| GET | `/profile/sessions` | List current and other active sessions for current user | All authenticated |
-| POST | `/profile/sessions/logout-others` | Revoke all active sessions except current session | All authenticated |
-| GET | `/profile/activity` | Profile activity feed (bookings/requests/sessions) | All authenticated |
-| GET | `/:id/building-assignments` | View staff building assignments | ADMIN, STAFF (self for STAFF) |
-| GET | `/` | List users (paginated + filters) | ADMIN |
-| POST | `/` | Create user | ADMIN |
-| PATCH | `/:id/role` | Update user role | ADMIN |
-| PUT | `/:id/building-assignments` | Set staff building assignments | ADMIN |
-| PATCH | `/:id/active` | Activate/deactivate user | ADMIN |
-| DELETE | `/:id` | Delete user (anonymized soft delete) | ADMIN |
+### 3.3 API Surface Inventory (Measured)
 
-### Notifications (`/api/notifications`)
-| Method | Endpoint | Purpose | Roles |
-|--------|----------|---------|-------|
-| GET | `/` | List notifications (includes `unreadCount`) | Owner |
-| POST | `/:id/read` | Mark one notification as read | Owner |
-| POST | `/read-all` | Mark all notifications as read | Owner |
+Measured route declarations in backend route files: **111**
 
-### Dashboard (`/api/dashboard`)
-| Method | Endpoint | Purpose | Roles |
-|--------|----------|---------|-------|
-| GET | `/data` | Combined payload: stats + upcoming bookings + activity feed | All authenticated |
-| GET | `/stats` | Aggregated statistics | All authenticated |
-| GET | `/upcoming-bookings` | Next upcoming bookings | All authenticated |
-| GET | `/activity-feed` | Recent activity feed | All authenticated |
+Breakdown by route file:
 
-### Health (`/health`)
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| GET | `/` | Basic liveness |
-| GET | `/ready` | Readiness (DB + Redis) |
-| GET | `/live` | Kubernetes liveness |
+| Route file | Declarations |
+|---|---:|
+| `backend/src/modules/timetable/routes.ts` | 42 |
+| `backend/src/modules/users/api/router.ts` | 15 |
+| `backend/src/modules/auth/api/router.ts` | 10 |
+| `backend/src/modules/rooms/api/router.ts` | 8 |
+| `backend/src/modules/bookings/api/router.ts` | 8 |
+| `backend/src/modules/bookingRequests/api/router.ts` | 8 |
+| `backend/src/modules/buildings/api/router.ts` | 6 |
+| `backend/src/modules/dashboard/api/router.ts` | 4 |
+| `backend/src/modules/notifications/api/router.ts` | 3 |
+| `backend/src/modules/bookingEditRequests/api/router.ts` | 3 |
+| `backend/src/api/routes/health.routes.ts` | 3 |
+| `backend/src/modules/availability/api/router.ts` | 1 |
 
 ---
 
-## 4. AUTHENTICATION SYSTEM
+## 4. Backend Domain and Workflow Analysis
 
-**Location**: `/backend/src/auth/`
+### 4.1 Authentication and Authorization
 
-### JWT Token System (`jwt.ts`)
-| Token Type | TTL | Purpose |
-|------------|-----|---------|
-| Access Token | 15 min | API requests (Bearer header) |
-| Refresh Token | 7 days | Obtain new access tokens |
-| Setup Token | 15 min | Complete account setup (new users) |
+Implementation files:
 
-**Payload Structure**:
-```typescript
-{
-  id: number,
-  role: "ADMIN" | "STAFF" | "FACULTY" | "STUDENT" | "PENDING_ROLE",
-  type: "access" | "refresh" | "setup"
-}
-```
+- `backend/src/auth/jwt.ts`
+- `backend/src/auth/passport.ts`
+- `backend/src/modules/auth/api/router.ts`
+- `backend/src/middleware/auth.ts`
+- `backend/src/middleware/rbac.ts`
 
-### Google OAuth (`passport.ts`)
-- **Provider**: `passport-google-oauth20`
-- **Domain Restriction**: Only `@iitj.ac.in` emails allowed
-- **Flow**: Google consent → callback → user lookup/create → issue tokens
-- **Session Storage**: PostgreSQL via `connect-pg-simple`
+Verified behavior:
 
-### Middleware Stack
-1. **authMiddleware**: Validates Bearer token, attaches `req.user`
-2. **requireRole(roles)**: RBAC enforcement (returns 403 if unauthorized)
+- JWT access token: 15 minutes
+- JWT refresh token: 7 days
+- setup token: 15 minutes
+- roles: `ADMIN`, `STAFF`, `FACULTY`, `STUDENT`, `PENDING_ROLE`
+- Google OAuth restricted to `@iitj.ac.in`
+- OAuth endpoints degrade to `503` when OAuth env vars are missing
+- `POST /api/auth/complete-setup` currently enforces student-only setup completion
 
----
+### 4.2 Booking and Request Lifecycle
 
-## 5. BUSINESS LOGIC SERVICES
+Implementation files:
 
-**Location**: `/backend/src/services/`
+- `backend/src/modules/bookings/api/router.ts`
+- `backend/src/modules/bookings/services/bookingService.ts`
+- `backend/src/modules/bookingRequests/api/router.ts`
+- `backend/src/modules/bookingEditRequests/api/router.ts`
+- `backend/src/services/editBookingService.ts`
 
-### Booking Service (`bookingService.ts`)
-| Function | Purpose |
-|----------|---------|
-| `createBooking()` | Create with overlap validation |
-| `createBookingsBulk()` | Batch create with per-item error handling |
-| `updateBooking()` | Update with overlap re-validation |
-| `hasBookingOverlap()` | Detect time conflicts |
-| `deleteBooking()` | Cascade-friendly deletion |
+Key behavior verified:
 
-**Overlap Detection**: `start1 < end2 AND end1 > start2`
+- overlap detection uses standard interval test: `existing.start < new.end AND existing.end > new.start`
+- booking create/update/delete routes are role-restricted and freeze-guarded
+- approval flow for booking requests is staff-driven (`/booking-requests/:id/approve`)
+- booking change flow supports:
+  - direct updates for eligible pending-faculty requests
+  - creation of new change request when direct change is not allowed
+- unified booking edit endpoints are active:
+  - `POST /api/bookings/:id/edit`
+  - `GET /api/booking-edit-requests`
+  - `POST /api/booking-edit-requests/:id/approve`
+  - `POST /api/booking-edit-requests/:id/reject`
 
-### Notification Service (`notificationService.ts`)
-| Function | Purpose |
-|----------|---------|
-| `sendRoleAwareNotifications()` | Create DB records + send emails |
-| `getActiveAdminIds()` | Query admin users |
-| `getActiveStaffIdsForBuilding()` | Query assigned staff |
+### 4.3 Booking Freeze and Concurrency Control
 
-**Email**: Nodemailer with SMTP (optional, configurable)
+Implementation files:
 
-### Edit Booking Service
-| Service | Purpose |
-|---------|---------|
-| `editBookingService.ts` | Decide edit mode, validate conflicts, create requests, approve/reject with transactional apply |
+- `backend/src/middleware/bookingFreeze.ts`
+- `backend/src/modules/timetable/services/bookingFreezeService.ts`
 
-### Booking Freeze Service (`bookingFreezeService.ts`)
-- **Purpose**: Lock booking mutations during timetable import commits
-- **State**: In-memory (resets on server restart)
-- **Response**: HTTP 423 Locked when frozen
+Verified behavior:
 
----
+- freeze blocks mutable booking operations with HTTP `423 Locked`
+- response includes freeze holder metadata (`batchId`, user, timestamp)
+- freeze state is in-memory (resets on server restart)
+- only one freeze holder can exist at a time
+- unfreeze ownership checks are enforced unless forced
 
-## 6. MIDDLEWARE
+### 4.4 Timetable Pipeline and Commit Engine
 
-**Location**: `/backend/src/middleware/`
+Implementation files:
 
-### Global Middleware (in order)
-1. **Session Management**: `express-session` + `connect-pg-simple`
-2. **Passport OAuth**: Initialize + restore session
-3. **JSON Parser**: `express.json()`
-4. **Performance Tracking**: Request duration metrics
-5. **Request Logging**: Method, path, user ID, response time
-6. **Rate Limiting**: Redis-backed limits per endpoint type
+- `backend/src/modules/timetable/routes.ts`
+- `backend/src/modules/timetable/importService.ts`
+- `backend/src/modules/timetable/timetableCommitEngine.ts`
+- `backend/src/modules/timetable/changeService.ts`
+- `backend/src/modules/timetable/service.ts`
 
-### Rate Limits
-| Limiter | Limit | Window |
-|---------|-------|--------|
-| General | 100 requests | 15 min |
-| Auth | 5 requests | 3 min |
-| Upload | 10 requests | 1 hour |
-| Timetable Import | 45 mutations | 15 min |
+Verified capabilities:
 
-### Request Validation
-- **Framework**: Zod
-- **Middleware**: `validate(schema)` for params/query/body
-- **Schemas Location**: `/backend/src/shared/validators/schemas/`
+- slot system CRUD, day/lane, time-band, block management
+- preview/import/decision/reallocate/commit flows
+- conflict-aware commit endpoints (`detect-conflicts`, `commit-with-resolutions`, `cancel-commit`)
+- staged commit session pipeline:
+  - `commit/start`
+  - `commit/external-check` and `external-resolve`
+  - `commit/internal-check` and `internal-resolve`
+  - `commit/freeze`
+  - `commit/runtime-check` and `runtime-resolve`
+  - `commit/finalize`, `commit/cancel`, `commit/:id/status`
+- edit-mode commit start endpoint: `POST /api/timetable/edit/start`
+- slot systems lock after commit via `lockSlotSystem(...)`
+- locked slot systems require change-workspace flow for structural edits
+- one-batch-per-slot-system retention behavior is implemented in preview flow
 
----
+### 4.5 Rate Limiting and Resilience
 
-## 7. FRONTEND ARCHITECTURE
+Implementation files:
 
-### Frontend Entry and Providers
+- `backend/src/api/middleware/rateLimit.middleware.ts`
+- `backend/src/data/cache/redis.client.ts`
 
-**Entry Point**: `/frontend/src/main.tsx`
+Verified current limits:
 
-The active provider stack is:
-1. `QueryClientProvider` (TanStack React Query)
-2. `AuthProvider` (JWT/OAuth session state + refresh/session timeout handling)
-3. `ToastProvider` (in-app toast messages)
-4. `RouterProvider` (React Router)
+- general API: 300 requests / 15 min
+- auth: 20 requests / 5 min
+- upload: 10 requests / 1 hour
+- timetable import read: 120 / 15 min
+- timetable import preview: 10 / 1 hour
+- timetable import mutation: 45 / 15 min
+- timetable import commit: 30 / 15 min
 
-`ReactQueryDevtools` is enabled only in development.
+Resilience behavior:
 
-### Route Pages and Page Modules
-
-**Router Location**: `/frontend/src/routes/index.tsx`  
-**Pages Location**: `/frontend/src/pages/`
-
-The router lazy-loads `*Page.tsx` route modules. Several route modules are thin wrappers around feature pages (`Rooms.tsx`, `Bookings.tsx`, etc.).
-
-| Route Module | Route | Backing Feature Module | Purpose | Access |
-|-------------|-------|------------------------|---------|--------|
-| `DashboardPage.tsx` | `/` | (direct) | Dashboard stats, upcoming bookings, activity feed, quick actions | All authenticated |
-| `AvailabilityPage.tsx` | `/availability` | `Availability.tsx` | Multi-mode room availability (`time`, `room`, `exact`) with role-based action routing | All authenticated |
-| `RoomsPage.tsx` | `/rooms` | `Rooms.tsx` | Building/room browsing for all users; edit controls scoped by role + staff building assignment | All authenticated |
-| `BookingsPage.tsx` | `/bookings` | `Bookings.tsx` | Confirmed bookings list/filter/create/delete, with prefill from availability | ADMIN, STAFF |
-| `BookingRequestsPage.tsx` | `/requests` | `BookingRequests.tsx` | Request creation + workflow actions (forward/approve/reject/cancel), availability prefill bridge | All authenticated (actions role-filtered) |
-| `UsersPage.tsx` | `/users` | `Users.tsx` | Admin user management, role/status filters, bulk actions, staff-building assignment dialog | ADMIN |
-| `TimetableBuilderPage.tsx` | `/timetable` | `TimetableBuilder.tsx` | Slot-system editing, import preview/commit, conflict resolution, freeze visibility, processed-row booking CRUD | ADMIN |
-| `ProfilePage.tsx` | `/profile` | `Profile.tsx` | Profile/settings tabs, data export, account deletion flow | All authenticated |
-| `LoginPage.tsx` | `/login` | (direct) | Email/password + Google OAuth login | Public |
-| `AuthCallbackPage.tsx` | `/auth/callback` | (direct) | OAuth callback token handling and redirect | Public |
-| `AuthSetupPage.tsx` | `/auth/setup` | (direct) | Role setup flow for pending-role users | PENDING_ROLE |
-
-Additional modules under `/frontend/src/pages/timetable/` exist but are not mounted by the current router.
-
-### UI Component Layer
-
-**Reusable UI Components**: `/frontend/src/components/ui/`
-
-| Component | File | Purpose |
-|-----------|------|---------|
-| AlertDialog | `alert-dialog.tsx` | Destructive confirmation dialogs |
-| Badge | `badge.tsx` | Status/role labels |
-| Button | `button.tsx` | Variant-based action buttons |
-| Card | `card.tsx` | Structured content containers |
-| Checkbox | `checkbox.tsx` | Boolean field control |
-| Dialog | `dialog.tsx` | Modal container for forms/details |
-| DropdownMenu | `dropdown-menu.tsx` | Header/profile/notification menus |
-| Input | `input.tsx` | Text input control |
-| Label | `label.tsx` | Form labeling |
-| Select | `select.tsx` | Controlled dropdown selection |
-| Table | `table.tsx` | Tabular data rendering |
-| Tabs | `tabs.tsx` | Sectioned content switching |
-| Textarea | `textarea.tsx` | Multi-line text input |
-
-**Other Shared Frontend Components**:
-- `DateInput` (`/frontend/src/components/DateInput.tsx`) wraps `react-datepicker` with strict `dd/MM/yyyy` and `HH:mm` formatting.
-- Layout shell is composed of `AppShell`, `Header`, and `Sidebar` under `/frontend/src/components/layout/`.
-- Page-level reusable modules for rooms/availability live under `/frontend/src/pages/components/`.
-
-### State Management
-
-| Layer | Technology | Purpose |
-|-------|------------|---------|
-| Server State | TanStack React Query | Query/mutation caching, invalidation, retry strategy |
-| Auth State | React Context (`AuthContext`) | User session, token refresh, unauthorized handling, inactivity timeout |
-| UI/Form State | React `useState` + React Hook Form + Zod | Local component state and validated forms |
-| Notifications | API-backed header dropdown + Toast Context | Poll unread notifications and surface user feedback |
-
-### Query Configuration
-
-| Data Type | Stale Time | GC Time | Examples |
-|-----------|------------|---------|----------|
-| Very Volatile | 1 min | 3 min | Availability, room day timeline |
-| Volatile | 5 min | 10 min | Bookings, booking requests, rooms |
-| Stable | 10 min | 20 min | Buildings, users, profile, staff assignments |
-| Static | 30 min | 1 hour | Slot systems, event-type metadata |
-
-### Custom Hooks
-
-**Location**: `/frontend/src/hooks/`
-
-| Hook Group | Purpose |
-|------------|---------|
-| `useBookings`, `useCreateBooking`, `useUpdateBooking`, `useDeleteBooking` | Booking query + mutations |
-| `useBookingRequests` + request action hooks | Request list and workflow mutations |
-| `useRooms`, `useCreateRoom`, `useUpdateRoom`, `useDeleteRoom`, `useRoomAvailability` | Room CRUD and room-level availability |
-| `useBuildings` + building mutation hooks | Building CRUD |
-| `useAvailability`, `useRoomDayTimeline` | Availability search + per-room timeline |
-| `useManagedUsers`, `useFacultyUsers`, `useUserBuildingAssignments` + mutations | User admin and staff-building assignment |
-| `useSlotSystems` + slot-system mutation hooks | Slot-system list/create/delete |
-| `useUserProfile`, `useUpdateProfile`, `useDeleteAccount`, `useExportUserData`, `useUserSessions`, `useSignOutOtherSessions`, `useUserActivityLog` | Profile, account, and session/activity actions |
-
-### API Client
-
-**Location**: `/frontend/src/lib/api/`
-
-| File | Purpose |
-|------|---------|
-| `client.ts` | Core request wrapper, auth header injection, 401 handling, refresh helpers |
-| `auth.ts` | Email login, Google OAuth start/callback token login, setup completion |
-| `buildings.ts`, `rooms.ts`, `users.ts` | Building/room/user management clients |
-| `bookings.ts`, `booking-requests.ts` | Booking and request workflow clients |
-| `availability.ts` | Availability search + room day timeline client |
-| `slots.ts` | Slot system and timetable import/conflict/change-workspace clients |
-| `dashboard.ts` | Dashboard aggregate/stat/activity endpoints |
-| `notifications.ts` | Notification list/read/read-all endpoints |
-| `profile.ts` | Self-profile update/delete/export plus live sessions/activity helpers |
-| `types.ts` | Frontend API contract types |
-| `constants.ts`, `jwt-utils.ts`, `storage-utils.ts`, `index.ts` | Client constants/utilities and barrel exports |
+- uses Redis store when available
+- gracefully falls back to memory store when Redis is unavailable
 
 ---
 
-## 8. ROUTING & NAVIGATION
+## 5. Database and Migration Analysis
 
-**Location**: `/frontend/src/routes/index.tsx`
+### 5.1 Table Inventory (Measured)
 
-### Router Composition
+Measured table definitions (`pgTable`) in:
 
-The active frontend router uses `createBrowserRouter` with lazy-loaded route elements and a shared `AppShell` layout (`Header` + `Sidebar` + `Outlet`).
+- `backend/src/db/schema.ts`
+- `backend/src/modules/timetable/schema.ts`
 
-- Protected app routes are nested under `ProtectedRoute`.
-- Role-gated segments are nested under `RequireRole`.
-- Public routes (`/login`, `/auth/callback`, `/auth/setup`) are outside the protected tree.
-- Unknown routes redirect to `/`.
+Total: **22 tables**
 
-### Route Protection Levels
+Domain grouping:
 
-```
-Level 1: ProtectedRoute
-├─ Requires: user !== null
-├─ Checks: user.role !== "PENDING_ROLE"
-└─ Redirect: /login if not authenticated
+- Core room system: `buildings`, `rooms`, `bookings`
+- Booking workflows: `booking_requests`, `booking_edit_requests`, `notifications`
+- Timetable import core: `timetable_import_batches`, `timetable_import_rows`, `timetable_import_occurrences`, `timetable_import_row_resolutions`, `commit_sessions`
+- Timetable structure: `slot_systems`, `slot_days`, `slot_time_bands`, `slot_blocks`
+- Users and access: `users`, `staff_building_assignments`, `user_sessions`
+- Academic model: `courses`, `course_faculty`, `course_enrollments`, `booking_course_link`
 
-Level 2: RequireRole
-├─ Requires: user.role in allowed roles
-└─ Shows: 403 page if unauthorized
+### 5.2 Migration Inventory (Measured)
 
-Level 3: Page-level filtering
-└─ Shows/hides UI based on role
-```
+- SQL migration files in `backend/drizzle`: **32**
+- journal entries in `backend/drizzle/meta/_journal.json`: **28**
 
-### Route Structure
-```typescript
-/                    # Dashboard (all authenticated)
-/availability        # Room availability (all authenticated)
-/rooms               # Room management (all authenticated)
-/profile             # User profile (all authenticated)
-/bookings            # Direct bookings (ADMIN, STAFF)
-/requests            # Booking requests (all authenticated)
-/users               # User management (ADMIN)
-/timetable           # Timetable builder (ADMIN)
-/login               # Login page (public)
-/auth/callback       # OAuth callback (public)
-/auth/setup          # First-time setup (PENDING_ROLE)
-```
+Interpretation:
 
-### Navigation Behavior
-
-- Sidebar navigation is role-aware (`/bookings` hidden for non ADMIN/STAFF; `/users` and `/timetable` hidden for non-ADMIN).
-- Header includes API-backed notification polling (30s), mark-as-read actions, and user/profile menu actions.
-- Availability and request pages exchange prefill state via `bookingAvailabilityBridge.ts` and route `location.state`.
+- repository contains additional SQL files beyond journaled sequence (expected in iterative schema workflows)
+- effective migration order should be taken from the journal
 
 ---
 
-## 9. SHARED CODE
+## 6. Frontend Architecture Analysis
 
-**Location**: `/shared/`
+### 6.1 Application Composition
 
-### Utilities (`/shared/utils/`)
+Entry point: `frontend/src/main.tsx`
 
-| File | Purpose |
-|------|---------|
-| `logger.ts` | Winston-based logging (JSON files + console) |
-| `pagination.utils.ts` | Pagination helpers (DEFAULT_LIMIT=20, MAX_LIMIT=100) |
-| `response.utils.ts` | Standardized API response envelope |
+Provider stack (verified):
 
-### Validators (`/shared/validators/schemas/`)
+1. `QueryClientProvider`
+2. `AuthProvider`
+3. `ToastProvider`
+4. `RouterProvider`
+5. `ReactQueryDevtools` in dev only
 
-| File | Schemas |
-|------|---------|
-| `booking.schemas.ts` | createBookingSchema, updateBookingSchema, bulkCreateBookingSchema |
-| `room.schemas.ts` | createRoomSchema, updateRoomSchema, roomAvailabilitySchema |
-| `building.schemas.ts` | createBuildingSchema, updateBuildingSchema |
+### 6.2 Routing Model
 
----
+Routing file: `frontend/src/routes/index.tsx`
 
-## 10. INFRASTRUCTURE
+Top-level behavior:
 
-**Location**: `/docker-compose.yml`
+- all application routes are nested under `ProtectedRoute`
+- admin-only sections use `RequireRole(['ADMIN'])`
+- timetable has nested admin subroutes:
+  - `/timetable`
+  - `/timetable/structure`
+  - `/timetable/imports`
+  - `/timetable/processed`
+  - `/timetable/workspace`
+- public routes:
+  - `/login`
+  - `/auth/callback`
+  - `/auth/setup`
 
-### Services
+Profile setup gate:
 
-| Service | Image/Build | Port | Purpose |
-|---------|-------------|------|---------|
-| PostgreSQL | `postgres:17-alpine` | 5433:5432 | Primary database |
-| Redis | `redis:7-alpine` | 6379:6379 | Caching + rate limiting store |
-| Backend API | `backend/Dockerfile` | 5000:5000 | Express API runtime |
-| Frontend | `frontend/Dockerfile` + `frontend/nginx.conf` | 5173:5173 | React static assets + `/api` reverse proxy |
+- `/profile/setup` is controlled by a per-user local marker via `frontend/src/auth/profileSetup.ts`
 
-### Volumes
-- `pgdata`: PostgreSQL data persistence
-- `redisdata`: Redis data persistence
+### 6.3 Session and Auth UX
 
-### Container Artifacts
+Auth context file: `frontend/src/auth/AuthContext.tsx`
 
-- Backend image is multi-stage: TypeScript build stage then production runtime (`node dist/server.js`).
-- Frontend image is multi-stage: Vite build stage then Nginx runtime.
-- Frontend Nginx config proxies `/api/*` to `http://backend:5000/api/*` and serves SPA fallback via `try_files`.
+Verified behavior:
 
-### Environment Variables (Backend)
+- token refresh check every 5 minutes
+- inactivity warning at 30 minutes
+- auto logout at 35 minutes inactivity
+- unauthorized callback wiring through API client
+- pending-role users redirected away from protected app routes
 
-| Variable | Purpose | Default |
-|----------|---------|---------|
-| `DATABASE_URL` | PostgreSQL connection | `postgres://ura_user:ura_pass@db:5432/ura_system` (compose) |
-| `JWT_SECRET` | JWT signing key | `change_me_before_production` (override recommended) |
-| `SESSION_SECRET` | Session cookie secret | `change_me_before_production` (override recommended) |
-| `PORT` | Server port | 5000 |
-| `NODE_ENV` | Environment | production (compose backend service) |
-| `REDIS_URL` | Redis connection | `redis://redis:6379` (compose) |
-| `FRONTEND_URL` | CORS origin | http://localhost:5173 |
-| `GOOGLE_CLIENT_ID` | OAuth client ID | Optional |
-| `GOOGLE_CLIENT_SECRET` | OAuth secret | Optional |
-| `SMTP_*` | Email configuration | Optional |
+### 6.4 Frontend API and Caching Strategy
 
----
+API layer files:
 
-## 11. KEY IMPLEMENTATION PATTERNS
+- `frontend/src/lib/api/client.ts`
+- `frontend/src/lib/api/*.ts`
 
-### Backend Patterns
+Verified behavior:
 
-1. **Repository Pattern**: Data access abstracted through repositories
-2. **Service Layer**: Business logic isolated from controllers
-3. **Middleware Chain**: Authentication → Authorization → Validation → Handler
-4. **Error Handling**: Custom AppError class with structured responses
-5. **Caching Strategy**: Redis with tiered TTL by data volatility
-6. **Rate Limiting**: Redis-backed with per-endpoint limits
+- `API_BASE_URL` defaults to `/api` with `VITE_API_BASE_URL` override
+- automatic refresh-token retry on eligible 401 responses
+- normalized client error formatting
 
-### Frontend Patterns
+React Query volatility tiers (`frontend/src/lib/queryConfig.ts`):
 
-1. **React Query**: Server state management with automatic caching
-2. **Context Providers**: Auth state, toast notifications
-3. **Custom Hooks**: Encapsulate data fetching logic
-4. **shadcn/ui**: Consistent, accessible component library
-5. **React Hook Form + Zod**: Form handling with schema validation
-6. **Lazy Loading**: Code-split pages for performance
+- very volatile: stale 1 min, gc 3 min
+- volatile: stale 5 min, gc 10 min
+- stable: stale 10 min, gc 20 min
+- static: stale 30 min, gc 60 min
 
-### Security Measures
+### 6.5 Timetable Frontend Integration
 
-1. **JWT Tokens**: Short-lived access (15 min), long-lived refresh (7 days)
-2. **Domain Restriction**: Only @iitj.ac.in emails via Google OAuth
-3. **Role-Based Access**: ADMIN, STAFF, FACULTY, STUDENT roles
-4. **Rate Limiting**: Prevent brute force and abuse
-5. **Input Validation**: Zod schemas on all inputs
-6. **CORS**: Restricted to frontend origin
+Key file: `frontend/src/lib/api/slots.ts`
+
+Frontend is wired for both:
+
+- direct import/commit operations
+- staged commit session operations (external/internal/runtime checks and resolutions)
+- change-workspace preview/apply operations
+
+This aligns with the current backend timetable API surface.
 
 ---
 
-## 12. TIMETABLE IMPORT WORKFLOW
+## 7. Infrastructure and Deployment Analysis
 
-### Overview
+### 7.1 Compose Topology
 
-The system supports bulk importing timetables from Excel files with a preview-review-commit workflow.
+`docker-compose.yml` currently defines:
 
-### Pipeline Steps
+- `db` (PostgreSQL 17)
+- `redis` (Redis 7)
+- `backend-schema-sync` (one-shot schema push stage)
+- `backend` (Node runtime)
+- `frontend` (Nginx static serve + proxy)
 
-1. **Upload**: Admin uploads Excel file (`POST /api/timetable/imports/preview`)
-2. **Parse**: System parses rows, normalizes course codes, classrooms, slots
-3. **Classify**: Each row classified as:
-   - `VALID_AND_AUTOMATABLE`: Ready for booking creation
-   - `UNRESOLVED_SLOT`: Slot label not found in system
-   - `UNRESOLVED_ROOM`: Room not found
-   - `AMBIGUOUS_CLASSROOM`: Multiple room matches
-   - `DUPLICATE_ROW`: Duplicate entry
-   - `CONFLICTING_MAPPING`: Conflicts with existing bookings
-   - `MISSING_REQUIRED_FIELD`: Required fields missing in a row
-   - `OTHER_PROCESSING_ERROR`: Parser/normalization error in a row
-4. **Review**: Admin reviews classifications, resolves issues
-5. **Decisions**: Admin saves resolutions (`PUT /api/timetable/imports/:id/decisions`)
-6. **Commit**: System creates bookings (`POST /api/timetable/imports/:id/commit`)
-7. **Freeze**: Bookings frozen during commit to prevent conflicts
+### 7.2 Container Build Strategy
 
-### Slot System Structure
+Backend Dockerfile stages:
 
-```
-SlotSystem (e.g., "IIT Jodhpur 2024-25")
-├── Days (MON, TUE, WED, THU, FRI)
-│   └── Lanes (parallel tracks per day)
-├── TimeBands (08:00-09:00, 09:00-10:00, ...)
-└── Blocks (labeled slots like "A1", "B2", etc.)
-```
+- deps
+- builder
+- migrator
+- runner
 
-### Slot System Lifecycle
+Frontend Dockerfile stages:
 
-```
-Created (isLocked=false) → First Import Committed → Locked (isLocked=true)
-                                                         │
-                                                         ▼
-                                              Direct mutations blocked (403)
-                                              Edits via Change Workspace only
-```
+- builder
+- nginx runtime
 
-- **Unlocked**: Days, time bands, and blocks can be freely added/removed.
-- **Locked** (after first commit): Direct mutation endpoints return **HTTP 403**. Structural changes require the **Change Workspace** flow (`POST /api/timetable/slot-systems/:id/apply-changes`), which acquires a booking freeze, applies mutations, cleans up orphaned bookings, and releases the freeze.
-
-### One-Batch-Per-System Rule
-
-| Constraint | Behavior |
-|------------|----------|
-| Only one retained batch per slot system at preview time | Preview flow enumerates existing batches for the same slot system and removes redundant ones |
-| Fingerprint reuse optimization | If a matching fingerprint batch exists, it is reused and other same-slot-system batches are deleted |
-| New preview without fingerprint match | Existing same-slot-system batches are deleted before inserting the new PREVIEWED batch |
-| Batch deletion side-effect | Deleting a committed batch deletes its linked bookings as part of batch cleanup |
-| Slot system is locked after commit | `isLocked = true` set atomically on commit |
-
-### Conflict-Aware Commit Flow
-
-```
-Admin clicks "Commit"
-        │
-        ▼
-  detectCommitConflicts()
-        │
-   ┌────┴────┐
-   │         │
-No Conflicts  Conflicts Found
-   │         │
-   ▼         ▼
-commitWith   Show Resolution Dialog
-Resolutions  │
-(empty [])   Admin chooses per-occurrence:
-             │ ├─ FORCE_OVERWRITE (delete conflicting booking)
-             │ ├─ SKIP (skip this occurrence)
-             │ └─ ALTERNATIVE_ROOM (book in different room)
-             │
-             ▼
-         commitWithResolutions(resolutions[])
-             │
-             ▼
-         System locked, freeze released
-```
-
-#### Conflict Resolution Endpoints
-
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| POST | `/imports/:id/detect-conflicts` | Freeze bookings, detect overlapping bookings |
-| POST | `/imports/:id/commit-with-resolutions` | Apply user resolutions and create bookings |
-| POST | `/imports/:id/cancel-commit` | Release freeze without changes |
-| GET | `/imports/:id/freeze-status` | Check freeze state for a batch |
-
-#### Resolution Strategies
-
-| Strategy | Behavior |
-|----------|----------|
-| `FORCE_OVERWRITE` | Deletes the conflicting existing booking, creates the new one |
-| `SKIP` | Marks this occurrence as skipped, no booking created |
-| `ALTERNATIVE_ROOM` | Attempts to book in a different room (requires `alternativeRoomId`) |
-
-### Booking Freeze Behavior
-
-- **Acquire**: `detectCommitConflicts` freezes booking mutations system-wide
-- **Scope**: Blocks booking approvals, creates, updates, and deletes (requests still allowed)
-- **Release**: Automatically on `commitWithResolutions` or `cancelCommit` (including error paths)
-- **Error recovery**: All error paths call `unfreezeBookings` to ensure no dangling freeze
-- **Idempotent**: Re-calling with same batchId succeeds; different batchId returns 409
-- **UI indicator**: Red banner shown when freeze is active, with holder info
-
-### Change Workspace
-
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| POST | `/slot-systems/:id/preview-changes` | Preview impact of proposed changes |
-| POST | `/slot-systems/:id/apply-changes` | Apply changes under booking freeze |
-
-The Change Workspace supports:
-- Adding/removing days, time bands, blocks, and lanes
-- All mutations bypass the lock guard (`bypassLock = true`)
-- Orphaned occurrences (referencing deleted blocks) are marked FAILED
-- Associated bookings for orphaned occurrences are deleted
-- Results include a recomputation summary with affected counts and warnings
-
-### Backend Hardening
-
-| Feature | Implementation |
-|---------|---------------|
-| **Idempotent commit** | `commitWithResolutions` skips occurrences already in CREATED/SKIPPED/FAILED status |
-| **Transaction safety** | FORCE_OVERWRITE delete+create wrapped in transaction |
-| **Dedup guard** | Occurrences with existing bookingId are skipped |
-| **Lock on commit** | `lockSlotSystem()` called after both `commitTimetableImport` and `commitWithResolutions` |
-| **Error freeze recovery** | All catch blocks call `unfreezeBookings` to prevent dangling freeze |
+Nginx proxy (`frontend/nginx.conf`) routes `/api/*` to `http://backend:5000/api/*` and serves SPA fallback with `try_files`.
 
 ---
 
-## 13. APPROVAL WORKFLOW
+## 8. Runtime and Build Validation Snapshot
 
-### Booking Request Flow
-
-```
-STUDENT submits request
-        │
-        ▼
-PENDING_FACULTY
-        │
-  FACULTY actions
-   ├─ Forward ───────────────► PENDING_STAFF
-   └─ Reject  ───────────────► REJECTED
-
-FACULTY submits request
-        │
-        ▼
-PENDING_STAFF
-
-PENDING_STAFF
-   STAFF actions
-   ├─ Approve ───────────────► APPROVED + booking created
-   └─ Reject  ───────────────► REJECTED
-
-PENDING_FACULTY or PENDING_STAFF
-   Owner/Admin can cancel ───► CANCELLED
-```
-
-- Note: In current booking-request routes, ADMIN can cancel but does not directly approve/reject booking requests.
-
-## Edit Booking System
-
-The system provides a unified edit-booking workflow.
-
-### Direct Edit
-Allowed when:
-- User is STAFF or ADMIN
-- Booking is in PENDING_FACULTY state
-
-### Edit Request Required
-Triggered when:
-- Booking is in PENDING_STAFF
-- Booking is APPROVED
-
-### Approval Flow
-- On approval:
-  - Old booking is deleted
-  - New booking is created
-- On rejection:
-  - No change applied
-
-### Key Benefits
-- Removes redundancy (no separate slot/venue modules)
-- Aligns with real-world institutional workflows
-- Maintains auditability via requests
-
-Note: Slot/Venue Change modules are deprecated and replaced by unified edit-booking system.
-
----
-
-## Summary Statistics
-
-| Metric | Count |
-|--------|-------|
-| Database Tables | 24 |
-| API Endpoints | ~50 |
-| Frontend Route Pages | 11 |
-| UI Components (shared + feature) | 30+ |
-| Custom Hooks | 15+ |
-| Zod Schemas | 15+ |
-| Migration Files | 29 SQL files (25 in migration journal) |
-
-This system provides a complete solution for university room allocation with robust authentication, role-based access control, approval workflows, and bulk timetable import capabilities.
-
----
-
-## 14. CURRENT CODEBASE STATUS (APRIL 10, 2026)
-
-### Stabilization Work Completed
-
-| Area | File(s) | Status |
-|------|---------|--------|
-| React hook order safety | `/frontend/src/pages/Bookings.tsx` | Fixed by keeping authorization guard in `BookingsPage` and moving hook usage into a rendered child component, preventing hooks from running after an early return. |
-| Session timeout countdown consistency | `/frontend/src/auth/AuthContext.tsx` | Countdown logic and UI were aligned; current working tree shows a smooth second-by-second 5-minute countdown display (`mm:ss`). |
-| Backend type safety (P0 scope) | `/backend/src/api/middleware/rateLimit.middleware.ts` | Fixed typed rate-limit configuration/middleware signatures and improved guard safety on request-processing paths. |
-
-### Known Issues Fixed (April 11, 2026)
-
-| Issue | File(s) | Resolution |
-|------|---------|------------|
-| `[object Object]` shown in UI error banners | `/frontend/src/lib/api/client.ts`, `/frontend/src/lib/api/auth.ts`, `/frontend/src/utils/formatError.ts`, `/frontend/src/pages/BookingRequests.tsx` | Added centralized error normalization and switched key pages/API handlers to use it, so object payloads are rendered as readable messages. |
-| Random session drops during refresh checks | `/frontend/src/auth/AuthContext.tsx`, `/frontend/src/lib/api/client.ts` | Refresh-failure handling now preserves authenticated state while the current access token is still valid, and only clears session when token is truly expired/unauthorized. |
-| Full-page reload from access-denied actions | `/frontend/src/components/auth/RequireRole.tsx` | Replaced anchor navigation with SPA routing links to keep auth/session context stable in-app. |
-
-### Runtime and Build Validation
+All checks below were executed in this workspace during this audit.
 
 | Check | Command | Result |
-|------|---------|--------|
-| Backend startup | `npm run dev` (backend) | Pass. Server starts on port `5000`; Redis connection established. |
-| Frontend startup | `npm run dev` (frontend) | Pass. Vite dev server starts and serves on `http://127.0.0.1:5173/`. |
-| Backend tests | `npm --prefix backend test` | Pass (`27/27`). |
-| Frontend tests | `npm --prefix frontend test` | Pass (`6/6`). |
-| Frontend production build | `npm run build` (frontend) | Pass. Build completes successfully. |
-| Backend TypeScript (project-wide) | `npx tsc --noEmit -p backend/tsconfig.json` | Pass. Project type-check completes successfully. |
-| Compose validation | `docker-compose -f docker-compose.yml config` | Pass. Backend/frontend services resolve correctly. |
+|---|---|---|
+| Backend tests | `DATABASE_URL=... JWT_SECRET=... SESSION_SECRET=... npm --prefix backend test` | Pass: 6 files, 38 tests |
+| Frontend tests | `npm --prefix frontend test` | Pass: 3 files, 16 tests |
+| Backend build | `npm --prefix backend run build` | Pass |
+| Frontend build | `npm --prefix frontend run build --silent` | Pass (`vite` production build succeeded) |
+| Compose config | `docker-compose -f docker-compose.yml config` | Pass (executed via podman compose provider wrapper) |
 
-### Current Working Tree Notes
+Additional test output note:
 
-- `HOW_TO_RUN.md` is aligned to backend default port `5000` and frontend `5173`.
-- Frontend API base URL supports `VITE_API_BASE_URL` override with `/api` fallback for local proxying.
-- Profile page security/activity views now use live backend data instead of placeholders.
-- Backend TypeScript validation now passes cleanly for the full backend project.
-- Backend and frontend Dockerfiles now provide full-container deployment support.
-- Frontend production build uses `cssMinify: 'esbuild'` to avoid LightningCSS unknown at-rule warnings.
-- Drizzle migration chain now replays cleanly on a fresh database.
+- frontend tests emit React Router v7 future-flag warnings; these are warnings, not failures.
 
-### Task Group 2 Stabilization (Refactor Branch)
+---
 
-| Area | File(s) | Status |
-|------|---------|--------|
-| Booking-to-course linking in creation flows | `/backend/src/services/bookingService.ts`, `/backend/src/routes/bookingRequests.ts` | Added optional `courseId` handling and `booking_course_link` insertion with `onConflictDoNothing` for duplicate safety. Link insert runs in the same executor/transaction and only when `courseId` is present. |
-| Availability checkbox interaction | `/frontend/src/pages/Availability.tsx` | Replaced no-op checkbox handler with `onToggle` while keeping row click + checkbox click propagation behavior stable. |
-| Building delete RBAC consistency | `/backend/src/routes/buildings.ts`, `/backend/src/api/controllers/buildings.controller.ts` | Route guard now requires ADMIN only, matching controller-level ADMIN-only enforcement. |
-| Login dead links cleanup | `/frontend/src/pages/LoginPage.tsx` | Replaced dummy support email with `mailto:support@uras.app` and removed placeholder `#` links for terms/privacy labels. |
+## 9. Codebase Observations and Risks
 
-### Task Group 2 Validation Snapshot
+### 9.1 Dormant or Unwired Code Paths
 
-| Check | Result |
-|------|--------|
-| Backend tests (`npm test`) | Pass (22/22) |
-| Frontend build (`npm run build`) | Pass |
-| Backend runtime smoke (`/health`, `/health/ready`) | Pass |
-| Frontend runtime smoke (dev server HTTP 200) | Pass |
+- `backend/src/modules/holidays` exists but is not mounted in active module registry.
+- top-level `data/repositories/*` appears present but is not referenced by current runtime wiring.
 
-### Task Group 3 Integration (Refactor Branch)
+### 9.2 Operational Risk
 
-| Area | File(s) | Status |
-|------|---------|--------|
-| Env and local integration consistency | `/backend/src/config/env.ts`, `/frontend/src/lib/api/constants.ts`, `/HOW_TO_RUN.md` | Port parsing/defaults and docs were aligned around backend `5000`, frontend `5173`, and explicit OAuth callback/frontend URLs. |
-| Profile backend APIs | `/backend/src/routes/users.ts` | Added authenticated profile endpoints for active sessions, sign-out-other-sessions, and profile activity feed without schema changes. |
-| Profile frontend integration | `/frontend/src/lib/api/profile.ts`, `/frontend/src/pages/Profile.tsx` | Removed mock behavior and wired security/activity tabs to real API hooks with loading/error/empty/live states. |
+- booking freeze state is in-memory only; a process restart clears freeze state.
 
-### Task Group 3 Validation Snapshot
+### 9.3 API Contract Consistency
 
-| Check | Result |
-|------|--------|
-| Backend tests (`npm test`) | Pass (22/22) |
-| Frontend build (`npm run build`) | Pass |
-| Profile route smoke (`/api/users/profile/sessions`, `/api/users/profile/activity`, `/api/users/profile/sessions/logout-others` without auth) | Pass (`401` as expected for unauthenticated requests) |
-| Backend TypeScript (`npx tsc --noEmit -p backend/tsconfig.json`) | Pass |
+- response payload keys vary across modules (`message` vs `error` object styles), which increases frontend error-shape branching.
 
-### Task Group 4 Hardening (Refactor Branch)
+### 9.4 Test Scope
 
-| Area | File(s) | Status |
-|------|---------|--------|
-| Backend safety and typing hardening | `/backend/src/api/middleware/rateLimit.middleware.ts`, `/backend/src/services/editBookingService.ts`, `/backend/src/modules/bookingEditRequests/api/router.ts` | Strengthened type-safety and null-guard paths in high-risk request handlers and unified edit-booking flows. |
-| Runtime safety confidence | Backend routes + middleware | Confirmed no regressions in approval/change-request critical flows through backend test suite and type-check pass. |
+- current automated suite is focused and passing, but there is no full end-to-end workflow coverage (especially for multi-stage timetable commit sessions).
 
-### Task Group 5 Final Polish (Refactor Branch)
+---
 
-| Area | File(s) | Status |
-|------|---------|--------|
-| Backend build script restoration | `/backend/package.json` | Added `build` script (`tsc`) for production build readiness. |
-| Frontend build warning cleanup | `/frontend/vite.config.ts`, `/frontend/package.json` | Switched CSS minifier to esbuild and added required `esbuild` dev dependency; production build passes cleanly. |
-| Frontend test infrastructure | `/frontend/vitest.config.ts`, `/frontend/src/test/setup.ts` | Added jsdom test config, matcher setup, and cleanup hook. |
-| Frontend auth coverage | `/frontend/src/components/auth/__tests__/ProtectedRoute.test.tsx`, `/frontend/src/pages/__tests__/LoginPage.test.tsx` | Added protected-route redirect coverage and login validation/submit tests. |
-| Backend booking coverage | `/backend/src/services/__tests__/bookingService.test.ts`, `/backend/src/routes/__tests__/bookingRequests.approve.test.ts` | Added overlap/interval service tests and request approval transaction tests. |
-| Migration drift repair | `/backend/drizzle/0012_graceful_doctor_doom.sql`, `/backend/drizzle/0022_add_performance_indexes.sql`, `/backend/drizzle/0022_deep_johnny_blaze.sql` | Fixed duplicate/invalid migration SQL and added missing journal-aligned migration filename; clean bootstrap verified. |
-| Container deployment readiness | `/docker-compose.yml`, `/backend/Dockerfile`, `/frontend/Dockerfile`, `/frontend/nginx.conf` | Added backend/frontend services and container builds; compose config validation passes. |
-| Docs synchronization | `/HOW_TO_RUN.md`, `/PROJECT_IMPLEMENTATION_REPORT.md` | Updated commands, environment defaults, deployment instructions, and final validation notes. |
+## 10. Recommended Next Improvements
 
-### Task Group 5 Validation Snapshot
+1. Persist freeze state in Redis or DB-backed lease model to survive restarts.
+2. Decide whether to activate or remove dormant `holidays` module to reduce drift.
+3. Remove or integrate unused top-level repository layer under `data/repositories`.
+4. Standardize API error envelope shape across all modules.
+5. Add end-to-end tests for:
+   - timetable staged commit (all conflict stages)
+   - freeze acquisition/release edge cases
+   - booking request change paths
 
-| Check | Result |
-|------|--------|
-| Backend TypeScript (`npm --prefix backend exec tsc -- --noEmit -p backend/tsconfig.json`) | Pass |
-| Backend tests (`npm --prefix backend test`) | Pass (`27/27`) |
-| Backend build (`npm --prefix backend run build`) | Pass |
-| Frontend tests (`npm --prefix frontend test`) | Pass (`6/6`) |
-| Frontend build (`npm --prefix frontend run build`) | Pass |
-| Fresh DB migration replay (journal order) | Pass |
-| `drizzle-kit migrate` on clean scratch DB | Pass |
-| Compose configuration check (`docker-compose config`) | Pass |
+---
+
+## 11. Final Status
+
+Current implementation is coherent, modular, and deployable, with validated test/build pipelines and an advanced timetable commit architecture. The highest-value follow-up work is around operational hardening (freeze persistence), contract consistency, and e2e coverage depth.

@@ -19,6 +19,8 @@ export type {
   BookingSource,
   BookingRequest,
   Booking,
+  Holiday,
+  HolidayCreateResponse,
   BookingEditRequestStatus,
   BookingEditRequest,
   EditBookingPayload,
@@ -32,6 +34,9 @@ export type {
   BookingPruneResult,
   AvailabilityRoom,
   AvailabilityBuilding,
+  MatrixAvailabilitySlot,
+  MatrixAvailabilityRoom,
+  BuildingMatrixAvailability,
   TimelineSegment,
   RoomDayTimeline,
   DayOfWeek,
@@ -139,6 +144,13 @@ export {
   deleteBuilding,
 } from "./buildings";
 
+// Holidays endpoints
+export {
+  getHolidays,
+  createHoliday,
+  deleteHoliday,
+} from "./holidays";
+
 // Rooms endpoints
 export {
   getRooms,
@@ -199,6 +211,7 @@ export {
 export {
   getAvailability,
   getRoomDayTimeline,
+  getBuildingMatrixAvailability,
 } from "./availability";
 
 // Dashboard endpoints

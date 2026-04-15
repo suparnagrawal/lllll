@@ -30,6 +30,7 @@ import {
   Info,
 } from "lucide-react";
 import { formatError } from "../utils/formatError";
+import { formatDateDDMMYYYY, formatTimeHHMMIST } from "../utils/datetime";
 
 export default function DashboardPage() {
   const { user } = useAuth();
@@ -84,17 +85,11 @@ export default function DashboardPage() {
   };
 
   const formatTime = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return formatTimeHHMMIST(dateString);
   };
 
   const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString([], {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
+    return formatDateDDMMYYYY(dateString);
   };
 
   const formatActivityTime = (dateString: string) => {
@@ -110,7 +105,7 @@ export default function DashboardPage() {
     if (diffHours < 24) return `${diffHours}h ago`;
     if (diffDays < 7) return `${diffDays}d ago`;
 
-    return date.toLocaleDateString([], { month: "short", day: "numeric" });
+    return formatDateDDMMYYYY(date);
   };
 
   const getActivityIcon = (status: string) => {

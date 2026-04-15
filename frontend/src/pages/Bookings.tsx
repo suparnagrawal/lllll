@@ -14,6 +14,54 @@ import type { BookingRequestPrefill } from "./bookingAvailabilityBridge";
 import { EditBookingModal } from "../components/EditBookingModal";
 import { useToast } from "../context/ToastContext";
 import { formatError } from "../utils/formatError";
+import { buildHolidayWarningPrompt, isHolidayWarningError } from "../utils/holidayWarning";
+
+const BOOKING_FILTERS_STORAGE_KEY = "qol.bookings.filters.v1";
+
+type PersistedBookingFilters = {
+  filterRoomId: number | null;
+  filterBuildingId: number | null;
+  filterStartAt: string;
+  filterEndAt: string;
+};
+
+const DEFAULT_PERSISTED_BOOKING_FILTERS: PersistedBookingFilters = {
+  filterRoomId: null,
+  filterBuildingId: null,
+  filterStartAt: "",
+  filterEndAt: "",
+};
+
+function readPersistedBookingFilters(): PersistedBookingFilters {
+  if (typeof window === "undefined") {
+    return DEFAULT_PERSISTED_BOOKING_FILTERS;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(BOOKING_FILTERS_STORAGE_KEY);
+
+    if (!raw) {
+      return DEFAULT_PERSISTED_BOOKING_FILTERS;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<PersistedBookingFilters>;
+
+    return {
+      filterRoomId:
+        typeof parsed.filterRoomId === "number" && Number.isFinite(parsed.filterRoomId)
+          ? parsed.filterRoomId
+          : null,
+      filterBuildingId:
+        typeof parsed.filterBuildingId === "number" && Number.isFinite(parsed.filterBuildingId)
+          ? parsed.filterBuildingId
+          : null,
+      filterStartAt: typeof parsed.filterStartAt === "string" ? parsed.filterStartAt : "",
+      filterEndAt: typeof parsed.filterEndAt === "string" ? parsed.filterEndAt : "",
+    };
+  } catch {
+    return DEFAULT_PERSISTED_BOOKING_FILTERS;
+  }
+}
 
 export function BookingsPage() {
   const { user } = useAuth();
@@ -47,12 +95,13 @@ type BookingsPageContentProps = {
 };
 
 function BookingsPageContent({ currentUserId, userRole, isAdmin, canManageBookings, locationPrefill, pushToast }: BookingsPageContentProps) {
+  const persistedFilters = readPersistedBookingFilters();
 
   // Filters
-  const [filterRoomId, setFilterRoomId] = useState<number | "">("");
-  const [filterBuildingId, setFilterBuildingId] = useState<number | "">("");
-  const [filterStartAt, setFilterStartAt] = useState("");
-  const [filterEndAt, setFilterEndAt] = useState("");
+  const [filterRoomId, setFilterRoomId] = useState<number | "">(persistedFilters.filterRoomId ?? "");
+  const [filterBuildingId, setFilterBuildingId] = useState<number | "">(persistedFilters.filterBuildingId ?? "");
+  const [filterStartAt, setFilterStartAt] = useState(persistedFilters.filterStartAt);
+  const [filterEndAt, setFilterEndAt] = useState(persistedFilters.filterEndAt);
 
   // Create form
   const [newRoomId, setNewRoomId] = useState<number | "">(""); 
@@ -79,6 +128,12 @@ function BookingsPageContent({ currentUserId, userRole, isAdmin, canManageBookin
     if (filterEndAt) f.endAt = filterEndAt;
     return Object.keys(f).length > 0 ? f : undefined;
   }, [filterRoomId, filterBuildingId, filterStartAt, filterEndAt]);
+
+  const hasActiveFilters =
+    filterRoomId !== "" ||
+    filterBuildingId !== "" ||
+    filterStartAt.length > 0 ||
+    filterEndAt.length > 0;
 
   // Queries
   const { data: bookings = [], isLoading, error: bookingsError } = useBookings(filters);
@@ -152,6 +207,21 @@ function BookingsPageContent({ currentUserId, userRole, isAdmin, canManageBookin
     };
   }, [userRole]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const payload: PersistedBookingFilters = {
+      filterRoomId: filterRoomId === "" ? null : filterRoomId,
+      filterBuildingId: filterBuildingId === "" ? null : filterBuildingId,
+      filterStartAt,
+      filterEndAt,
+    };
+
+    window.localStorage.setItem(BOOKING_FILTERS_STORAGE_KEY, JSON.stringify(payload));
+  }, [filterRoomId, filterBuildingId, filterStartAt, filterEndAt]);
+
   // Apply prefill from location state if available
   useEffect(() => {
     if (!locationPrefill) {
@@ -177,11 +247,31 @@ function BookingsPageContent({ currentUserId, userRole, isAdmin, canManageBookin
 
     setCreateError(null);
     try {
-      await createBookingMutation.mutateAsync({ 
-        roomId: newRoomId, 
-        startAt: newStartAt, 
-        endAt: newEndAt 
-      });
+      const basePayload = {
+        roomId: newRoomId,
+        startAt: newStartAt,
+        endAt: newEndAt,
+      };
+
+      try {
+        await createBookingMutation.mutateAsync(basePayload);
+      } catch (error) {
+        if (!isHolidayWarningError(error)) {
+          throw error;
+        }
+
+        const continueAnyway = window.confirm(buildHolidayWarningPrompt(error));
+
+        if (!continueAnyway) {
+          return;
+        }
+
+        await createBookingMutation.mutateAsync({
+          ...basePayload,
+          overrideHolidayWarning: true,
+        });
+      }
+
       setNewRoomId("");
       setNewStartAt("");
       setNewEndAt("");
@@ -267,6 +357,13 @@ function BookingsPageContent({ currentUserId, userRole, isAdmin, canManageBookin
     }
   };
 
+  const clearFilters = () => {
+    setFilterRoomId("");
+    setFilterBuildingId("");
+    setFilterStartAt("");
+    setFilterEndAt("");
+  };
+
   const error = bookingsError || createBookingMutation.error || deleteBookingMutation.error;
   const isSubmitting = createBookingMutation.isPending;
 
@@ -281,6 +378,15 @@ function BookingsPageContent({ currentUserId, userRole, isAdmin, canManageBookin
       <form className="card section-gap" onSubmit={(e) => { e.preventDefault(); }}>
         <div className="card-header">
           <h3>Filters</h3>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={clearFilters}
+            disabled={!hasActiveFilters}
+            style={{ marginLeft: "auto" }}
+          >
+            Clear Filters
+          </button>
         </div>
         <div className="form-row">
           <div className="form-field">

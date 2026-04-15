@@ -13,12 +13,18 @@ import {
   getAssignedBuildingIdsForStaff,
   isRoomAssignedToStaff,
 } from '../../../users/services/staffBuildingScope';
+import {
+  buildHolidayWarningPayload,
+  getOverlappingHolidaysForInterval,
+  isHolidayOverrideAccepted,
+} from '../../../holidays/service';
 import { NotFoundError, ForbiddenError, ValidationError } from '../../../../domain/errors/AppError';
 import { applyDirectEdit, createEditRequest, decideEditFlow } from '../../../../services/editBookingService';
 
 type BookingCreateRequestBody = CreateBookingInput & {
   approvedBy?: number;
   approvedAt?: string | Date;
+  overrideHolidayWarning?: boolean;
 };
 
 type BookingBulkRequestItem = BulkBookingItemInput & {
@@ -153,6 +159,28 @@ export class BookingsController {
       req.body && typeof req.body === 'object'
         ? { ...(req.body as BookingCreateRequestBody) }
         : ({} as BookingCreateRequestBody);
+
+    const requestedStartAt = new Date(input.startAt as string | Date);
+    const requestedEndAt = new Date(input.endAt as string | Date);
+
+    if (
+      !Number.isNaN(requestedStartAt.getTime()) &&
+      !Number.isNaN(requestedEndAt.getTime()) &&
+      requestedStartAt < requestedEndAt
+    ) {
+      const overlappingHolidays = await getOverlappingHolidaysForInterval(
+        requestedStartAt,
+        requestedEndAt,
+      );
+
+      if (
+        overlappingHolidays.length > 0 &&
+        !isHolidayOverrideAccepted(input.overrideHolidayWarning)
+      ) {
+        res.status(409).json(buildHolidayWarningPayload(overlappingHolidays));
+        return;
+      }
+    }
 
     if (req.user?.role === 'STAFF') {
       const roomId = Number(input.roomId);
@@ -428,6 +456,7 @@ export class BookingsController {
 
   async bulkCreate(req: Request, res: Response): Promise<void> {
     const items = req.body?.items as BookingBulkRequestItem[] | undefined;
+    const overrideHolidayWarning = isHolidayOverrideAccepted(req.body?.overrideHolidayWarning);
 
     if (!Array.isArray(items)) {
       throw new ValidationError('items must be an array');
@@ -435,6 +464,31 @@ export class BookingsController {
 
     if (items.length === 0) {
       throw new ValidationError('items array must not be empty');
+    }
+
+    if (!overrideHolidayWarning) {
+      for (const item of items) {
+        const parsedStartAt = new Date(item.startAt as string | Date);
+        const parsedEndAt = new Date(item.endAt as string | Date);
+
+        if (
+          Number.isNaN(parsedStartAt.getTime()) ||
+          Number.isNaN(parsedEndAt.getTime()) ||
+          parsedStartAt >= parsedEndAt
+        ) {
+          continue;
+        }
+
+        const overlappingHolidays = await getOverlappingHolidaysForInterval(
+          parsedStartAt,
+          parsedEndAt,
+        );
+
+        if (overlappingHolidays.length > 0) {
+          res.status(409).json(buildHolidayWarningPayload(overlappingHolidays));
+          return;
+        }
+      }
     }
 
     if (req.user?.role === 'STAFF') {

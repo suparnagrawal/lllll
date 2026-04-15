@@ -141,6 +141,21 @@ export type Booking = {
   sourceRef: string | null;
 };
 
+export type Holiday = {
+  id: number;
+  name: string;
+  description: string | null;
+  startDate: string;
+  endDate: string;
+  createdBy: number | null;
+  createdAt: string;
+};
+
+export type HolidayCreateResponse = {
+  holiday: Holiday;
+  prunedTimetableBookings: number;
+};
+
 export type BookingEditRequestStatus = "PENDING" | "APPROVED" | "REJECTED";
 
 export type BookingEditRequest = {
@@ -469,6 +484,28 @@ export type AvailabilityBuilding = {
   buildingId: number;
   buildingName: string;
   rooms: AvailabilityRoom[];
+};
+
+export type MatrixAvailabilitySlot = {
+  time: string;
+  status: "booked" | "available";
+  bookingCount: number;
+  bookings: BookingDetail[];
+};
+
+export type MatrixAvailabilityRoom = {
+  roomId: number;
+  roomName: string;
+  slots: MatrixAvailabilitySlot[];
+};
+
+export type BuildingMatrixAvailability = {
+  buildingId: number;
+  buildingName: string;
+  date: string;
+  timeRange: { start: string; end: string };
+  slotDuration: number;
+  matrix: MatrixAvailabilityRoom[];
 };
 
 export type TimelineSegment = {
@@ -985,8 +1022,15 @@ export type RefreshTokenResponse = {
 };
 
 export type ApiErrorPayload = {
-  error?: string;
+  error?: string | { code?: string; message?: string };
   message?: string;
+  code?: string;
+  holidays?: Array<{
+    id?: number;
+    name?: string;
+    startDate?: string;
+    endDate?: string;
+  }>;
 };
 
 export type TimetableImportBatchListResponse = {

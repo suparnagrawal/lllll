@@ -1,23 +1,37 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthContext';
-import { LogOut, X, Menu } from 'lucide-react';
+import {
+  Activity,
+  Bell,
+  Calendar,
+  Clock,
+  FileText,
+  LogOut,
+  Menu,
+  Search,
+  Settings,
+  Users,
+  X,
+  type LucideIcon,
+} from 'lucide-react';
 
 type NavItem = {
   path: string;
   label: string;
-  icon: string;
+  icon: LucideIcon;
   roles?: string[];
 };
 
 const NAV_ITEMS: NavItem[] = [
-  { path: '/', label: 'Dashboard', icon: '📊' },
-  { path: '/rooms', label: 'Rooms', icon: '🚪' },
-  { path: '/requests', label: 'Requests', icon: '📋' },
-  { path: '/bookings', label: 'Bookings', icon: '📅' },
-  { path: '/availability', label: 'Availability', icon: '🔍' },
-  { path: '/users', label: 'Users', icon: '👥', roles: ['ADMIN'] },
-  { path: '/timetable', label: 'Timetable', icon: '🧩', roles: ['ADMIN'] },
+  { path: '/', label: 'Dashboard', icon: Activity },
+  { path: '/rooms', label: 'Rooms', icon: Settings },
+  { path: '/requests', label: 'Requests', icon: FileText },
+  { path: '/bookings', label: 'Bookings', icon: Calendar },
+  { path: '/availability', label: 'Availability', icon: Search },
+  { path: '/users', label: 'Users', icon: Users, roles: ['ADMIN'] },
+  { path: '/holidays', label: 'Holidays', icon: Bell, roles: ['ADMIN'] },
+  { path: '/timetable', label: 'Timetable', icon: Clock, roles: ['ADMIN'] },
 ];
 
 interface SidebarProps {
@@ -87,6 +101,7 @@ export function Sidebar({ isMobile = false, onClose }: SidebarProps) {
         <nav className="flex-1 px-3 py-6 space-y-1 overflow-y-auto">
           {visibleItems.map((item) => {
             const active = isActive(item.path);
+            const Icon = item.icon;
             return (
               <button
                 key={item.path}
@@ -100,7 +115,7 @@ export function Sidebar({ isMobile = false, onClose }: SidebarProps) {
                     : 'text-gray-300 hover:bg-gray-800 hover:text-white'
                 }`}
               >
-                <span className="text-lg">{item.icon}</span>
+                <Icon className="w-4 h-4" />
                 <span>{item.label}</span>
               </button>
             );

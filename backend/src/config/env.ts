@@ -1,5 +1,9 @@
 import dotenv from "dotenv";
 
+if (!process.env.TZ || process.env.TZ.trim().length === 0) {
+	process.env.TZ = "Asia/Kolkata";
+}
+
 dotenv.config();
 
 function requireEnv(name: string): string {

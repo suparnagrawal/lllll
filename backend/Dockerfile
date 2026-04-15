@@ -17,6 +17,7 @@ RUN npm run build
 
 FROM node:20-alpine AS migrator
 WORKDIR /app
+ENV TZ=Asia/Kolkata
 
 COPY --from=deps /app/package*.json ./
 COPY --from=deps /app/node_modules ./node_modules
@@ -29,6 +30,7 @@ CMD ["npm", "run", "db:push:first-deploy"]
 FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+ENV TZ=Asia/Kolkata
 
 COPY backend/package*.json ./
 RUN npm ci --omit=dev
