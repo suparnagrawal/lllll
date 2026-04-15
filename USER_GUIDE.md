@@ -148,26 +148,39 @@ Once your request is approved, it becomes a booking:
    - Date and time
    - Event information
 
-## Edit Booking Flow
+## Edit Booking System
 
-- Users can modify existing bookings.
+The system provides a unified edit-booking workflow.
 
 ### Direct Edit
-- Allowed for:
-   - STAFF / ADMIN
-   - PENDING_FACULTY bookings
+Allowed when:
+- User is STAFF or ADMIN
+- Booking is in PENDING_FACULTY state
 
-### Edit Request
-- Required for:
-   - PENDING_STAFF bookings
-   - APPROVED bookings
+### Edit Request Required
+Triggered when:
+- Booking is in PENDING_STAFF
+- Booking is APPROVED
 
 ### Approval Flow
 - On approval:
-   - old booking deleted
-   - new booking created
+  - Old booking is deleted
+  - New booking is created
 - On rejection:
-   - no change applied
+  - No change applied
+
+### Key Benefits
+- Removes redundancy (no separate slot/venue modules)
+- Aligns with real-world institutional workflows
+- Maintains auditability via requests
+
+### API Endpoints
+- POST /api/bookings/:id/edit
+- GET /api/booking-edit-requests
+- POST /api/booking-edit-requests/:id/approve
+- POST /api/booking-edit-requests/:id/reject
+
+Note: Slot/Venue Change modules are deprecated and replaced by unified edit-booking system.
 
 ---
 
