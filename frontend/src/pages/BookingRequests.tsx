@@ -48,6 +48,14 @@ import { Badge } from "../components/ui/badge";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -122,30 +130,86 @@ type BandFinderOption = {
   endAt: string;
 };
 
+type DayWindowRange = {
+  date: string;
+  startTime: string;
+  endTime: string;
+};
+
 function pad2(value: number): string {
   return String(value).padStart(2, "0");
 }
 
-function toLocalDateTimeKey(dateKey: string, timeKey: string): string {
-  return `${dateKey}T${timeKey}`;
+function formatLocalDateKey(date: Date): string {
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
 }
 
-function addMinutesToLocalDateTime(dateKey: string, timeKey: string, minutes: number): string {
-  const base = new Date(`${dateKey}T${timeKey}:00`);
+function formatLocalTimeKey(date: Date): string {
+  return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+}
 
-  if (Number.isNaN(base.getTime())) {
-    return toLocalDateTimeKey(dateKey, timeKey);
+function formatLocalDateTimeKey(date: Date): string {
+  return `${formatLocalDateKey(date)}T${formatLocalTimeKey(date)}`;
+}
+
+function parseLocalDateTime(value: string): Date | null {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = new Date(`${value}:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function addMinutesToLocalDateTime(value: string, minutes: number): string {
+  const base = parseLocalDateTime(value);
+
+  if (!base) {
+    return value;
   }
 
   base.setMinutes(base.getMinutes() + minutes);
 
-  const year = base.getFullYear();
-  const month = pad2(base.getMonth() + 1);
-  const day = pad2(base.getDate());
-  const hours = pad2(base.getHours());
-  const mins = pad2(base.getMinutes());
+  return formatLocalDateTimeKey(base);
+}
 
-  return `${year}-${month}-${day}T${hours}:${mins}`;
+function getDefaultFinderWindow(): { fromAt: string; toAt: string } {
+  const date = getCurrentISTDateInputValue();
+
+  return {
+    fromAt: `${date}T16:00`,
+    toAt: `${date}T20:00`,
+  };
+}
+
+function buildDayWindowRanges(startAt: Date, endAt: Date): DayWindowRange[] {
+  const ranges: DayWindowRange[] = [];
+  const cursor = new Date(startAt);
+  cursor.setHours(0, 0, 0, 0);
+
+  while (cursor.getTime() < endAt.getTime()) {
+    const dayStart = new Date(cursor);
+    const dayEnd = new Date(cursor);
+    dayEnd.setDate(dayEnd.getDate() + 1);
+
+    const rangeStart =
+      startAt.getTime() > dayStart.getTime() ? startAt : dayStart;
+    const rangeEnd = endAt.getTime() < dayEnd.getTime() ? endAt : dayEnd;
+
+    if (rangeStart.getTime() < rangeEnd.getTime()) {
+      const isFullDaySlice = rangeEnd.getTime() === dayEnd.getTime();
+
+      ranges.push({
+        date: formatLocalDateKey(dayStart),
+        startTime: formatLocalTimeKey(rangeStart),
+        endTime: isFullDaySlice ? "23:59" : formatLocalTimeKey(rangeEnd),
+      });
+    }
+
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return ranges;
 }
 
 function isStatusFilter(value: unknown): value is StatusFilter {
@@ -259,10 +323,11 @@ export function BookingRequestsPage({
 
   const [staffBuildingIds, setStaffBuildingIds] = useState<number[]>([]);
 
-  const [finderDate, setFinderDate] = useState(getCurrentISTDateInputValue());
-  const [finderWindowStart, setFinderWindowStart] = useState("16:00");
-  const [finderWindowEnd, setFinderWindowEnd] = useState("20:00");
+  const [finderWindowDefaults] = useState(() => getDefaultFinderWindow());
+  const [finderFromAt, setFinderFromAt] = useState(finderWindowDefaults.fromAt);
+  const [finderToAt, setFinderToAt] = useState(finderWindowDefaults.toAt);
   const [finderBandMinutes, setFinderBandMinutes] = useState<number>(60);
+  const [finderRequiredBandMinutes, setFinderRequiredBandMinutes] = useState<number>(60);
   const [finderMinCapacity, setFinderMinCapacity] = useState("");
   const [finderBuildingIds, setFinderBuildingIds] = useState<number[]>([]);
   const [finderBuildingsInitialized, setFinderBuildingsInitialized] = useState(false);
@@ -270,6 +335,10 @@ export function BookingRequestsPage({
   const [finderLoading, setFinderLoading] = useState(false);
   const [finderError, setFinderError] = useState<string | null>(null);
   const [finderNotice, setFinderNotice] = useState<string | null>(null);
+  const [finderSelectedBand, setFinderSelectedBand] = useState<BandFinderOption | null>(null);
+  const [finderSelectedStartAt, setFinderSelectedStartAt] = useState("");
+  const [finderSelectedEndAt, setFinderSelectedEndAt] = useState("");
+  const [finderSelectedError, setFinderSelectedError] = useState<string | null>(null);
 
   const roomNameById = new Map(rooms.map((r) => [r.id, formatRoomDisplayWithBuildingsArray(r, buildings)]));
   const roomById = useMemo(() => new Map(rooms.map((room) => [room.id, room])), [rooms]);
@@ -467,35 +536,102 @@ export function BookingRequestsPage({
     setPrefillMessage(null);
   };
 
-  const applyFinderOption = (option: BandFinderOption) => {
-    setRoomId(option.roomId);
-    setStartAt(option.startAt);
-    setEndAt(option.endAt);
+  const handleOpenFinderSelection = (option: BandFinderOption) => {
+    const suggestedEnd = addMinutesToLocalDateTime(option.startAt, finderRequiredBandMinutes);
+    const suggestedEndDate = parseLocalDateTime(suggestedEnd);
+    const bandEndDate = parseLocalDateTime(option.endAt);
+
+    setFinderSelectedBand(option);
+    setFinderSelectedStartAt(option.startAt);
+    setFinderSelectedEndAt(
+      suggestedEndDate && bandEndDate && suggestedEndDate.getTime() > bandEndDate.getTime()
+        ? option.endAt
+        : suggestedEnd,
+    );
+    setFinderSelectedError(null);
+  };
+
+  const closeFinderSelection = () => {
+    setFinderSelectedBand(null);
+    setFinderSelectedStartAt("");
+    setFinderSelectedEndAt("");
+    setFinderSelectedError(null);
+  };
+
+  const handleApplyFinderSelection = () => {
+    if (!finderSelectedBand) {
+      return;
+    }
+
+    const selectedStart = parseLocalDateTime(finderSelectedStartAt);
+    const selectedEnd = parseLocalDateTime(finderSelectedEndAt);
+    const bandStart = parseLocalDateTime(finderSelectedBand.startAt);
+    const bandEnd = parseLocalDateTime(finderSelectedBand.endAt);
+
+    if (!selectedStart || !selectedEnd || !bandStart || !bandEnd) {
+      setFinderSelectedError("Select valid start and end date-time values.");
+      return;
+    }
+
+    if (selectedStart.getTime() >= selectedEnd.getTime()) {
+      setFinderSelectedError("To must be after From.");
+      return;
+    }
+
+    if (
+      selectedStart.getTime() < bandStart.getTime() ||
+      selectedEnd.getTime() > bandEnd.getTime()
+    ) {
+      setFinderSelectedError("Selected range must stay inside the available contiguous band.");
+      return;
+    }
+
+    const selectedDurationMinutes = Math.floor(
+      (selectedEnd.getTime() - selectedStart.getTime()) / (1000 * 60),
+    );
+
+    if (selectedDurationMinutes < finderRequiredBandMinutes) {
+      setFinderSelectedError(
+        `Selected range must be at least ${finderRequiredBandMinutes} minutes.`,
+      );
+      return;
+    }
+
+    setRoomId(finderSelectedBand.roomId);
+    setStartAt(finderSelectedStartAt);
+    setEndAt(finderSelectedEndAt);
+    setFinderOptions([]);
+    setFinderNotice(null);
+    setFinderError(null);
     setError(null);
     setPrefillMessage(
-      `Form prefilled from time-band finder: ${option.buildingName} - ${option.roomName} (${option.startAt.slice(11, 16)} to ${option.endAt.slice(11, 16)}).`,
+      `Form prefilled from time-band finder: ${finderSelectedBand.buildingName} - ${finderSelectedBand.roomName} (${formatDateTimeDDMMYYYY(finderSelectedStartAt)} to ${formatDateTimeDDMMYYYY(finderSelectedEndAt)}).`,
     );
+    closeFinderSelection();
   };
 
   const resetBandFinder = () => {
-    setFinderDate(getCurrentISTDateInputValue());
-    setFinderWindowStart("16:00");
-    setFinderWindowEnd("20:00");
+    const defaults = getDefaultFinderWindow();
+    setFinderFromAt(defaults.fromAt);
+    setFinderToAt(defaults.toAt);
     setFinderBandMinutes(60);
+    setFinderRequiredBandMinutes(60);
     setFinderMinCapacity("");
     setFinderOptions([]);
     setFinderError(null);
     setFinderNotice(null);
     setFinderBuildingIds(visibleFinderBuildings.map((building) => building.id));
+    closeFinderSelection();
   };
 
   const handleBandFinderSearch = async () => {
     setFinderError(null);
     setFinderNotice(null);
     setFinderOptions([]);
+    closeFinderSelection();
 
-    if (!finderDate) {
-      setFinderError("Date is required.");
+    if (!finderFromAt || !finderToAt) {
+      setFinderError("From and To date-time values are required.");
       return;
     }
 
@@ -504,20 +640,11 @@ export function BookingRequestsPage({
       return;
     }
 
-    if (!finderWindowStart || !finderWindowEnd) {
-      setFinderError("Start and end time are required.");
-      return;
-    }
+    const windowStart = parseLocalDateTime(finderFromAt);
+    const windowEnd = parseLocalDateTime(finderToAt);
 
-    const windowStart = new Date(`${finderDate}T${finderWindowStart}:00`);
-    const windowEnd = new Date(`${finderDate}T${finderWindowEnd}:00`);
-
-    if (
-      Number.isNaN(windowStart.getTime()) ||
-      Number.isNaN(windowEnd.getTime()) ||
-      windowStart.getTime() >= windowEnd.getTime()
-    ) {
-      setFinderError("Time range is invalid. End time must be after start time.");
+    if (!windowStart || !windowEnd || windowStart.getTime() >= windowEnd.getTime()) {
+      setFinderError("Time range is invalid. To must be after From.");
       return;
     }
 
@@ -555,91 +682,182 @@ export function BookingRequestsPage({
     }
 
     setFinderLoading(true);
+    setFinderRequiredBandMinutes(normalizedBandMinutes);
 
     try {
-      const results = await Promise.allSettled(
-        finderBuildingIds.map((buildingId) =>
-          getBuildingMatrixAvailability(
-            buildingId,
-            finderDate,
-            finderWindowStart,
-            finderWindowEnd,
-            BAND_FINDER_SLOT_GRANULARITY_MINUTES,
-          ),
+      const dayRanges = buildDayWindowRanges(windowStart, windowEnd);
+
+      if (dayRanges.length === 0) {
+        setFinderError("No valid day ranges found for the selected window.");
+        return;
+      }
+
+      const matrixResults = await Promise.all(
+        finderBuildingIds.flatMap((buildingId) =>
+          dayRanges.map(async (range) => {
+            try {
+              const matrixReport = await getBuildingMatrixAvailability(
+                buildingId,
+                range.date,
+                range.startTime,
+                range.endTime,
+                BAND_FINDER_SLOT_GRANULARITY_MINUTES,
+              );
+
+              return {
+                buildingId,
+                matrixReport,
+                failed: false as const,
+              };
+            } catch {
+              return {
+                buildingId,
+                matrixReport: null,
+                failed: true as const,
+              };
+            }
+          }),
         ),
       );
 
-      const requiredSlotCount = Math.max(
-        1,
-        normalizedBandMinutes / BAND_FINDER_SLOT_GRANULARITY_MINUTES,
-      );
-      let skippedBuildings = 0;
-      const rawOptions: BandFinderOption[] = [];
+      const failedBuildingIds = new Set<number>();
+      const timelineByRoom = new Map<
+        string,
+        {
+          roomId: number;
+          roomName: string;
+          buildingId: number;
+          buildingName: string;
+          capacity: number | null;
+          roomType: string | null;
+          slotStatusByStartAt: Map<string, "available" | "booked">;
+        }
+      >();
 
-      for (const result of results) {
-        if (result.status !== "fulfilled") {
-          skippedBuildings += 1;
+      for (const result of matrixResults) {
+        if (result.failed || !result.matrixReport) {
+          failedBuildingIds.add(result.buildingId);
           continue;
         }
 
-        const matrixReport = result.value;
+        const matrixReport = result.matrixReport;
 
         for (const matrixRoom of matrixReport.matrix) {
           const roomMeta = roomById.get(matrixRoom.roomId);
 
           if (parsedMinCapacity !== null) {
             const roomCapacity = roomMeta?.capacity;
-            if (roomCapacity === null || roomCapacity === undefined || roomCapacity < parsedMinCapacity) {
+            if (
+              roomCapacity === null ||
+              roomCapacity === undefined ||
+              roomCapacity < parsedMinCapacity
+            ) {
               continue;
             }
           }
 
-          for (let startIdx = 0; startIdx <= matrixRoom.slots.length - requiredSlotCount; startIdx += 1) {
-            let allAvailable = true;
+          const roomKey = `${matrixReport.buildingId}-${matrixRoom.roomId}`;
+          let roomTimeline = timelineByRoom.get(roomKey);
 
-            for (let offset = 0; offset < requiredSlotCount; offset += 1) {
-              if (matrixRoom.slots[startIdx + offset]?.status !== "available") {
-                allAvailable = false;
-                break;
-              }
-            }
-
-            if (!allAvailable) {
-              continue;
-            }
-
-            const startTime = matrixRoom.slots[startIdx]?.time;
-            if (!startTime) {
-              continue;
-            }
-
-            const startAt = toLocalDateTimeKey(finderDate, startTime);
-            const endAt = addMinutesToLocalDateTime(
-              finderDate,
-              startTime,
-              normalizedBandMinutes,
-            );
-
-            const computedEnd = new Date(`${endAt}:00`);
-            if (
-              Number.isNaN(computedEnd.getTime()) ||
-              computedEnd.getTime() > windowEnd.getTime()
-            ) {
-              continue;
-            }
-
-            rawOptions.push({
+          if (!roomTimeline) {
+            roomTimeline = {
               roomId: matrixRoom.roomId,
               roomName: matrixRoom.roomName,
               buildingId: matrixReport.buildingId,
               buildingName: matrixReport.buildingName,
               capacity: roomMeta?.capacity ?? null,
               roomType: roomMeta?.roomType ?? null,
-              startAt,
-              endAt,
-            });
+              slotStatusByStartAt: new Map(),
+            };
+
+            timelineByRoom.set(roomKey, roomTimeline);
+          }
+
+          for (const slot of matrixRoom.slots) {
+            const slotStartAt = `${matrixReport.date}T${slot.time}`;
+            const existingStatus = roomTimeline.slotStatusByStartAt.get(slotStartAt);
+
+            if (!existingStatus || slot.status === "booked") {
+              roomTimeline.slotStatusByStartAt.set(slotStartAt, slot.status);
+            }
           }
         }
+      }
+
+      const rawOptions: BandFinderOption[] = [];
+
+      for (const timeline of timelineByRoom.values()) {
+        const sortedSlots = Array.from(timeline.slotStatusByStartAt.entries()).sort((a, b) =>
+          a[0].localeCompare(b[0]),
+        );
+
+        let currentRunStart: Date | null = null;
+        let previousAvailableSlotStart: Date | null = null;
+
+        const pushCurrentRunIfEligible = () => {
+          if (!currentRunStart || !previousAvailableSlotStart) {
+            currentRunStart = null;
+            previousAvailableSlotStart = null;
+            return;
+          }
+
+          const runEnd = new Date(previousAvailableSlotStart);
+          runEnd.setMinutes(runEnd.getMinutes() + BAND_FINDER_SLOT_GRANULARITY_MINUTES);
+
+          const runDurationMinutes = Math.floor(
+            (runEnd.getTime() - currentRunStart.getTime()) / (1000 * 60),
+          );
+
+          if (runDurationMinutes >= normalizedBandMinutes) {
+            rawOptions.push({
+              roomId: timeline.roomId,
+              roomName: timeline.roomName,
+              buildingId: timeline.buildingId,
+              buildingName: timeline.buildingName,
+              capacity: timeline.capacity,
+              roomType: timeline.roomType,
+              startAt: formatLocalDateTimeKey(currentRunStart),
+              endAt: formatLocalDateTimeKey(runEnd),
+            });
+          }
+
+          currentRunStart = null;
+          previousAvailableSlotStart = null;
+        };
+
+        for (const [slotStartAt, status] of sortedSlots) {
+          const slotStart = parseLocalDateTime(slotStartAt);
+
+          if (!slotStart) {
+            continue;
+          }
+
+          if (status !== "available") {
+            pushCurrentRunIfEligible();
+            continue;
+          }
+
+          if (!currentRunStart || !previousAvailableSlotStart) {
+            currentRunStart = slotStart;
+            previousAvailableSlotStart = slotStart;
+            continue;
+          }
+
+          const gapMinutes = Math.floor(
+            (slotStart.getTime() - previousAvailableSlotStart.getTime()) / (1000 * 60),
+          );
+
+          if (gapMinutes === BAND_FINDER_SLOT_GRANULARITY_MINUTES) {
+            previousAvailableSlotStart = slotStart;
+            continue;
+          }
+
+          pushCurrentRunIfEligible();
+          currentRunStart = slotStart;
+          previousAvailableSlotStart = slotStart;
+        }
+
+        pushCurrentRunIfEligible();
       }
 
       const dedupedOptions = Array.from(
@@ -671,11 +889,11 @@ export function BookingRequestsPage({
 
       if (dedupedOptions.length === 0) {
         setFinderNotice(
-          `No available options found for the selected constraints.${roundedMessage}`,
+          `No contiguous bands found for the selected constraints.${roundedMessage}`,
         );
-      } else if (skippedBuildings > 0) {
+      } else if (failedBuildingIds.size > 0) {
         setFinderNotice(
-          `Found ${dedupedOptions.length} option(s). ${skippedBuildings} selected building(s) were skipped due to access or data issues.${roundedMessage}`,
+          `Found ${dedupedOptions.length} option(s). Data for ${failedBuildingIds.size} selected building(s) could not be loaded completely.${roundedMessage}`,
         );
       } else {
         setFinderNotice(`Found ${dedupedOptions.length} option(s).${roundedMessage}`);
@@ -900,34 +1118,23 @@ export function BookingRequestsPage({
           <CardContent className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="finderDate">Date</Label>
-                <Input
-                  id="finderDate"
-                  type="date"
-                  value={finderDate}
-                  onChange={(event) => setFinderDate(event.target.value)}
+                <Label htmlFor="finderFromAt">From</Label>
+                <DateInput
+                  id="finderFromAt"
+                  mode="datetime"
+                  value={finderFromAt}
+                  onChange={setFinderFromAt}
                   disabled={finderLoading}
                 />
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="finderWindowStart">Window Start</Label>
-                <Input
-                  id="finderWindowStart"
-                  type="time"
-                  value={finderWindowStart}
-                  onChange={(event) => setFinderWindowStart(event.target.value)}
-                  disabled={finderLoading}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="finderWindowEnd">Window End</Label>
-                <Input
-                  id="finderWindowEnd"
-                  type="time"
-                  value={finderWindowEnd}
-                  onChange={(event) => setFinderWindowEnd(event.target.value)}
+                <Label htmlFor="finderToAt">To</Label>
+                <DateInput
+                  id="finderToAt"
+                  mode="datetime"
+                  value={finderToAt}
+                  onChange={setFinderToAt}
                   disabled={finderLoading}
                 />
               </div>
@@ -1008,7 +1215,7 @@ export function BookingRequestsPage({
             {finderOptions.length > 0 && (
               <div className="space-y-3">
                 <p className="text-sm text-gray-600">
-                  Click a card to prefill the request form with that room and time band.
+                  Click a card to choose exact From and To date-times before prefilling the request form.
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   {finderOptions.map((option) => (
@@ -1022,9 +1229,9 @@ export function BookingRequestsPage({
                       }}
                       buildingName={option.buildingName}
                       isFullyAvailable={true}
-                      availableFrom={option.startAt.slice(11, 16)}
-                      availableTo={option.endAt.slice(11, 16)}
-                      onClick={() => applyFinderOption(option)}
+                      availableFrom={formatDateTimeDDMMYYYY(option.startAt)}
+                      availableTo={formatDateTimeDDMMYYYY(option.endAt)}
+                      onClick={() => handleOpenFinderSelection(option)}
                     />
                   ))}
                 </div>
@@ -1033,6 +1240,77 @@ export function BookingRequestsPage({
           </CardContent>
         </Card>
       )}
+
+      <Dialog
+        open={Boolean(finderSelectedBand)}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeFinderSelection();
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Select Request Time Range</DialogTitle>
+            <DialogDescription>
+              Choose a start and end date-time inside the selected contiguous availability band.
+            </DialogDescription>
+          </DialogHeader>
+
+          {finderSelectedBand && (
+            <div className="space-y-4">
+              <div className="rounded-md border border-slate-200 bg-slate-50/60 p-3 text-sm">
+                <p className="font-medium text-slate-900">
+                  {finderSelectedBand.buildingName} - {finderSelectedBand.roomName}
+                </p>
+                <p className="text-slate-600 mt-1">
+                  Available window: {formatDateTimeDDMMYYYY(finderSelectedBand.startAt)} to {formatDateTimeDDMMYYYY(finderSelectedBand.endAt)}
+                </p>
+                <p className="text-slate-600 mt-1">
+                  Required minimum duration: {finderRequiredBandMinutes} minutes
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="finderSelectedStartAt">From</Label>
+                  <DateInput
+                    id="finderSelectedStartAt"
+                    mode="datetime"
+                    value={finderSelectedStartAt}
+                    onChange={setFinderSelectedStartAt}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="finderSelectedEndAt">To</Label>
+                  <DateInput
+                    id="finderSelectedEndAt"
+                    mode="datetime"
+                    value={finderSelectedEndAt}
+                    onChange={setFinderSelectedEndAt}
+                  />
+                </div>
+              </div>
+
+              {finderSelectedError && (
+                <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-md text-sm">
+                  {finderSelectedError}
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={closeFinderSelection}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={handleApplyFinderSelection}>
+              Proceed with Prefill
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Create Form */}
       {canCreate && (
