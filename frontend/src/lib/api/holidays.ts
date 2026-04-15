@@ -1,5 +1,10 @@
 import { request } from "./client";
-import type { Holiday, HolidayCreateResponse } from "./types";
+import type {
+  DayOfWeek,
+  Holiday,
+  HolidayCreateResponse,
+  TimetableDayOverride,
+} from "./types";
 
 export async function getHolidays(filters?: {
   fromDate?: string;
@@ -33,6 +38,43 @@ export async function createHoliday(input: {
 
 export async function deleteHoliday(id: number): Promise<void> {
   await request<void>(`/holidays/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export async function getTimetableDayOverrides(filters?: {
+  fromDate?: string;
+  toDate?: string;
+}): Promise<TimetableDayOverride[]> {
+  const params = new URLSearchParams();
+
+  if (filters?.fromDate) {
+    params.set("fromDate", filters.fromDate);
+  }
+
+  if (filters?.toDate) {
+    params.set("toDate", filters.toDate);
+  }
+
+  const query = params.toString();
+  return request<TimetableDayOverride[]>(
+    `/holidays/day-overrides${query ? `?${query}` : ""}`,
+  );
+}
+
+export async function saveTimetableDayOverride(input: {
+  targetDate: string;
+  followsDayOfWeek: DayOfWeek;
+  note?: string;
+}): Promise<TimetableDayOverride> {
+  return request<TimetableDayOverride>("/holidays/day-overrides", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteTimetableDayOverride(id: number): Promise<void> {
+  await request<void>(`/holidays/day-overrides/${id}`, {
     method: "DELETE",
   });
 }

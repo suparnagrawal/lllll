@@ -6,12 +6,14 @@ export async function getBookings(filters?: {
   buildingId?: number;
   startAt?: string;
   endAt?: string;
+  limit?: number;
 }): Promise<Booking[]> {
   const params = new URLSearchParams();
   if (filters?.roomId !== undefined) params.set("roomId", String(filters.roomId));
   if (filters?.buildingId !== undefined) params.set("buildingId", String(filters.buildingId));
   if (filters?.startAt) params.set("startAt", filters.startAt);
   if (filters?.endAt) params.set("endAt", filters.endAt);
+  if (filters?.limit !== undefined) params.set("limit", String(filters.limit));
   const qs = params.toString();
   const bookings = await request<Booking[]>(`/bookings${qs ? `?${qs}` : ""}`);
 

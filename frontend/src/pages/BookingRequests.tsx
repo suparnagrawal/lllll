@@ -62,6 +62,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../components/ui/select";
+import { useSystemQoLPreferences } from "../hooks/useSystemQoLPreferences";
 
 type StatusFilter = "ALL" | BookingStatus;
 
@@ -94,6 +95,7 @@ const EVENT_TYPE_OPTIONS: BookingEventType[] = [
 ];
 
 const BOOKING_REQUESTS_PREFERENCES_KEY = "qol.bookingRequests.preferences.v1";
+const RECENT_REQUESTS_LIMIT = 75;
 
 type BookingRequestPreferences = {
   statusFilter: StatusFilter;
@@ -277,6 +279,12 @@ type BookingRequestsPageProps = {
   onOpenAvailability?: (prefill: AvailabilityPrefill) => void;
 };
 
+type BookingRequestsSection =
+  | "requests"
+  | "finder"
+  | "new-request"
+  | "edit-requests";
+
 export function BookingRequestsPage({
   prefill,
   onPrefillApplied,
@@ -284,6 +292,11 @@ export function BookingRequestsPage({
 }: BookingRequestsPageProps) {
   const [initialPreferences] = useState<BookingRequestPreferences>(() =>
     readBookingRequestPreferences(),
+  );
+  const { preferences } = useSystemQoLPreferences();
+  const sectionAutoLoad = preferences.autoLoadSections.bookingRequests;
+  const [hasRequestedFullRequests, setHasRequestedFullRequests] = useState(
+    () => !preferences.manualDataLoading || sectionAutoLoad,
   );
   const { user } = useAuth();
   const { pushToast } = useToast();
@@ -294,6 +307,12 @@ export function BookingRequestsPage({
   const isStudent = currentRole === "STUDENT";
   const canCreate =
     currentRole === "STUDENT" || currentRole === "FACULTY" || currentRole === "STAFF";
+
+  useEffect(() => {
+    if (!preferences.manualDataLoading || sectionAutoLoad) {
+      setHasRequestedFullRequests(true);
+    }
+  }, [preferences.manualDataLoading, sectionAutoLoad]);
 
   // Get prefill from location state if available
   const locationPrefill = (location.state as any)?.prefill as BookingRequestPrefill | undefined;
@@ -306,6 +325,12 @@ export function BookingRequestsPage({
   const [bookingsById, setBookingsById] = useState<Record<number, Booking>>({});
   const [adminUserNameById, setAdminUserNameById] = useState<Record<number, string>>({});
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(initialPreferences.statusFilter);
+
+  const isRecentRequestsMode =
+    preferences.manualDataLoading &&
+    !sectionAutoLoad &&
+    !hasRequestedFullRequests &&
+    statusFilter === "ALL";
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -339,6 +364,16 @@ export function BookingRequestsPage({
   const [finderSelectedStartAt, setFinderSelectedStartAt] = useState("");
   const [finderSelectedEndAt, setFinderSelectedEndAt] = useState("");
   const [finderSelectedError, setFinderSelectedError] = useState<string | null>(null);
+  const [activeSection, setActiveSection] = useState<BookingRequestsSection>("requests");
+
+  useEffect(() => {
+    if (
+      !canCreate &&
+      (activeSection === "finder" || activeSection === "new-request")
+    ) {
+      setActiveSection("requests");
+    }
+  }, [activeSection, canCreate]);
 
   const roomNameById = new Map(rooms.map((r) => [r.id, formatRoomDisplayWithBuildingsArray(r, buildings)]));
   const roomById = useMemo(() => new Map(rooms.map((room) => [room.id, room])), [rooms]);
@@ -374,7 +409,15 @@ export function BookingRequestsPage({
     setLoading(true);
     setError(null);
     try {
-      setRequests(await getBookingRequests(filter === "ALL" ? undefined : filter));
+      if (filter === "ALL") {
+        setRequests(
+          await getBookingRequests(
+            isRecentRequestsMode ? { limit: RECENT_REQUESTS_LIMIT } : undefined,
+          ),
+        );
+      } else {
+        setRequests(await getBookingRequests({ status: filter }));
+      }
     } catch (e) {
       setError(formatError(e, "Failed to load booking requests"));
     } finally {
@@ -422,7 +465,6 @@ export function BookingRequestsPage({
     void (async () => {
       await loadRooms();
       await loadBuildings();
-      await loadEditRequests();
 
       if (isStudent) {
         await loadFacultyUsers();
@@ -434,10 +476,23 @@ export function BookingRequestsPage({
   }, [isStudent]);
 
   useEffect(() => {
-    void loadRequests(statusFilter);
-  }, [statusFilter]);
+    if (activeSection !== "edit-requests") {
+      return;
+    }
+
+    void loadEditRequests();
+  }, [activeSection]);
 
   useEffect(() => {
+    void loadRequests(statusFilter);
+  }, [statusFilter, isRecentRequestsMode]);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setAdminUserNameById({});
+      return;
+    }
+
     void loadAdminUsers();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin]);
@@ -1008,7 +1063,9 @@ export function BookingRequestsPage({
     try {
       await action();
       await loadRequests(statusFilter);
-      await loadEditRequests();
+      if (activeSection === "edit-requests") {
+        await loadEditRequests();
+      }
     } catch (e) {
       setError(formatError(e, "Action failed"));
     } finally {
@@ -1058,7 +1115,9 @@ export function BookingRequestsPage({
       }
 
       await loadRequests(statusFilter);
-      await loadEditRequests();
+      if (activeSection === "edit-requests") {
+        await loadEditRequests();
+      }
     } catch (error) {
       setError(formatError(error, "Action failed"));
     } finally {
@@ -1076,32 +1135,109 @@ export function BookingRequestsPage({
         </p>
       </div>
 
-      {/* Filter Chips */}
-      <div className="flex flex-wrap gap-2">
-        {STATUS_OPTIONS.map((s) => (
-          <Button
-            key={s}
+      <div className="alert">
+        Data mode: {preferences.manualDataLoading ? "Manual" : "Automatic"}. Admins can update this globally from System Loading settings.
+      </div>
+
+      {isRecentRequestsMode && (
+        <div className="alert">
+          Showing recent booking requests (up to {RECENT_REQUESTS_LIMIT} rows). Use filters for targeted views, or load full history when needed.
+          <button
             type="button"
-            variant={statusFilter === s ? "default" : "outline"}
-            size="sm"
-            onClick={() => handleFilterChange(s)}
+            className="btn btn-ghost btn-sm"
+            style={{ marginLeft: "var(--space-2)" }}
+            onClick={() => setHasRequestedFullRequests(true)}
           >
-            {s === "ALL" ? "All" : STATUS_LABELS[s]}
-          </Button>
-        ))}
+            Load Full Request History
+          </button>
+        </div>
+      )}
+
+      {!isRecentRequestsMode &&
+        preferences.manualDataLoading &&
+        !sectionAutoLoad &&
+        statusFilter === "ALL" &&
+        hasRequestedFullRequests && (
+          <div className="alert">
+            Showing full booking request history.
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              style={{ marginLeft: "var(--space-2)" }}
+              onClick={() => setHasRequestedFullRequests(false)}
+            >
+              Switch To Recent View
+            </button>
+          </div>
+        )}
+
+      <div className="flex flex-wrap gap-2">
         <Button
           type="button"
-          variant="outline"
+          variant={activeSection === "requests" ? "default" : "outline"}
           size="sm"
-          disabled={statusFilter === "ALL"}
-          onClick={() => setStatusFilter("ALL")}
+          onClick={() => setActiveSection("requests")}
         >
-          Reset Filter
+          Requests
+        </Button>
+        {canCreate && (
+          <>
+            <Button
+              type="button"
+              variant={activeSection === "finder" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setActiveSection("finder")}
+            >
+              Time-Band Finder
+            </Button>
+            <Button
+              type="button"
+              variant={activeSection === "new-request" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setActiveSection("new-request")}
+            >
+              New Request
+            </Button>
+          </>
+        )}
+        <Button
+          type="button"
+          variant={activeSection === "edit-requests" ? "default" : "outline"}
+          size="sm"
+          onClick={() => setActiveSection("edit-requests")}
+        >
+          Edit Requests
         </Button>
       </div>
 
+      {/* Filter Chips */}
+      {activeSection === "requests" && (
+        <div className="flex flex-wrap gap-2">
+          {STATUS_OPTIONS.map((s) => (
+            <Button
+              key={s}
+              type="button"
+              variant={statusFilter === s ? "default" : "outline"}
+              size="sm"
+              onClick={() => handleFilterChange(s)}
+            >
+              {s === "ALL" ? "All" : STATUS_LABELS[s]}
+            </Button>
+          ))}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={statusFilter === "ALL"}
+            onClick={() => setStatusFilter("ALL")}
+          >
+            Reset Filter
+          </Button>
+        </div>
+      )}
+
       {/* Time-Band Finder */}
-      {canCreate && (
+      {canCreate && activeSection === "finder" && (
         <Card>
           <CardHeader>
             <CardTitle>Find Available Time Bands</CardTitle>
@@ -1307,7 +1443,7 @@ export function BookingRequestsPage({
       </Dialog>
 
       {/* Create Form */}
-      {canCreate && (
+      {canCreate && activeSection === "new-request" && (
         <Card>
           <CardHeader>
             <CardTitle>New Request</CardTitle>
@@ -1495,15 +1631,15 @@ export function BookingRequestsPage({
       )}
 
       {/* Loading and Empty States */}
-      {loading && (
+      {activeSection === "requests" && loading && (
         <p className="text-gray-600 text-center py-8">Loading requests...</p>
       )}
-      {!loading && requests.length === 0 && (
+      {activeSection === "requests" && !loading && requests.length === 0 && (
         <p className="text-gray-600 text-center py-8">No booking requests found.</p>
       )}
 
       {/* Requests List */}
-      {!loading && requests.length > 0 && (
+      {activeSection === "requests" && !loading && requests.length > 0 && (
         <div className="space-y-4">
           {requests.map((req) => {
             const isPendingFaculty = req.status === "PENDING_FACULTY";
@@ -1667,6 +1803,7 @@ export function BookingRequestsPage({
         </div>
       )}
 
+      {activeSection === "edit-requests" && (
       <Card>
         <CardHeader>
           <CardTitle>Edit Requests</CardTitle>
@@ -1767,6 +1904,7 @@ export function BookingRequestsPage({
           )}
         </CardContent>
       </Card>
+      )}
     </div>
   );
 }

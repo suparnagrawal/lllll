@@ -74,6 +74,12 @@ export const editBookingSchema = z.object({
 export const listBookingsSchema = z.object({
   startAt: dateTimeString.optional(),
   endAt: dateTimeString.optional(),
+  limit: z.string()
+    .optional()
+    .transform((val) => val ? Number(val) : undefined)
+    .refine((val) => val === undefined || (Number.isInteger(val) && val > 0 && val <= 500), {
+      message: 'limit must be a positive integer up to 500',
+    }),
   roomId: z.string()
     .optional()
     .transform((val) => val ? Number(val) : undefined)

@@ -11,6 +11,7 @@ import { Badge } from "../components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import { BuildingAssignmentDialog } from "./components/BuildingAssignmentDialog";
 import { formatError } from "../utils/formatError";
+import { useSystemQoLPreferences } from "../hooks/useSystemQoLPreferences";
 
 type RoleFilter = "ALL" | UserRole;
 const PAGE_SIZES = [10, 20, 50];
@@ -30,6 +31,8 @@ function roleBadgeVariant(role: UserRole) {
 
 export function UsersPage() {
   const { user: authUser } = useAuth();
+  const { preferences } = useSystemQoLPreferences();
+  const sectionAutoLoad = preferences.autoLoadSections.users;
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [{ page, pageSize, totalPages, totalUsers }, setPagination] = useState({ page: 1, pageSize: 20, totalPages: 0, totalUsers: 0 });
   const [filters, setFilters] = useState({ search: "", role: "ALL" as RoleFilter, status: "ALL" as "ALL" | "ACTIVE" | "INACTIVE", department: "" });
@@ -45,6 +48,20 @@ export function UsersPage() {
   const [bulkActionMode, setBulkActionMode] = useState<"activate" | "deactivate" | "role" | null>(null);
   const [bulkRole, setBulkRole] = useState<AssignableUserRole>("FACULTY");
   const [managingBuildingsUser, setManagingBuildingsUser] = useState<ManagedUser | null>(null);
+  const [hasRequestedDataLoad, setHasRequestedDataLoad] = useState(
+    () => !preferences.manualDataLoading || sectionAutoLoad,
+  );
+
+  const shouldLoadData =
+    !preferences.manualDataLoading ||
+    sectionAutoLoad ||
+    hasRequestedDataLoad;
+
+  useEffect(() => {
+    if (!preferences.manualDataLoading || sectionAutoLoad) {
+      setHasRequestedDataLoad(true);
+    }
+  }, [preferences.manualDataLoading, sectionAutoLoad]);
 
   const loadUsers = async (targetPage = 1) => {
     setLoading(true);
@@ -70,9 +87,14 @@ export function UsersPage() {
   };
 
   useEffect(() => {
+    if (!shouldLoadData) {
+      setUsers([]);
+      return;
+    }
+
     if (authUser?.role !== "ADMIN") return;
     void loadUsers(1);
-  }, [authUser?.role]); // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authUser?.role, shouldLoadData]); // eslint-disable-next-line react-hooks/exhaustive-deps
 
   if (authUser?.role !== "ADMIN") {
     return (
@@ -82,6 +104,34 @@ export function UsersPage() {
           <p>Admin access required.</p>
         </div>
         <div className="alert alert-error">You do not have permission to access this page.</div>
+      </section>
+    );
+  }
+
+  const showDataLoadGate =
+    preferences.manualDataLoading &&
+    !sectionAutoLoad &&
+    !hasRequestedDataLoad;
+
+  if (showDataLoadGate) {
+    return (
+      <section className="space-y-6">
+        <div className="page-header">
+          <h2>User Management</h2>
+          <p>Manage users, roles, and access permissions.</p>
+        </div>
+
+        <div className="alert">
+          Manual data loading is enabled for better performance.
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setHasRequestedDataLoad(true)}
+          >
+            Load User Data
+          </Button>
+        </div>
       </section>
     );
   }
@@ -200,6 +250,10 @@ export function UsersPage() {
       <div className="page-header">
         <h2>User Management</h2>
         <p>Manage users, roles, and access permissions.</p>
+      </div>
+
+      <div className="alert">
+        Data mode: {preferences.manualDataLoading ? "Manual" : "Automatic"}. Configure this globally from System Loading settings.
       </div>
 
       {notice && <div className="alert alert-success">{notice}</div>}

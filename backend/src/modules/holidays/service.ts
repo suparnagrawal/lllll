@@ -1,6 +1,6 @@
 import { and, asc, eq, gt, gte, lt, lte } from "drizzle-orm";
 import { db } from "../../db";
-import { bookings, holidays } from "../../db/schema";
+import { bookings, holidays, timetableDayOverrides } from "../../db/schema";
 import {
   getISTInclusiveDateRangeForInterval,
   normalizeDateOnlyKey,
@@ -8,6 +8,7 @@ import {
 } from "../../shared/utils/istDateTime";
 
 export type HolidayRecord = typeof holidays.$inferSelect;
+export type TimetableDayOverrideRecord = typeof timetableDayOverrides.$inferSelect;
 
 export type HolidaySummary = {
   id: number;
@@ -90,6 +91,48 @@ export async function listHolidays(input?: {
     .select()
     .from(holidays)
     .orderBy(asc(holidays.startDate), asc(holidays.id));
+}
+
+export async function listTimetableDayOverrides(input?: {
+  fromDate?: string;
+  toDate?: string;
+}, executor: DbExecutor = db): Promise<TimetableDayOverrideRecord[]> {
+  const fromDate = input?.fromDate ? normalizeDateOnlyKey(input.fromDate) : null;
+  const toDate = input?.toDate ? normalizeDateOnlyKey(input.toDate) : null;
+
+  if (fromDate && toDate) {
+    return executor
+      .select()
+      .from(timetableDayOverrides)
+      .where(
+        and(
+          gte(timetableDayOverrides.targetDate, fromDate),
+          lte(timetableDayOverrides.targetDate, toDate),
+        ),
+      )
+      .orderBy(asc(timetableDayOverrides.targetDate), asc(timetableDayOverrides.id));
+  }
+
+  if (fromDate) {
+    return executor
+      .select()
+      .from(timetableDayOverrides)
+      .where(gte(timetableDayOverrides.targetDate, fromDate))
+      .orderBy(asc(timetableDayOverrides.targetDate), asc(timetableDayOverrides.id));
+  }
+
+  if (toDate) {
+    return executor
+      .select()
+      .from(timetableDayOverrides)
+      .where(lte(timetableDayOverrides.targetDate, toDate))
+      .orderBy(asc(timetableDayOverrides.targetDate), asc(timetableDayOverrides.id));
+  }
+
+  return executor
+    .select()
+    .from(timetableDayOverrides)
+    .orderBy(asc(timetableDayOverrides.targetDate), asc(timetableDayOverrides.id));
 }
 
 export async function getOverlappingHolidaysForInterval(

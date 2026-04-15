@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DAY_OF_WEEK_VALUES } from "../../../modules/timetable/schema";
 
 const dateOnlyRegex = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -70,3 +71,47 @@ export const createHolidaySchema = z
     message: "startDate must be before or equal to endDate",
     path: ["startDate"],
   });
+
+export const listTimetableDayOverridesSchema = z
+  .object({
+    fromDate: z
+      .string()
+      .trim()
+      .optional()
+      .refine((value) => !value || isValidDateOnly(value), {
+        message: "fromDate must be in YYYY-MM-DD format",
+      }),
+    toDate: z
+      .string()
+      .trim()
+      .optional()
+      .refine((value) => !value || isValidDateOnly(value), {
+        message: "toDate must be in YYYY-MM-DD format",
+      }),
+  })
+  .refine(
+    (data) => {
+      if (!data.fromDate || !data.toDate) {
+        return true;
+      }
+
+      return data.fromDate <= data.toDate;
+    },
+    {
+      message: "fromDate must be before or equal to toDate",
+      path: ["fromDate"],
+    },
+  );
+
+export const upsertTimetableDayOverrideSchema = z.object({
+  targetDate: z.string().trim().refine((value) => isValidDateOnly(value), {
+    message: "targetDate must be in YYYY-MM-DD format",
+  }),
+  followsDayOfWeek: z.enum(DAY_OF_WEEK_VALUES),
+  note: z
+    .string()
+    .trim()
+    .max(500, "note is too long")
+    .optional()
+    .nullable(),
+});

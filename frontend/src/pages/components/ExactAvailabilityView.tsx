@@ -7,13 +7,14 @@ import { useBuildings } from "../../hooks/useBuildings";
 import { useAvailability } from "../../hooks/useAvailability";
 import { useAuth } from "../../auth/AuthContext";
 import { getUserBuildingAssignments } from "../../lib/api";
-import type { AvailabilityRoom } from "../../lib/api";
+import type { AvailabilityRoom, Building } from "../../lib/api";
 import type { BookingRequestPrefill } from "../bookingAvailabilityBridge";
 
 type ExactAvailabilityViewProps = {
   selectedDates: string[];
   timeRangeStart: string;
   timeRangeEnd: string;
+  buildings?: Building[];
 };
 
 interface RoomWithBuilding extends AvailabilityRoom {
@@ -25,6 +26,7 @@ export function ExactAvailabilityView({
   selectedDates,
   timeRangeStart,
   timeRangeEnd,
+  buildings: providedBuildings,
 }: ExactAvailabilityViewProps) {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -37,7 +39,9 @@ export function ExactAvailabilityView({
   const [error, setError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
 
-  const { data: buildings = [] } = useBuildings();
+  const shouldFetchBuildings = providedBuildings === undefined;
+  const { data: fetchedBuildings = [] } = useBuildings(shouldFetchBuildings);
+  const buildings = providedBuildings ?? fetchedBuildings;
 
   // Build the start and end datetime for the availability API
   const selectedDate = selectedDates[0] || "";

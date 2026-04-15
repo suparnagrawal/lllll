@@ -20,6 +20,33 @@ export type AuthUser = {
   buildings?: Array<{ id: number; name: string }>;
 };
 
+export type SystemQoLSectionKey =
+  | "dashboard"
+  | "bookings"
+  | "rooms"
+  | "availability"
+  | "bookingRequests"
+  | "users";
+
+export type SystemAutoLoadSections = Record<SystemQoLSectionKey, boolean>;
+
+export type SystemQoLPreferences = {
+  manualDataLoading: boolean;
+  autoLoadDependentData: boolean;
+  autoLoadSections: SystemAutoLoadSections;
+};
+
+export type SystemQoLPreferencesPatch = Partial<
+  Omit<SystemQoLPreferences, "autoLoadSections">
+> & {
+  autoLoadSections?: Partial<SystemAutoLoadSections>;
+};
+
+export type SystemQoLSettings = SystemQoLPreferences & {
+  updatedBy: number | null;
+  updatedAt: string;
+};
+
 export type AssignableUserRole = "ADMIN" | "STAFF" | "FACULTY" | "STUDENT";
 
 export type FacultyUser = {
@@ -154,6 +181,17 @@ export type Holiday = {
 export type HolidayCreateResponse = {
   holiday: Holiday;
   prunedTimetableBookings: number;
+};
+
+export type TimetableDayOverride = {
+  id: number;
+  targetDate: string;
+  followsDayOfWeek: DayOfWeek;
+  note: string | null;
+  createdBy: number | null;
+  createdAt: string;
+  updatedBy: number | null;
+  updatedAt: string;
 };
 
 export type BookingEditRequestStatus = "PENDING" | "APPROVED" | "REJECTED";

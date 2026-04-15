@@ -26,7 +26,11 @@ import {
 } from "./services/bookingFreezeService";
 import { lockSlotSystem } from "./service";
 import logger from "../../shared/utils/logger";
-import { findFirstHolidayOverlap, listHolidays } from "../holidays/service";
+import {
+  findFirstHolidayOverlap,
+  listHolidays,
+  listTimetableDayOverrides,
+} from "../holidays/service";
 import { toISTDateKey } from "../../shared/utils/istDateTime";
 
 export type TimetableCommitStage = "external" | "internal" | "runtime";
@@ -217,23 +221,36 @@ function hashValue(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function toJsDay(value: SlotDescriptor["dayOfWeek"]): number {
-  switch (value) {
-    case "MON":
-      return 1;
-    case "TUE":
-      return 2;
-    case "WED":
-      return 3;
-    case "THU":
-      return 4;
-    case "FRI":
-      return 5;
-    case "SAT":
-      return 6;
+function toDayOfWeek(dayValue: number): SlotDescriptor["dayOfWeek"] {
+  switch (dayValue) {
+    case 0:
+      return "SUN";
+    case 1:
+      return "MON";
+    case 2:
+      return "TUE";
+    case 3:
+      return "WED";
+    case 4:
+      return "THU";
+    case 5:
+      return "FRI";
+    case 6:
+      return "SAT";
     default:
-      return 0;
+      return "SUN";
   }
+}
+
+function pad2(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+function toDateOnlyString(value: Date): string {
+  const year = value.getFullYear();
+  const month = pad2(value.getMonth() + 1);
+  const day = pad2(value.getDate());
+  return `${year}-${month}-${day}`;
 }
 
 function parseClock(timeValue: string): { hours: number; minutes: number; seconds: number } {
@@ -265,14 +282,18 @@ function buildOccurrenceIntervals(input: {
   dayOfWeek: SlotDescriptor["dayOfWeek"];
   startTime: string;
   endTime: string;
+  effectiveDayByDateKey?: Map<string, SlotDescriptor["dayOfWeek"]>;
 }): Array<{ startAt: Date; endAt: Date }> {
   const intervals: Array<{ startAt: Date; endAt: Date }> = [];
   const cursor = new Date(input.termStartDate.getTime());
   const termEnd = new Date(input.termEndDate.getTime());
-  const targetDay = toJsDay(input.dayOfWeek);
 
   while (cursor <= termEnd) {
-    if (cursor.getDay() === targetDay) {
+    const dateKey = toDateOnlyString(cursor);
+    const effectiveDayOfWeek =
+      input.effectiveDayByDateKey?.get(dateKey) ?? toDayOfWeek(cursor.getDay());
+
+    if (effectiveDayOfWeek === input.dayOfWeek) {
       const startAt = combineDateAndTime(cursor, input.startTime);
       const endAt = combineDateAndTime(cursor, input.endTime);
 
@@ -656,6 +677,26 @@ async function buildEditOperations(input: {
           toDate: maxTermEndDateKey,
         })
       : [];
+  const dayOverridesForEditOperations =
+    minTermStartDateKey && maxTermEndDateKey
+      ? await listTimetableDayOverrides({
+          fromDate: minTermStartDateKey,
+          toDate: maxTermEndDateKey,
+        })
+      : [];
+  const effectiveDayByDateKey = new Map<string, SlotDescriptor["dayOfWeek"]>();
+
+  for (const dayOverride of dayOverridesForEditOperations) {
+    const targetDate = dayOverride.targetDate;
+    if (!targetDate) {
+      continue;
+    }
+
+    effectiveDayByDateKey.set(
+      String(targetDate),
+      dayOverride.followsDayOfWeek as SlotDescriptor["dayOfWeek"],
+    );
+  }
 
   const operations: SessionOperation[] = [];
   let actionableRows = 0;
@@ -727,6 +768,7 @@ async function buildEditOperations(input: {
         dayOfWeek: descriptor.dayOfWeek,
         startTime: descriptor.startTime,
         endTime: descriptor.endTime,
+        effectiveDayByDateKey,
       });
 
       for (const interval of intervals) {
@@ -1047,6 +1089,26 @@ async function buildOperations(batchId: number): Promise<{ operations: SessionOp
           toDate: termEndDateKey,
         })
       : [];
+  const dayOverridesForOperations =
+    termStartDateKey && termEndDateKey
+      ? await listTimetableDayOverrides({
+          fromDate: termStartDateKey,
+          toDate: termEndDateKey,
+        })
+      : [];
+  const effectiveDayByDateKey = new Map<string, SlotDescriptor["dayOfWeek"]>();
+
+  for (const dayOverride of dayOverridesForOperations) {
+    const targetDate = dayOverride.targetDate;
+    if (!targetDate) {
+      continue;
+    }
+
+    effectiveDayByDateKey.set(
+      String(targetDate),
+      dayOverride.followsDayOfWeek as SlotDescriptor["dayOfWeek"],
+    );
+  }
 
   const descriptorLookup = await getSlotDescriptorLookup(batch.slotSystemId);
   const operations: SessionOperation[] = [];
@@ -1082,6 +1144,7 @@ async function buildOperations(batchId: number): Promise<{ operations: SessionOp
         dayOfWeek: descriptor.dayOfWeek,
         startTime: descriptor.startTime,
         endTime: descriptor.endTime,
+        effectiveDayByDateKey,
       });
 
       for (const interval of intervals) {

@@ -1,9 +1,31 @@
 import { request } from "./client";
 import type { BookingRequest, BookingStatus, BookingEventType } from "./types";
 
-export async function getBookingRequests(status?: BookingStatus): Promise<BookingRequest[]> {
-  const query = status ? `?status=${encodeURIComponent(status)}` : "";
-  const requests = await request<BookingRequest[]>(`/booking-requests${query}`);
+type GetBookingRequestsOptions = {
+  status?: BookingStatus;
+  limit?: number;
+};
+
+export async function getBookingRequests(
+  statusOrOptions?: BookingStatus | GetBookingRequestsOptions,
+): Promise<BookingRequest[]> {
+  const options: GetBookingRequestsOptions =
+    typeof statusOrOptions === "string"
+      ? { status: statusOrOptions }
+      : (statusOrOptions ?? {});
+
+  const params = new URLSearchParams();
+  if (options.status) {
+    params.set("status", options.status);
+  }
+  if (options.limit !== undefined) {
+    params.set("limit", String(options.limit));
+  }
+
+  const query = params.toString();
+  const requests = await request<BookingRequest[]>(
+    `/booking-requests${query ? `?${query}` : ""}`,
+  );
 
   return [...requests].sort((a, b) => {
     const aTime = Date.parse(a.createdAt);

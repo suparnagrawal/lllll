@@ -1,9 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   createHoliday,
+  deleteTimetableDayOverride,
   deleteHoliday,
   getHolidays,
+  getTimetableDayOverrides,
+  saveTimetableDayOverride,
+  type DayOfWeek,
   type Holiday,
+  type TimetableDayOverride,
 } from "../lib/api";
 import { formatDateDDMMYYYY } from "../utils/datetime";
 import { formatError } from "../utils/formatError";
@@ -14,13 +19,19 @@ import { Label } from "../components/ui/label";
 
 export default function HolidaysPage() {
   const [holidays, setHolidays] = useState<Holiday[]>([]);
+  const [dayOverrides, setDayOverrides] = useState<TimetableDayOverride[]>([]);
   const [name, setName] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [description, setDescription] = useState("");
+  const [overrideTargetDate, setOverrideTargetDate] = useState("");
+  const [overrideFollowsDay, setOverrideFollowsDay] = useState<DayOfWeek>("MON");
+  const [overrideNote, setOverrideNote] = useState("");
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [submittingOverride, setSubmittingOverride] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [deletingOverrideId, setDeletingOverrideId] = useState<number | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,6 +47,30 @@ export default function HolidaysPage() {
     [holidays],
   );
 
+  const orderedDayOverrides = useMemo(
+    () =>
+      [...dayOverrides].sort((a, b) => {
+        if (a.targetDate !== b.targetDate) {
+          return a.targetDate.localeCompare(b.targetDate);
+        }
+
+        return a.id - b.id;
+      }),
+    [dayOverrides],
+  );
+
+  const DAY_OPTIONS: Array<{ value: DayOfWeek; label: string }> = [
+    { value: "MON", label: "Monday" },
+    { value: "TUE", label: "Tuesday" },
+    { value: "WED", label: "Wednesday" },
+    { value: "THU", label: "Thursday" },
+    { value: "FRI", label: "Friday" },
+    { value: "SAT", label: "Saturday" },
+    { value: "SUN", label: "Sunday" },
+  ];
+
+  const dayLabelByValue = new Map(DAY_OPTIONS.map((option) => [option.value, option.label]));
+
   const loadHolidays = async () => {
     setLoading(true);
     setError(null);
@@ -50,8 +85,20 @@ export default function HolidaysPage() {
     }
   };
 
+  const loadDayOverrides = async () => {
+    setError(null);
+
+    try {
+      const rows = await getTimetableDayOverrides();
+      setDayOverrides(rows);
+    } catch (loadError) {
+      setError(formatError(loadError, "Failed to load day overrides"));
+    }
+  };
+
   useEffect(() => {
     void loadHolidays();
+    void loadDayOverrides();
   }, []);
 
   const handleCreateHoliday = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -127,6 +174,60 @@ export default function HolidaysPage() {
     }
   };
 
+  const handleSaveDayOverride = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!overrideTargetDate) {
+      setError("Override date is required");
+      return;
+    }
+
+    setSubmittingOverride(true);
+    setError(null);
+    setInfoMessage(null);
+
+    try {
+      await saveTimetableDayOverride({
+        targetDate: overrideTargetDate,
+        followsDayOfWeek: overrideFollowsDay,
+        ...(overrideNote.trim() ? { note: overrideNote.trim() } : {}),
+      });
+
+      setOverrideTargetDate("");
+      setOverrideFollowsDay("MON");
+      setOverrideNote("");
+      setInfoMessage("Timetable day override saved.");
+
+      await loadDayOverrides();
+    } catch (saveError) {
+      setError(formatError(saveError, "Failed to save day override"));
+    } finally {
+      setSubmittingOverride(false);
+    }
+  };
+
+  const handleDeleteDayOverride = async (overrideId: number) => {
+    const shouldDelete = window.confirm("Delete this timetable day override?");
+
+    if (!shouldDelete) {
+      return;
+    }
+
+    setDeletingOverrideId(overrideId);
+    setError(null);
+    setInfoMessage(null);
+
+    try {
+      await deleteTimetableDayOverride(overrideId);
+      setInfoMessage("Timetable day override deleted.");
+      await loadDayOverrides();
+    } catch (deleteError) {
+      setError(formatError(deleteError, "Failed to delete day override"));
+    } finally {
+      setDeletingOverrideId(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -189,6 +290,97 @@ export default function HolidaysPage() {
               {submitting ? "Saving..." : "Add Holiday"}
             </Button>
           </form>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Timetable Day Overrides</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-gray-600">
+            Map a calendar date to follow another day&apos;s timetable.
+            Example: a Friday date can follow Wednesday slots.
+          </p>
+
+          <form className="space-y-4" onSubmit={handleSaveDayOverride}>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div className="space-y-2">
+                <Label htmlFor="overrideTargetDate">Date</Label>
+                <Input
+                  id="overrideTargetDate"
+                  type="date"
+                  value={overrideTargetDate}
+                  onChange={(event) => setOverrideTargetDate(event.target.value)}
+                  disabled={submittingOverride}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="overrideFollowsDay">Follow Timetable Of</Label>
+                <select
+                  id="overrideFollowsDay"
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                  value={overrideFollowsDay}
+                  onChange={(event) => setOverrideFollowsDay(event.target.value as DayOfWeek)}
+                  disabled={submittingOverride}
+                >
+                  {DAY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-2 md:col-span-3">
+                <Label htmlFor="overrideNote">Note (optional)</Label>
+                <Input
+                  id="overrideNote"
+                  value={overrideNote}
+                  onChange={(event) => setOverrideNote(event.target.value)}
+                  placeholder="e.g. Cultural fest schedule adjustment"
+                  disabled={submittingOverride}
+                />
+              </div>
+            </div>
+
+            <Button type="submit" disabled={submittingOverride}>
+              {submittingOverride ? "Saving..." : "Save Day Override"}
+            </Button>
+          </form>
+
+          <div className="space-y-3 pt-2">
+            {orderedDayOverrides.length === 0 && (
+              <p className="text-sm text-gray-600">No day overrides configured.</p>
+            )}
+
+            {orderedDayOverrides.map((override) => (
+              <div
+                key={override.id}
+                className="flex flex-col gap-3 rounded-md border border-gray-200 px-4 py-3 md:flex-row md:items-center md:justify-between"
+              >
+                <div>
+                  <p className="font-medium text-gray-900">
+                    {formatDateDDMMYYYY(override.targetDate)} follows {dayLabelByValue.get(override.followsDayOfWeek) ?? override.followsDayOfWeek}
+                  </p>
+                  {override.note && (
+                    <p className="mt-1 text-sm text-gray-600">{override.note}</p>
+                  )}
+                </div>
+
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  disabled={deletingOverrideId === override.id}
+                  onClick={() => void handleDeleteDayOverride(override.id)}
+                >
+                  {deletingOverrideId === override.id ? "Deleting..." : "Delete"}
+                </Button>
+              </div>
+            ))}
+          </div>
         </CardContent>
       </Card>
 

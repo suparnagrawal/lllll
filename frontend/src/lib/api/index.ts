@@ -6,6 +6,11 @@ export type {
   UserRole,
   SetupRole,
   AuthUser,
+  SystemQoLSectionKey,
+  SystemAutoLoadSections,
+  SystemQoLPreferences,
+  SystemQoLPreferencesPatch,
+  SystemQoLSettings,
   AssignableUserRole,
   FacultyUser,
   ManagedUser,
@@ -21,6 +26,7 @@ export type {
   Booking,
   Holiday,
   HolidayCreateResponse,
+  TimetableDayOverride,
   BookingEditRequestStatus,
   BookingEditRequest,
   EditBookingPayload,
@@ -149,6 +155,9 @@ export {
   getHolidays,
   createHoliday,
   deleteHoliday,
+  getTimetableDayOverrides,
+  saveTimetableDayOverride,
+  deleteTimetableDayOverride,
 } from "./holidays";
 
 // Rooms endpoints
@@ -221,6 +230,12 @@ export {
   getUpcomingBookings,
   getActivityFeed,
 } from "./dashboard";
+
+// System settings endpoints
+export {
+  getSystemQoLSettings,
+  updateSystemQoLSettings,
+} from "./system-settings";
 
 // Slot system and Timetable import endpoints
 export {
