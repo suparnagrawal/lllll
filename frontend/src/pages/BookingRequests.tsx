@@ -651,21 +651,17 @@ export function BookingRequestsPage({
     const requestedBandMinutes = Number(finderBandMinutes);
     if (
       !Number.isInteger(requestedBandMinutes) ||
-      requestedBandMinutes < BAND_FINDER_SLOT_GRANULARITY_MINUTES
+      requestedBandMinutes < 1
     ) {
-      setFinderError(`Band duration must be at least ${BAND_FINDER_SLOT_GRANULARITY_MINUTES} minutes.`);
+      setFinderError("Band duration must be at least 1 minute.");
       return;
     }
-
-    const normalizedBandMinutes =
-      Math.ceil(requestedBandMinutes / BAND_FINDER_SLOT_GRANULARITY_MINUTES) *
-      BAND_FINDER_SLOT_GRANULARITY_MINUTES;
 
     const windowDurationMinutes = Math.floor(
       (windowEnd.getTime() - windowStart.getTime()) / (1000 * 60),
     );
 
-    if (normalizedBandMinutes > windowDurationMinutes) {
+    if (requestedBandMinutes > windowDurationMinutes) {
       setFinderError("Band duration exceeds the selected time range.");
       return;
     }
@@ -682,7 +678,7 @@ export function BookingRequestsPage({
     }
 
     setFinderLoading(true);
-    setFinderRequiredBandMinutes(normalizedBandMinutes);
+    setFinderRequiredBandMinutes(requestedBandMinutes);
 
     try {
       const dayRanges = buildDayWindowRanges(windowStart, windowEnd);
@@ -808,7 +804,7 @@ export function BookingRequestsPage({
             (runEnd.getTime() - currentRunStart.getTime()) / (1000 * 60),
           );
 
-          if (runDurationMinutes >= normalizedBandMinutes) {
+          if (runDurationMinutes >= requestedBandMinutes) {
             rawOptions.push({
               roomId: timeline.roomId,
               roomName: timeline.roomName,
@@ -882,21 +878,16 @@ export function BookingRequestsPage({
 
       setFinderOptions(dedupedOptions);
 
-      const roundedMessage =
-        normalizedBandMinutes !== requestedBandMinutes
-          ? ` Duration rounded to ${normalizedBandMinutes} minutes (15-minute granularity).`
-          : "";
-
       if (dedupedOptions.length === 0) {
         setFinderNotice(
-          `No contiguous bands found for the selected constraints.${roundedMessage}`,
+          "No contiguous bands found for the selected constraints.",
         );
       } else if (failedBuildingIds.size > 0) {
         setFinderNotice(
-          `Found ${dedupedOptions.length} option(s). Data for ${failedBuildingIds.size} selected building(s) could not be loaded completely.${roundedMessage}`,
+          `Found ${dedupedOptions.length} option(s). Data for ${failedBuildingIds.size} selected building(s) could not be loaded completely.`,
         );
       } else {
-        setFinderNotice(`Found ${dedupedOptions.length} option(s).${roundedMessage}`);
+        setFinderNotice(`Found ${dedupedOptions.length} option(s).`);
       }
     } catch (searchError) {
       setFinderError(formatError(searchError, "Failed to search band options"));
@@ -1144,8 +1135,8 @@ export function BookingRequestsPage({
                 <Input
                   id="finderBandMinutes"
                   type="number"
-                  min={15}
-                  step={15}
+                  min={1}
+                  step={1}
                   value={finderBandMinutes}
                   onChange={(event) => setFinderBandMinutes(Number(event.target.value || 0))}
                   disabled={finderLoading}
@@ -1167,8 +1158,9 @@ export function BookingRequestsPage({
               </div>
             </div>
 
-            <div>
-              <p className="text-sm font-medium text-gray-700 mb-2">Allowed Buildings</p>
+            <div className="space-y-1.5">
+              <p className="text-sm font-medium text-gray-700">Allowed Buildings</p>
+              <p className="text-xs text-gray-500">Select one or more buildings to search room options.</p>
               {visibleFinderBuildings.length === 0 ? (
                 <p className="text-sm text-gray-500">
                   No buildings available for this account.
@@ -1182,9 +1174,10 @@ export function BookingRequestsPage({
               )}
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Button
                 type="button"
+                size="sm"
                 onClick={() => void handleBandFinderSearch()}
                 disabled={finderLoading || visibleFinderBuildings.length === 0}
               >
@@ -1193,6 +1186,7 @@ export function BookingRequestsPage({
               <Button
                 type="button"
                 variant="outline"
+                size="sm"
                 onClick={resetBandFinder}
                 disabled={finderLoading}
               >

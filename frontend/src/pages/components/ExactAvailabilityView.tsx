@@ -156,21 +156,22 @@ export function ExactAvailabilityView({
             Choose buildings to see room availability
           </p>
         </div>
-        <div className="p-6 space-y-4">
+        <div className="p-4 space-y-3">
           <BuildingSelector
             buildings={visibleBuildings}
             selectedBuildingIds={selectedBuildingIds}
             onSelectionChange={setSelectedBuildingIds}
           />
-          
-          {/* Proceed Button */}
-          <button
-            onClick={handleProceedSearch}
-            disabled={selectedBuildingIds.length === 0 || selectedDates.length === 0}
-            className="w-full mt-4 px-4 py-2 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
-          >
-            Search Availability
-          </button>
+
+          <div className="flex justify-end">
+            <button
+              onClick={handleProceedSearch}
+              disabled={selectedBuildingIds.length === 0 || selectedDates.length === 0}
+              className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded-md font-medium hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+            >
+              Search Availability
+            </button>
+          </div>
         </div>
       </div>
 

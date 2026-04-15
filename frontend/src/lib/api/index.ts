@@ -226,6 +226,7 @@ export {
 export {
   getSlotSystems,
   createSlotSystem,
+  duplicateSlotSystem,
   deleteSlotSystem,
   getDays,
   createDay,
