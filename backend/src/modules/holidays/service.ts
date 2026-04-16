@@ -1,6 +1,11 @@
 import { and, asc, eq, gt, gte, lt, lte } from "drizzle-orm";
 import { db } from "../../db";
-import { bookings, holidays, timetableDayOverrides } from "../../db/schema";
+import {
+  bookings,
+  holidays,
+  timetableDayOverrides,
+  timetableImportBatches,
+} from "../../db/schema";
 import {
   getISTInclusiveDateRangeForInterval,
   normalizeDateOnlyKey,
@@ -15,6 +20,11 @@ export type HolidaySummary = {
   name: string;
   startDate: string;
   endDate: string;
+};
+
+export type DayOverrideImpactedSlotSystem = {
+  slotSystemId: number;
+  batchIds: number[];
 };
 
 type DbExecutor = Pick<typeof db, "select" | "insert" | "update" | "delete">;
@@ -133,6 +143,54 @@ export async function listTimetableDayOverrides(input?: {
     .select()
     .from(timetableDayOverrides)
     .orderBy(asc(timetableDayOverrides.targetDate), asc(timetableDayOverrides.id));
+}
+
+export async function listDayOverrideImpactedSlotSystems(
+  targetDate: string,
+  executor: DbExecutor = db,
+): Promise<DayOverrideImpactedSlotSystem[]> {
+  const normalizedTargetDate = normalizeDateOnlyKey(targetDate);
+
+  if (!normalizedTargetDate) {
+    return [];
+  }
+
+  const targetDateBounds = toISTDateRangeBounds(
+    normalizedTargetDate,
+    normalizedTargetDate,
+  );
+
+  if (!targetDateBounds) {
+    return [];
+  }
+
+  const rows = await executor
+    .select({
+      batchId: timetableImportBatches.id,
+      slotSystemId: timetableImportBatches.slotSystemId,
+    })
+    .from(timetableImportBatches)
+    .where(
+      and(
+        eq(timetableImportBatches.status, "COMMITTED"),
+        lte(timetableImportBatches.termStartDate, targetDateBounds.endAtExclusive),
+        gte(timetableImportBatches.termEndDate, targetDateBounds.startAt),
+      ),
+    )
+    .orderBy(asc(timetableImportBatches.slotSystemId), asc(timetableImportBatches.id));
+
+  const grouped = new Map<number, Set<number>>();
+
+  for (const row of rows) {
+    const existing = grouped.get(row.slotSystemId) ?? new Set<number>();
+    existing.add(row.batchId);
+    grouped.set(row.slotSystemId, existing);
+  }
+
+  return Array.from(grouped.entries()).map(([slotSystemId, batchIds]) => ({
+    slotSystemId,
+    batchIds: Array.from(batchIds).sort((a, b) => a - b),
+  }));
 }
 
 export async function getOverlappingHolidaysForInterval(

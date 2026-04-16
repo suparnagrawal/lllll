@@ -25,7 +25,7 @@ COPY backend/drizzle.config.js ./drizzle.config.js
 COPY backend/src ./src
 COPY backend/scripts ./scripts
 
-CMD ["npm", "run", "db:push:first-deploy"]
+CMD ["npm", "run", "db:deploy"]
 
 FROM node:20-alpine AS runner
 WORKDIR /app

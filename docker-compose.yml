@@ -48,7 +48,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgres://ura_user:ura_pass@db:5432/ura_system
-    command: ["npm", "run", "db:push:first-deploy"]
+    command: ["npm", "run", "db:deploy"]
 
   backend:
     build:

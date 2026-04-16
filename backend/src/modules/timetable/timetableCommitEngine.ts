@@ -178,6 +178,29 @@ type EditSessionMetadata = {
   newSnapshot: TimetableSnapshotState;
 };
 
+type DayOverrideSessionMetadata = {
+  mode: "DAY_OVERRIDE_RECOMPUTE";
+  pruneBookings: true;
+  changedLabels: string[];
+  affectedRows: number;
+  unchangedRows: number;
+};
+
+export type DayOverrideRecomputeCommitResult = {
+  slotSystemId: number;
+  noChanges: boolean;
+  commitSessionId: number | null;
+  batchId: number | null;
+  affectedRows: number;
+  unchangedRows: number;
+  createdBookings: number;
+  skippedOperations: number;
+  deletedConflictingBookings: number;
+  autoResolvedExternalConflicts: number;
+  autoResolvedInternalConflicts: number;
+  autoResolvedRuntimeConflicts: number;
+};
+
 type CommittedRowForEdit = {
   batchId: number;
   termStartDate: Date;
@@ -372,6 +395,30 @@ function parseEditSessionMetadata(raw: unknown): EditSessionMetadata | null {
     affectedRows: Number(source.affectedRows ?? 0),
     unchangedRows: Number(source.unchangedRows ?? 0),
     newSnapshot,
+  };
+}
+
+function parseDayOverrideSessionMetadata(raw: unknown): DayOverrideSessionMetadata | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+
+  const source = raw as Record<string, unknown>;
+
+  if (source.mode !== "DAY_OVERRIDE_RECOMPUTE") {
+    return null;
+  }
+
+  const changedLabels = Array.isArray(source.changedLabels)
+    ? source.changedLabels.filter((value): value is string => typeof value === "string")
+    : [];
+
+  return {
+    mode: "DAY_OVERRIDE_RECOMPUTE",
+    pruneBookings: true,
+    changedLabels,
+    affectedRows: Number(source.affectedRows ?? 0),
+    unchangedRows: Number(source.unchangedRows ?? 0),
   };
 }
 
@@ -822,6 +869,140 @@ async function buildEditOperations(input: {
     operations,
     affectedRows,
     unchangedRows: Math.max(0, actionableRows - affectedRows),
+  };
+}
+
+function collectActionableChangedLabels(rows: CommittedRowForEdit[]): Set<string> {
+  const output = new Set<string>();
+
+  for (const row of rows) {
+    const action =
+      row.resolutionAction ??
+      (row.classification === "VALID_AND_AUTOMATABLE" ? "AUTO" : "SKIP");
+
+    if (action === "SKIP") {
+      continue;
+    }
+
+    const effectiveSlotLabel = normalizeSpace(
+      row.resolutionSlotLabel ?? row.resolvedSlotLabel ?? row.rawSlot ?? "",
+    );
+    const normalizedLabel = normalizeLabel(effectiveSlotLabel);
+    const effectiveRoomId = Number(row.resolutionRoomId ?? row.resolvedRoomId ?? 0);
+
+    if (!normalizedLabel || !Number.isInteger(effectiveRoomId) || effectiveRoomId <= 0) {
+      continue;
+    }
+
+    output.add(normalizedLabel);
+  }
+
+  return output;
+}
+
+async function initializeDayOverrideRecomputeSession(input: {
+  slotSystemId: number;
+  userId: number;
+}): Promise<{
+  noChanges: boolean;
+  session?: CommitSessionSummary;
+  affectedRows: number;
+  unchangedRows: number;
+}> {
+  const [slotSystem] = await db
+    .select({
+      id: slotSystems.id,
+      committedSnapshotJson: slotSystems.committedSnapshotJson,
+    })
+    .from(slotSystems)
+    .where(eq(slotSystems.id, input.slotSystemId))
+    .limit(1);
+
+  if (!slotSystem) {
+    throw createServiceError(404, "Slot system not found");
+  }
+
+  await ensureNoActiveSession(input.slotSystemId);
+
+  const committedRows = await getCommittedRowsForEdit(input.slotSystemId);
+  const changedLabels = collectActionableChangedLabels(committedRows);
+
+  if (changedLabels.size === 0) {
+    return {
+      noChanges: true,
+      affectedRows: 0,
+      unchangedRows: 0,
+    };
+  }
+
+  const snapshot =
+    parseSnapshotState(slotSystem.committedSnapshotJson, input.slotSystemId) ??
+    (await loadLiveSnapshot(input.slotSystemId));
+
+  const operationTypeByLabel = new Map<string, TimetableDiffOperationType>(
+    Array.from(changedLabels).map((label) => [label, "CHANGE_SLOT"]),
+  );
+
+  const editOperationBuild = await buildEditOperations({
+    slotSystemId: input.slotSystemId,
+    changedLabels,
+    operationTypeByLabel,
+    newSnapshot: snapshot,
+    pruneBookings: true,
+  });
+
+  if (editOperationBuild.operations.length === 0) {
+    return {
+      noChanges: true,
+      affectedRows: editOperationBuild.affectedRows,
+      unchangedRows: editOperationBuild.unchangedRows,
+    };
+  }
+
+  const payloadSnapshot = buildSnapshot(editOperationBuild.operations);
+  const syntheticBatchId = await createSyntheticEditBatch({
+    slotSystemId: input.slotSystemId,
+    userId: input.userId,
+  });
+
+  const metadata: DayOverrideSessionMetadata = {
+    mode: "DAY_OVERRIDE_RECOMPUTE",
+    pruneBookings: true,
+    changedLabels: Array.from(changedLabels).sort(),
+    affectedRows: editOperationBuild.affectedRows,
+    unchangedRows: editOperationBuild.unchangedRows,
+  };
+
+  const [created] = await db
+    .insert(commitSessions)
+    .values({
+      batchId: syntheticBatchId,
+      slotSystemId: input.slotSystemId,
+      status: "STARTED",
+      payloadSnapshot,
+      operations: editOperationBuild.operations,
+      resolutions: metadata,
+      createdBy: input.userId,
+    })
+    .returning({
+      id: commitSessions.id,
+      batchId: commitSessions.batchId,
+      slotSystemId: commitSessions.slotSystemId,
+      status: commitSessions.status,
+      payloadSnapshot: commitSessions.payloadSnapshot,
+      createdAt: commitSessions.createdAt,
+      updatedAt: commitSessions.updatedAt,
+    });
+
+  if (!created) {
+    throw createServiceError(500, "Failed to start day-override recompute session");
+  }
+
+  return {
+    noChanges: false,
+    session: toSummary(created),
+    affectedRows: editOperationBuild.affectedRows,
+    unchangedRows: editOperationBuild.unchangedRows,
   };
 }
 
@@ -2456,6 +2637,168 @@ export async function startEditCommitSession(input: {
   };
 }
 
+function buildSkipResolutions(conflicts: TimetableCommitConflict[]): TimetableCommitResolution[] {
+  return conflicts.map((conflict) => ({
+    conflictId: conflict.id,
+    action: "SKIP",
+  }));
+}
+
+export async function runDayOverrideRecomputeCommit(input: {
+  slotSystemId: number;
+  userId: number;
+  userName: string;
+}): Promise<DayOverrideRecomputeCommitResult> {
+  const slotSystemId = Number(input.slotSystemId);
+  const userId = Number(input.userId);
+  const userName =
+    typeof input.userName === "string" && input.userName.trim().length > 0
+      ? input.userName.trim()
+      : "User " + userId;
+
+  if (!Number.isInteger(slotSystemId) || slotSystemId <= 0) {
+    throw createServiceError(400, "Invalid slotSystemId");
+  }
+
+  if (!Number.isInteger(userId) || userId <= 0) {
+    throw createServiceError(400, "Invalid userId");
+  }
+
+  const start = await initializeDayOverrideRecomputeSession({
+    slotSystemId,
+    userId,
+  });
+
+  if (start.noChanges || !start.session) {
+    return {
+      slotSystemId,
+      noChanges: true,
+      commitSessionId: null,
+      batchId: null,
+      affectedRows: start.affectedRows,
+      unchangedRows: start.unchangedRows,
+      createdBookings: 0,
+      skippedOperations: 0,
+      deletedConflictingBookings: 0,
+      autoResolvedExternalConflicts: 0,
+      autoResolvedInternalConflicts: 0,
+      autoResolvedRuntimeConflicts: 0,
+    };
+  }
+
+  const commitSessionId = start.session.commitSessionId;
+  const batchId = start.session.batchId;
+  let autoResolvedExternalConflicts = 0;
+  let autoResolvedInternalConflicts = 0;
+  let autoResolvedRuntimeConflicts = 0;
+
+  try {
+    let externalIteration = 0;
+
+    while (externalIteration < 12) {
+      const report = await runExternalCheck(commitSessionId);
+
+      if (report.conflictCount === 0) {
+        break;
+      }
+
+      autoResolvedExternalConflicts += report.conflictCount;
+      await resolveExternalConflicts({
+        commitSessionId,
+        resolutions: buildSkipResolutions(report.conflicts),
+      });
+
+      externalIteration += 1;
+    }
+
+    if (externalIteration >= 12) {
+      throw createServiceError(409, "Unable to auto-resolve external conflicts for day override recompute");
+    }
+
+    let internalIteration = 0;
+
+    while (internalIteration < 12) {
+      const report = await runInternalCheck(commitSessionId);
+
+      if (report.conflictCount === 0) {
+        break;
+      }
+
+      autoResolvedInternalConflicts += report.conflictCount;
+      await resolveInternalConflicts({
+        commitSessionId,
+        resolutions: buildSkipResolutions(report.conflicts),
+      });
+
+      internalIteration += 1;
+    }
+
+    if (internalIteration >= 12) {
+      throw createServiceError(409, "Unable to auto-resolve internal conflicts for day override recompute");
+    }
+
+    await startFrozenApply({
+      commitSessionId,
+      userId,
+      userName,
+    });
+
+    let runtimeIteration = 0;
+
+    while (runtimeIteration < 12) {
+      const report = await runRuntimeCheck(commitSessionId);
+
+      if (report.conflictCount === 0) {
+        break;
+      }
+
+      autoResolvedRuntimeConflicts += report.conflictCount;
+      await resolveRuntimeConflicts({
+        commitSessionId,
+        resolutions: buildSkipResolutions(report.conflicts),
+      });
+
+      runtimeIteration += 1;
+    }
+
+    if (runtimeIteration >= 12) {
+      throw createServiceError(409, "Unable to auto-resolve runtime conflicts for day override recompute");
+    }
+
+    const finalizeResult = await finalizeCommitSession({
+      commitSessionId,
+      userId,
+    });
+
+    return {
+      slotSystemId,
+      noChanges: false,
+      commitSessionId,
+      batchId,
+      affectedRows: start.affectedRows,
+      unchangedRows: start.unchangedRows,
+      createdBookings: finalizeResult.createdBookings,
+      skippedOperations: finalizeResult.skippedOperations,
+      deletedConflictingBookings: finalizeResult.deletedConflictingBookings,
+      autoResolvedExternalConflicts,
+      autoResolvedInternalConflicts,
+      autoResolvedRuntimeConflicts,
+    };
+  } catch (error) {
+    try {
+      await cancelCommitSession(commitSessionId);
+    } catch (cancelError) {
+      logger.warn("Failed to cancel day-override recompute session after error", {
+        slotSystemId,
+        commitSessionId,
+        error: cancelError,
+      });
+    }
+
+    throw error;
+  }
+}
+
 export async function runExternalCheck(commitSessionId: number): Promise<CommitStageReport> {
   const session = await getSessionRow(commitSessionId);
 
@@ -2748,6 +3091,7 @@ export async function finalizeCommitSession(input: {
   }
 
   const editMetadata = parseEditSessionMetadata(session.resolutions);
+  const dayOverrideMetadata = parseDayOverrideSessionMetadata(session.resolutions);
   const activeOperations = operations.filter((operation) => operation.status === "ACTIVE");
   const activeUpsertOperations = activeOperations.filter(
     (operation) => operation.kind === "UPSERT",
@@ -2950,7 +3294,7 @@ export async function finalizeCommitSession(input: {
       });
     }
 
-    if (!editMetadata) {
+    if (!editMetadata && !dayOverrideMetadata) {
       try {
         const latestSnapshot = await loadLiveSnapshot(session.slotSystemId);
         await db

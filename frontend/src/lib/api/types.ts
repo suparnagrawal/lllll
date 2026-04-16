@@ -194,6 +194,47 @@ export type TimetableDayOverride = {
   updatedAt: string;
 };
 
+export type DayOverrideRecomputeSlotSystemReport = {
+  slotSystemId: number;
+  noChanges: boolean;
+  commitSessionId: number | null;
+  batchId: number | null;
+  affectedRows: number;
+  unchangedRows: number;
+  createdBookings: number;
+  skippedOperations: number;
+  deletedConflictingBookings: number;
+  autoResolvedExternalConflicts: number;
+  autoResolvedInternalConflicts: number;
+  autoResolvedRuntimeConflicts: number;
+  impactedBatchIds: number[];
+};
+
+export type DayOverrideRecomputeSummary = {
+  targetDate: string;
+  impactedSlotSystems: number;
+  processedSlotSystems: number;
+  noChangeSlotSystems: number;
+  createdBookings: number;
+  skippedOperations: number;
+  deletedConflictingBookings: number;
+  autoResolvedExternalConflicts: number;
+  autoResolvedInternalConflicts: number;
+  autoResolvedRuntimeConflicts: number;
+  slotSystems: DayOverrideRecomputeSlotSystemReport[];
+};
+
+export type TimetableDayOverrideSaveResponse = {
+  dayOverride: TimetableDayOverride;
+  recompute: DayOverrideRecomputeSummary;
+};
+
+export type TimetableDayOverrideDeleteResponse = {
+  deletedId: number;
+  targetDate: string;
+  recompute: DayOverrideRecomputeSummary;
+};
+
 export type BookingEditRequestStatus = "PENDING" | "APPROVED" | "REJECTED";
 
 export type BookingEditRequest = {
