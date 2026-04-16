@@ -16,7 +16,6 @@ import type { BookingCreateResult } from "../bookings/services/bookingService";
 import {
   findFirstHolidayOverlap,
   listHolidays,
-  listTimetableDayOverrides,
 } from "../holidays/service";
 import { toISTDateKey } from "../../shared/utils/istDateTime";
 import {
@@ -719,24 +718,24 @@ function getClassroomParts(
   };
 }
 
-function toDayOfWeek(dayValue: number): DayOfWeek {
-  switch (dayValue) {
-    case 0:
-      return "SUN";
-    case 1:
-      return "MON";
-    case 2:
-      return "TUE";
-    case 3:
-      return "WED";
-    case 4:
-      return "THU";
-    case 5:
-      return "FRI";
-    case 6:
-      return "SAT";
+function toJsDay(dayOfWeek: DayOfWeek): number {
+  switch (dayOfWeek) {
+    case "SUN":
+      return 0;
+    case "MON":
+      return 1;
+    case "TUE":
+      return 2;
+    case "WED":
+      return 3;
+    case "THU":
+      return 4;
+    case "FRI":
+      return 5;
+    case "SAT":
+      return 6;
     default:
-      return "SUN";
+      return 0;
   }
 }
 
@@ -773,18 +772,15 @@ function buildOccurrenceIntervals(input: {
   dayOfWeek: DayOfWeek;
   startTime: string;
   endTime: string;
-  effectiveDayByDateKey?: Map<string, DayOfWeek>;
 }) {
   const intervals: Array<{ startAt: Date; endAt: Date }> = [];
   const cursor = new Date(input.termStartDate.getTime());
   const termEnd = new Date(input.termEndDate.getTime());
 
-  while (cursor <= termEnd) {
-    const dateKey = toDateOnlyString(cursor);
-    const effectiveDayOfWeek =
-      input.effectiveDayByDateKey?.get(dateKey) ?? toDayOfWeek(cursor.getDay());
+  const targetDay = toJsDay(input.dayOfWeek);
 
-    if (effectiveDayOfWeek === input.dayOfWeek) {
+  while (cursor <= termEnd) {
+    if (cursor.getDay() === targetDay) {
       const startAt = combineDateAndTime(cursor, input.startTime);
       const endAt = combineDateAndTime(cursor, input.endTime);
 
@@ -3440,27 +3436,6 @@ export async function commitTimetableImport(
           toDate: termEndDateKey,
         })
       : [];
-  const timetableDayOverrides =
-    termStartDateKey && termEndDateKey
-      ? await listTimetableDayOverrides({
-          fromDate: termStartDateKey,
-          toDate: termEndDateKey,
-        })
-      : [];
-  const effectiveDayByDateKey = new Map<string, DayOfWeek>();
-
-  for (const dayOverride of timetableDayOverrides) {
-    const targetDate = dayOverride.targetDate;
-    if (!targetDate) {
-      continue;
-    }
-
-    effectiveDayByDateKey.set(
-      String(targetDate),
-      dayOverride.followsDayOfWeek as DayOfWeek,
-    );
-  }
-
   let holidaySkippedOccurrences = 0;
 
   for (const row of rows) {
@@ -3584,7 +3559,6 @@ export async function commitTimetableImport(
         dayOfWeek: descriptor.dayOfWeek,
         startTime: descriptor.startTime,
         endTime: descriptor.endTime,
-        effectiveDayByDateKey,
       });
 
       for (const interval of intervals) {
@@ -4173,26 +4147,6 @@ export async function detectCommitConflicts(
             toDate: termEndDateKey,
           })
         : [];
-    const timetableDayOverrides =
-      termStartDateKey && termEndDateKey
-        ? await listTimetableDayOverrides({
-            fromDate: termStartDateKey,
-            toDate: termEndDateKey,
-          })
-        : [];
-    const effectiveDayByDateKey = new Map<string, DayOfWeek>();
-
-    for (const dayOverride of timetableDayOverrides) {
-      const targetDate = dayOverride.targetDate;
-      if (!targetDate) {
-        continue;
-      }
-
-      effectiveDayByDateKey.set(
-        String(targetDate),
-        dayOverride.followsDayOfWeek as DayOfWeek,
-      );
-    }
 
     const conflicts: DetectedConflict[] = [];
     let totalOccurrences = 0;
@@ -4256,7 +4210,6 @@ export async function detectCommitConflicts(
           dayOfWeek: descriptor.dayOfWeek,
           startTime: descriptor.startTime,
           endTime: descriptor.endTime,
-          effectiveDayByDateKey,
         });
 
         for (const interval of intervals) {

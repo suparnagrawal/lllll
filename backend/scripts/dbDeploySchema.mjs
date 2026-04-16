@@ -13,8 +13,23 @@ const __dirname = path.dirname(__filename);
 const drizzleDir = path.resolve(__dirname, "../drizzle");
 const journalPath = path.join(drizzleDir, "meta", "_journal.json");
 
-function runCommand(args) {
-  const command = process.platform === "win32" ? "npx.cmd" : "npx";
+function resolveDrizzleKitCommand() {
+  const unixPath = path.resolve(__dirname, "../node_modules/.bin/drizzle-kit");
+  const windowsPath = `${unixPath}.cmd`;
+  const resolved = process.platform === "win32" ? windowsPath : unixPath;
+
+  if (!fs.existsSync(resolved)) {
+    console.error(
+      "Missing local drizzle-kit binary. Install dev dependencies (for Render use: npm ci --include=dev).",
+    );
+    process.exit(1);
+  }
+
+  return resolved;
+}
+
+function runDrizzleKit(args) {
+  const command = resolveDrizzleKitCommand();
   const result = spawnSync(command, args, {
     stdio: "inherit",
     env: process.env,
@@ -143,14 +158,14 @@ async function main() {
 
   if (!nonEmptySchema) {
     console.log("Public schema is empty; running first-deploy push workflow.");
-    runCommand(["drizzle-kit", "push", "--force"]);
+    runDrizzleKit(["push", "--force"]);
     await ensureMigrationBaselineIfMissing(databaseUrl);
     return;
   }
 
   await ensureMigrationBaselineIfMissing(databaseUrl);
   console.log("Existing schema detected; running drizzle-kit migrate.");
-  runCommand(["drizzle-kit", "migrate"]);
+  runDrizzleKit(["migrate"]);
 }
 
 main().catch((error) => {

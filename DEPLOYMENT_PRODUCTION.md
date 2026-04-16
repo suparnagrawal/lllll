@@ -61,7 +61,7 @@ Optional compatibility alias:
 3. Configure:
 - Root Directory: `backend`
 - Runtime: `Node`
-- Build Command: `npm ci && npm run db:deploy && npm run build`
+- Build Command: `npm ci --include=dev && npm run db:deploy && npm run build && npm prune --omit=dev`
 - Start Command: `npm run start`
    
 Optional shortcut:
@@ -149,6 +149,12 @@ Cause:
 - First deployment was done with push and migration metadata baseline is missing.
 Fix:
 - Run `npm --prefix backend run db:deploy` once against that DB to baseline then migrate.
+
+### Error: `Error please install required packages: 'drizzle-orm'`
+Cause:
+- Render build installed production-only packages while schema deploy requires drizzle migration tooling.
+Fix:
+- Use build command with dev dependencies: `npm ci --include=dev && npm run db:deploy && npm run build && npm prune --omit=dev`.
 
 ### Error: OAuth redirect mismatch
 Cause:

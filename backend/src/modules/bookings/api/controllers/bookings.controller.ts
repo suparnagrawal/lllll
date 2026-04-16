@@ -8,7 +8,7 @@ import {
 } from '../../services/bookingService';
 import { db } from '../../../../db';
 import { bookingRequests, bookings, rooms, slotSystems, timetableImportBatches, timetableImportOccurrences } from '../../../../db/schema';
-import { eq, and, inArray, lt, gt, desc } from 'drizzle-orm';
+import { eq, and, inArray, lt, gt } from 'drizzle-orm';
 import {
   getAssignedBuildingIdsForStaff,
   isRoomAssignedToStaff,
@@ -34,14 +34,13 @@ type BookingBulkRequestItem = BulkBookingItemInput & {
 
 export class BookingsController {
   async list(req: Request, res: Response): Promise<void> {
-    const { startAt, endAt, roomId, buildingId, limit } = req.query;
+    const { startAt, endAt, roomId, buildingId } = req.query;
 
     const parsedStartAt = startAt ? new Date(startAt as string) : null;
     const parsedEndAt = endAt ? new Date(endAt as string) : null;
 
     const parsedRoomId = roomId ? Number(roomId) : null;
     const parsedBuildingId = buildingId ? Number(buildingId) : null;
-    const parsedLimit = limit === undefined ? null : Number(limit);
 
     // Validation
     if ((parsedStartAt && !parsedEndAt) || (!parsedStartAt && parsedEndAt)) {
@@ -64,13 +63,6 @@ export class BookingsController {
 
     if (parsedBuildingId !== null && isNaN(parsedBuildingId)) {
       throw new ValidationError('Invalid buildingId');
-    }
-
-    if (
-      parsedLimit !== null &&
-      (!Number.isInteger(parsedLimit) || parsedLimit <= 0 || parsedLimit > 500)
-    ) {
-      throw new ValidationError('Invalid limit');
     }
 
     const isStaff = req.user?.role === 'STAFF';
@@ -119,18 +111,13 @@ export class BookingsController {
         .from(bookings)
         .innerJoin(rooms, eq(bookings.roomId, rooms.id));
 
-      const queryWithWhere = whereClause ? query.where(whereClause) : query;
-      const queryWithOrder = queryWithWhere.orderBy(desc(bookings.startAt), desc(bookings.id));
-      const result =
-        parsedLimit !== null ? await queryWithOrder.limit(parsedLimit) : await queryWithOrder;
+      const result = whereClause ? await query.where(whereClause) : await query;
       res.json(result.map((row) => row.booking));
       return;
     }
 
     const query = db.select().from(bookings);
-    const queryWithWhere = whereClause ? query.where(whereClause) : query;
-    const queryWithOrder = queryWithWhere.orderBy(desc(bookings.startAt), desc(bookings.id));
-    const result = parsedLimit !== null ? await queryWithOrder.limit(parsedLimit) : await queryWithOrder;
+    const result = whereClause ? await query.where(whereClause) : await query;
     res.json(result);
   }
 

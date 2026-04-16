@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "../../../db";
-import { eq, lt, gt, and, or, isNull, inArray, ne, desc } from "drizzle-orm";
+import { eq, lt, gt, and, or, isNull, inArray, ne } from "drizzle-orm";
 import { bookingRequests, users, rooms, bookings, buildings } from "../../../db/schema";
 import { authMiddleware } from "../../../middleware/auth";
 import { requireRole } from "../../../middleware/rbac";
@@ -398,23 +398,14 @@ router.get("/:id", authMiddleware, async (req, res) => {
 
 // GET /booking-requests
 // Fetch all booking requests
-// Optional query params: ?status=...&limit=...
+// Optional query param: ?status=PENDING | APPROVED | REJECTED | CANCELLED
 // Returns: array of booking requests
 
 router.get("/", authMiddleware, async (req, res) => {
-  const { status, limit } = req.query;
-  const parsedLimit =
-    limit === undefined || String(limit).trim() === "" ? null : Number(limit);
+  const { status } = req.query;
 
   if (status !== undefined && !isBookingRequestStatus(status)) {
     return res.status(400).json({ message: "Invalid status" });
-  }
-
-  if (
-    parsedLimit !== null &&
-    (!Number.isInteger(parsedLimit) || parsedLimit <= 0 || parsedLimit > 500)
-  ) {
-    return res.status(400).json({ message: "Invalid limit" });
   }
 
   try {
@@ -437,15 +428,11 @@ router.get("/", authMiddleware, async (req, res) => {
         conditions.push(eq(bookingRequests.status, status));
       }
 
-      const query = db
+      const requests = await db
         .select({ request: bookingRequests })
         .from(bookingRequests)
         .innerJoin(rooms, eq(bookingRequests.roomId, rooms.id))
-        .where(and(...conditions))
-        .orderBy(desc(bookingRequests.createdAt), desc(bookingRequests.id));
-
-      const requests =
-        parsedLimit !== null ? await query.limit(parsedLimit) : await query;
+        .where(and(...conditions));
 
       return res.json(requests.map((row) => row.request));
     }
@@ -478,15 +465,9 @@ router.get("/", authMiddleware, async (req, res) => {
         ? and(visibilityCondition, statusCondition)
         : visibilityCondition ?? statusCondition;
 
-    const baseQuery = db.select().from(bookingRequests);
-    const queryWithWhere = whereClause ? baseQuery.where(whereClause) : baseQuery;
-    const queryWithOrder = queryWithWhere.orderBy(
-      desc(bookingRequests.createdAt),
-      desc(bookingRequests.id),
-    );
-
-    const requests =
-      parsedLimit !== null ? await queryWithOrder.limit(parsedLimit) : await queryWithOrder;
+    const requests = whereClause
+      ? await db.select().from(bookingRequests).where(whereClause)
+      : await db.select().from(bookingRequests);
 
     return res.json(requests);
   } catch (error) {

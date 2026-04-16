@@ -13,6 +13,21 @@ const __dirname = path.dirname(__filename);
 const drizzleDir = path.resolve(__dirname, "../drizzle");
 const journalPath = path.join(drizzleDir, "meta", "_journal.json");
 
+function resolveDrizzleKitCommand() {
+  const unixPath = path.resolve(__dirname, "../node_modules/.bin/drizzle-kit");
+  const windowsPath = `${unixPath}.cmd`;
+  const resolved = process.platform === "win32" ? windowsPath : unixPath;
+
+  if (!fs.existsSync(resolved)) {
+    console.error(
+      "Missing local drizzle-kit binary. Install dev dependencies (for Render use: npm ci --include=dev).",
+    );
+    process.exit(1);
+  }
+
+  return resolved;
+}
+
 async function hasUserTables(databaseUrl) {
   const client = new Client({ connectionString: databaseUrl });
   await client.connect();
@@ -129,8 +144,8 @@ async function main() {
 
   console.log("Public schema is empty; running drizzle-kit push --force for first deployment.");
 
-  const command = process.platform === "win32" ? "npx.cmd" : "npx";
-  const result = spawnSync(command, ["drizzle-kit", "push", "--force"], {
+  const command = resolveDrizzleKitCommand();
+  const result = spawnSync(command, ["push", "--force"], {
     stdio: "inherit",
     env: process.env,
   });

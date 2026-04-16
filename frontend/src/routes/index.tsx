@@ -20,8 +20,6 @@ const UsersPage = lazy(() => import('../pages/UsersPage'));
 // eslint-disable-next-line react-refresh/only-export-components
 const HolidaysPage = lazy(() => import('../pages/HolidaysPage'));
 // eslint-disable-next-line react-refresh/only-export-components
-const SystemLoadingSettingsPage = lazy(() => import('../pages/SystemLoadingSettingsPage'));
-// eslint-disable-next-line react-refresh/only-export-components
 const TimetableLayoutPage = lazy(() => import('../pages/timetable/TimetableLayoutPage'));
 // eslint-disable-next-line react-refresh/only-export-components
 const TimetableOverviewPage = lazy(() => import('../pages/timetable/TimetableOverviewPage'));
@@ -101,10 +99,6 @@ export const router = createBrowserRouter([
               {
                 path: 'holidays',
                 element: <Suspense fallback={<PageLoader />}><HolidaysPage /></Suspense>,
-              },
-              {
-                path: 'system-loading',
-                element: <Suspense fallback={<PageLoader />}><SystemLoadingSettingsPage /></Suspense>,
               },
               {
                 path: 'timetable',

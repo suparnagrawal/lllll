@@ -9,7 +9,6 @@ import { holidaysModule } from "./holidays";
 import { dashboardModule } from "./dashboard";
 import { notificationsModule } from "./notifications";
 import { roomsModule } from "./rooms";
-import { systemSettingsModule } from "./systemSettings";
 import { timetableModule } from "./timetable";
 import { usersModule } from "./users";
 
@@ -28,7 +27,6 @@ export const apiModules: ApiModule[] = [
   availabilityModule,
   usersModule,
   notificationsModule,
-  systemSettingsModule,
   timetableModule,
   dashboardModule,
 ];

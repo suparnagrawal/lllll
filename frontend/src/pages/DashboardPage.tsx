@@ -31,12 +31,10 @@ import {
 } from "lucide-react";
 import { formatError } from "../utils/formatError";
 import { formatDateDDMMYYYY, formatTimeHHMMIST } from "../utils/datetime";
-import { useSystemQoLPreferences } from "../hooks/useSystemQoLPreferences";
 
 export default function DashboardPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const { preferences } = useSystemQoLPreferences();
 
   // States
   const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -44,36 +42,11 @@ export default function DashboardPage() {
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const sectionAutoLoad = preferences.autoLoadSections.dashboard;
-  const [hasRequestedDataLoad, setHasRequestedDataLoad] = useState(
-    () => !preferences.manualDataLoading || sectionAutoLoad,
-  );
-
-  const shouldLoadData =
-    !preferences.manualDataLoading ||
-    sectionAutoLoad ||
-    hasRequestedDataLoad;
-  const showDataLoadGate =
-    preferences.manualDataLoading &&
-    !sectionAutoLoad &&
-    !hasRequestedDataLoad;
 
   const canManageRooms = user?.role === "ADMIN" || user?.role === "STAFF";
 
-  useEffect(() => {
-    if (!preferences.manualDataLoading || sectionAutoLoad) {
-      setHasRequestedDataLoad(true);
-    }
-  }, [preferences.manualDataLoading, sectionAutoLoad]);
-
   // Load dashboard data
   useEffect(() => {
-    if (!shouldLoadData) {
-      setLoading(false);
-      setError(null);
-      return;
-    }
-
     const loadDashboard = async () => {
       try {
         setLoading(true);
@@ -93,7 +66,7 @@ export default function DashboardPage() {
     };
 
     loadDashboard();
-  }, [shouldLoadData]);
+  }, []);
 
   const handleQuickAction = (action: string) => {
     switch (action) {
@@ -194,61 +167,6 @@ export default function DashboardPage() {
           <p className="text-sm text-red-700">{error}</p>
         </div>
       )}
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">System Performance QoL</CardTitle>
-          <CardDescription>
-            Global loading behavior is managed in one place for all users.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-sm">
-            Current global mode: {preferences.manualDataLoading ? "Manual" : "Automatic"}
-          </p>
-          <p className="text-sm text-muted-foreground">
-            Dependent auto-load: {preferences.autoLoadDependentData ? "Enabled" : "Disabled"}
-          </p>
-          <p className="text-sm text-muted-foreground">
-            Dashboard auto-load: {sectionAutoLoad ? "Enabled" : "Disabled"}
-          </p>
-
-          <div className="flex flex-wrap gap-2 pt-1">
-            {showDataLoadGate && (
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => setHasRequestedDataLoad(true)}
-              >
-                Load Dashboard Data
-              </Button>
-            )}
-            {user?.role === "ADMIN" && (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => navigate("/system-loading")}
-              >
-                Manage Global Loading Settings
-              </Button>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
-      {showDataLoadGate && (
-        <Card>
-          <CardContent className="pt-6">
-            <p className="text-sm text-muted-foreground">
-              Dashboard data is not loaded yet. Use the load button above when you want to fetch it.
-            </p>
-          </CardContent>
-        </Card>
-      )}
-
-      {!showDataLoadGate && (
-        <>
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -475,8 +393,6 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       </div>
-        </>
-      )}
     </div>
   );
 }
