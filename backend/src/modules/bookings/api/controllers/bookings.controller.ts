@@ -7,7 +7,7 @@ import {
   updateBooking,
 } from '../../services/bookingService';
 import { db } from '../../../../db';
-import { bookingRequests, bookings, rooms, slotSystems, timetableImportBatches, timetableImportOccurrences } from '../../../../db/schema';
+import { bookingRequests, bookings, rooms, slotSystems, timetableImportBatches, timetableImportOccurrences, users } from '../../../../db/schema';
 import { eq, and, inArray, lt, gt } from 'drizzle-orm';
 import {
   getAssignedBuildingIdsForStaff,
@@ -284,10 +284,12 @@ export class BookingsController {
         requestStatus: bookingRequests.status,
         requestUserId: bookingRequests.userId,
         requestFacultyId: bookingRequests.facultyId,
+        requestUserRole: users.role,
       })
       .from(bookings)
       .innerJoin(rooms, eq(bookings.roomId, rooms.id))
       .leftJoin(bookingRequests, eq(bookings.requestId, bookingRequests.id))
+      .leftJoin(users, eq(bookingRequests.userId, users.id))
       .where(eq(bookings.id, bookingId))
       .limit(1);
 
@@ -353,6 +355,7 @@ export class BookingsController {
           startAt: existing.booking.startAt,
           endAt: existing.booking.endAt,
           requestStatus: existing.requestStatus,
+          requestUserRole: existing.requestUserRole,
         },
       );
     } catch {

@@ -31,7 +31,7 @@ const NAV_ITEMS: NavItem[] = [
   { path: '/bookings', label: 'Bookings', icon: Calendar },
   { path: '/availability', label: 'Availability', icon: Search },
   { path: '/users', label: 'Users', icon: Users, roles: ['ADMIN'] },
-  { path: '/holidays', label: 'Holidays', icon: Bell, roles: ['ADMIN'] },
+  { path: '/holidays', label: 'Day Adjustments', icon: Bell, roles: ['ADMIN'] },
   { path: '/system-loading', label: 'System Loading', icon: SlidersHorizontal, roles: ['ADMIN'] },
   { path: '/timetable', label: 'Timetable', icon: Clock, roles: ['ADMIN'] },
 ];

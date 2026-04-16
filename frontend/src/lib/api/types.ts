@@ -1119,6 +1119,9 @@ export type TimetableImportBatchListResponse = {
 export type DashboardStats = {
   totalBookingsThisMonth: number;
   pendingRequests: number;
+  pendingRequestsByFaculty: number;
+  pendingRequestsByStaff: number;
+  pendingRequestsToClear: number;
   roomUtilization: number;
   activeUsers: number;
 };

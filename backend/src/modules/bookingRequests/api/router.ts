@@ -67,6 +67,7 @@ type PgCauseError = {
   };
 };
 
+type UserRole = "ADMIN" | "STAFF" | "FACULTY" | "STUDENT" | "PENDING_ROLE";
 type ChangeCapableRole = "ADMIN" | "STAFF" | "FACULTY" | "STUDENT";
 
 async function getRequestWithBuilding(requestId: number) {
@@ -232,20 +233,46 @@ function canApplyDirectChangeToRequest(
     facultyId: number | null;
     status: BookingRequestStatus;
   },
+  requestOwnerRole: UserRole | null,
 ): boolean {
-  if (request.status !== "PENDING_FACULTY") {
+  if (request.status === "APPROVED") {
     return false;
+  }
+
+  if (request.status === "PENDING_STAFF") {
+    // Student-origin requests in PENDING_STAFF are forwarded by faculty and must go through approval.
+    if (requestOwnerRole === null || requestOwnerRole === "STUDENT") {
+      return false;
+    }
+  }
+
+  if (request.status !== "PENDING_FACULTY" && request.status !== "PENDING_STAFF") {
+    return false;
+  }
+
+  if (role === "ADMIN" || role === "STAFF") {
+    return true;
   }
 
   if (role === "STUDENT") {
     return request.userId === userId;
   }
 
-  if (role === "FACULTY") {
-    return request.userId === userId || request.facultyId === userId;
+  return request.userId === userId || request.facultyId === userId;
+}
+
+async function getUserRoleById(userId: number | null): Promise<UserRole | null> {
+  if (userId === null) {
+    return null;
   }
 
-  return false;
+  const rows = await db
+    .select({ role: users.role })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  return rows[0]?.role ?? null;
 }
 
 async function isActiveFacultyUser(userId: number): Promise<boolean> {
@@ -1243,6 +1270,16 @@ router.post(
         });
       }
 
+      const sourceContextRequest = sourceRequest ?? bookingLinkedRequest;
+      const sourceOwnerRole = await getUserRoleById(sourceContextRequest?.userId ?? null);
+
+      const requiresApprovalOnly =
+        sourceContextRequest !== null &&
+        (
+          sourceContextRequest.status === "APPROVED" ||
+          (sourceContextRequest.status === "PENDING_STAFF" && sourceOwnerRole === "STUDENT")
+        );
+
       const pendingConditions = [
         eq(bookingRequests.userId, actorId),
         eq(bookingRequests.roomId, roomId),
@@ -1272,7 +1309,7 @@ router.post(
 
       if (
         sourceRequest &&
-        canApplyDirectChangeToRequest(actorRole, actorId, sourceRequest)
+        canApplyDirectChangeToRequest(actorRole, actorId, sourceRequest, sourceOwnerRole)
       ) {
         const updatedRows = await db
           .update(bookingRequests)
@@ -1288,7 +1325,10 @@ router.post(
           .where(
             and(
               eq(bookingRequests.id, sourceRequest.id),
-              eq(bookingRequests.status, "PENDING_FACULTY"),
+              or(
+                eq(bookingRequests.status, "PENDING_FACULTY"),
+                eq(bookingRequests.status, "PENDING_STAFF"),
+              ),
             ),
           )
           .returning();
@@ -1307,7 +1347,10 @@ router.post(
         });
       }
 
-      const targetStatus = actorRole === "STUDENT" ? "PENDING_FACULTY" : "PENDING_STAFF";
+      const targetStatus =
+        requiresApprovalOnly || actorRole !== "STUDENT"
+          ? "PENDING_STAFF"
+          : "PENDING_FACULTY";
 
       const created = await createBookingRequestWithNotifications({
         actorId,
