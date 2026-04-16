@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactElement } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import {
@@ -183,7 +183,7 @@ export default function DashboardPage() {
     title: string;
     value: number;
     description: string;
-    icon: JSX.Element;
+    icon: ReactElement;
   }> = (() => {
     if (isAdmin) {
       return [
