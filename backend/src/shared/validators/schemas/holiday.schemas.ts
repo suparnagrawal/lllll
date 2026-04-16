@@ -70,3 +70,44 @@ export const createHolidaySchema = z
     message: "startDate must be before or equal to endDate",
     path: ["startDate"],
   });
+
+const dayOfWeekValues = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"] as const;
+
+export const listTimetableDayOverridesSchema = z
+  .object({
+    fromDate: z
+      .string()
+      .trim()
+      .optional()
+      .refine((value) => !value || isValidDateOnly(value), {
+        message: "fromDate must be in YYYY-MM-DD format",
+      }),
+    toDate: z
+      .string()
+      .trim()
+      .optional()
+      .refine((value) => !value || isValidDateOnly(value), {
+        message: "toDate must be in YYYY-MM-DD format",
+      }),
+  })
+  .refine(
+    (data) => {
+      if (!data.fromDate || !data.toDate) {
+        return true;
+      }
+
+      return data.fromDate <= data.toDate;
+    },
+    {
+      message: "fromDate must be before or equal to toDate",
+      path: ["fromDate"],
+    },
+  );
+
+export const upsertTimetableDayOverrideSchema = z.object({
+  targetDate: z.string().trim().refine((value) => isValidDateOnly(value), {
+    message: "targetDate must be in YYYY-MM-DD format",
+  }),
+  followsDayOfWeek: z.enum(dayOfWeekValues),
+  note: z.string().trim().max(1000, "note is too long").optional().nullable(),
+});
