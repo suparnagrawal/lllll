@@ -410,13 +410,14 @@ export function BookingRequestsPage({
     setError(null);
     try {
       if (filter === "ALL") {
+        const rows = await getBookingRequests();
         setRequests(
-          await getBookingRequests(
-            isRecentRequestsMode ? { limit: RECENT_REQUESTS_LIMIT } : undefined,
-          ),
+          isRecentRequestsMode
+            ? rows.slice(0, RECENT_REQUESTS_LIMIT)
+            : rows,
         );
       } else {
-        setRequests(await getBookingRequests({ status: filter }));
+        setRequests(await getBookingRequests(filter));
       }
     } catch (e) {
       setError(formatError(e, "Failed to load booking requests"));
