@@ -1070,7 +1070,7 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
     }
   };
 
-  const loadRoomContext = async () => {
+  const loadRoomContext = useCallback(async () => {
     try {
       const [loadedBuildings, loadedRooms] = await Promise.all([
         getBuildings(),
@@ -1082,7 +1082,7 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
     } catch {
       // Keep the page usable even if resolution helpers fail to load.
     }
-  };
+  }, []);
 
   const loadImportBatches = async (slotSystemId: number | "") => {
     if (slotSystemId === "") {
@@ -1192,6 +1192,7 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
     try {
       const report = await apiGetTimetableImportBatch(batchId);
       hydratePreviewFromBatch(report);
+      await loadRoomContext();
       setProcessedRowsReport(null);
       setProcessedRowsError(null);
       setProcessedBookingEdits({});
@@ -1204,7 +1205,7 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
     } finally {
       setImportLoading(false);
     }
-  }, []);
+  }, [loadRoomContext]);
 
   const handleLoadProcessedRowsForActiveBatch = async () => {
     if (activeBatchId === null) {
@@ -2279,6 +2280,7 @@ export function TimetableBuilderPage({ view = "all" }: TimetableBuilderPageProps
     await loadProcessedRows(batchId);
     await loadImportBatches(refreshedReport.slotSystemId);
     await loadSlotSystems();
+    await loadRoomContext();
   };
 
   const runFreezeRuntimeAndFinalize = async (
