@@ -156,6 +156,15 @@ export type BookingRequest = {
   createdAt: string;
 };
 
+export type BookingRequestChangeMode =
+  | "UPDATED_EXISTING_REQUEST"
+  | "CREATED_CHANGE_REQUEST";
+
+export type BookingRequestChangeResponse = {
+  mode: BookingRequestChangeMode;
+  request: BookingRequest;
+};
+
 export type Booking = {
   id: number;
   roomId: number;

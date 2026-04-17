@@ -15,7 +15,6 @@ import { EditBookingModal } from "../components/EditBookingModal";
 import { useToast } from "../context/ToastContext";
 import { formatError } from "../utils/formatError";
 import { buildHolidayWarningPrompt, isHolidayWarningError } from "../utils/holidayWarning";
-import { useSystemQoLPreferences } from "../hooks/useSystemQoLPreferences";
 
 const BOOKING_FILTERS_STORAGE_KEY = "qol.bookings.filters.v1";
 const RECENT_BOOKINGS_PAST_DAYS = 14;
@@ -114,11 +113,7 @@ type BookingsPageContentProps = {
 
 function BookingsPageContent({ currentUserId, userRole, isAdmin, canManageBookings, locationPrefill, pushToast }: BookingsPageContentProps) {
   const persistedFilters = readPersistedBookingFilters();
-  const { preferences } = useSystemQoLPreferences();
-  const sectionAutoLoad = preferences.autoLoadSections.bookings;
-  const [hasRequestedFullData, setHasRequestedFullData] = useState(
-    () => !preferences.manualDataLoading || sectionAutoLoad,
-  );
+  const [hasRequestedFullData, setHasRequestedFullData] = useState(false);
   const [recentWindow] = useState(() => getRecentBookingsWindow());
 
   // Filters
@@ -160,8 +155,6 @@ function BookingsPageContent({ currentUserId, userRole, isAdmin, canManageBookin
     filterEndAt.length > 0;
 
   const isRecentPreviewMode =
-    preferences.manualDataLoading &&
-    !sectionAutoLoad &&
     !hasRequestedFullData &&
     !hasActiveFilters;
 
@@ -180,12 +173,6 @@ function BookingsPageContent({ currentUserId, userRole, isAdmin, canManageBookin
 
     return undefined;
   }, [filters, isRecentPreviewMode, recentWindow.endAt, recentWindow.startAt]);
-
-  useEffect(() => {
-    if (!preferences.manualDataLoading || sectionAutoLoad) {
-      setHasRequestedFullData(true);
-    }
-  }, [preferences.manualDataLoading, sectionAutoLoad]);
 
   // Queries
   const { data: bookings = [], isLoading, error: bookingsError } = useBookings(bookingQueryFilters, true);
@@ -426,27 +413,21 @@ function BookingsPageContent({ currentUserId, userRole, isAdmin, canManageBookin
         <p>View and manage confirmed room bookings</p>
       </div>
 
-      <div className="alert">
-        Data mode: {preferences.manualDataLoading ? "Manual" : "Automatic"}. Admins can update this globally from System Loading settings.
-      </div>
-
       {isRecentPreviewMode && (
         <div className="alert">
-          Showing recent bookings from the last {RECENT_BOOKINGS_PAST_DAYS} days through the next {RECENT_BOOKINGS_FUTURE_DAYS} days (up to {RECENT_BOOKINGS_LIMIT} rows). Apply filters or load full history for a broader view.
+          Showing recent bookings from the last {RECENT_BOOKINGS_PAST_DAYS} days through the next {RECENT_BOOKINGS_FUTURE_DAYS} days (up to {RECENT_BOOKINGS_LIMIT} rows). Apply filters or load more for full history.
           <button
             type="button"
             className="btn btn-ghost btn-sm"
             style={{ marginLeft: "var(--space-2)" }}
             onClick={() => setHasRequestedFullData(true)}
           >
-            Load Full Booking History
+            Load More Bookings
           </button>
         </div>
       )}
 
       {!isRecentPreviewMode &&
-        preferences.manualDataLoading &&
-        !sectionAutoLoad &&
         !hasActiveFilters &&
         hasRequestedFullData && (
           <div className="alert">

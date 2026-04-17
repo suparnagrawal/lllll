@@ -8,7 +8,6 @@ import { useAuth } from "../auth/AuthContext";
 import { getUserBuildingAssignments } from "../lib/api";
 import { ExactAvailabilityView } from "./components/ExactAvailabilityView";
 import type { Room } from "../lib/api";
-import { useSystemQoLPreferences } from "../hooks/useSystemQoLPreferences";
 import {
   formatDateLabelIST,
   formatTimeHHMMIST,
@@ -105,26 +104,10 @@ export function AvailabilityPage({
     readAvailabilityPreferences(),
   );
   const { user } = useAuth();
-  const { preferences } = useSystemQoLPreferences();
   const navigate = useNavigate();
   const isStaff = user?.role === "STAFF";
   const isAdmin = user?.role === "ADMIN";
   const canViewBookingsPage = isStaff || isAdmin;
-  const sectionAutoLoad = preferences.autoLoadSections.availability;
-  const [hasRequestedDataLoad, setHasRequestedDataLoad] = useState(
-    () => !preferences.manualDataLoading || sectionAutoLoad,
-  );
-
-  const shouldLoadData =
-    !preferences.manualDataLoading ||
-    sectionAutoLoad ||
-    hasRequestedDataLoad;
-
-  useEffect(() => {
-    if (!preferences.manualDataLoading || sectionAutoLoad) {
-      setHasRequestedDataLoad(true);
-    }
-  }, [preferences.manualDataLoading, sectionAutoLoad]);
 
   const [viewMode, setViewMode] = useState<"time" | "room" | "exact">(initialPreferences.viewMode);
   const [selectedBuildingId, setSelectedBuildingId] = useState<number | null>(initialPreferences.selectedBuildingId);
@@ -139,8 +122,8 @@ export function AvailabilityPage({
   const [selectedBuildingIdForRoomView, setSelectedBuildingIdForRoomView] = useState<number | null>(initialPreferences.selectedBuildingIdForRoomView);
   const [selectedRoomIdForRoomView, setSelectedRoomIdForRoomView] = useState<number | null>(null);
 
-  const { data: buildings = [] } = useBuildings(shouldLoadData);
-  const { data: allRooms = [] } = useRooms(undefined, shouldLoadData);
+  const { data: buildings = [] } = useBuildings(true);
+  const { data: allRooms = [] } = useRooms(undefined, true);
 
   // When building changes, reset room selection
   useEffect(() => {
@@ -150,11 +133,6 @@ export function AvailabilityPage({
 
   // Load staff's assigned buildings
   useEffect(() => {
-    if (!shouldLoadData) {
-      setStaffBuildingIds([]);
-      return;
-    }
-
     if (!isStaff || !user) return;
 
     const loadStaffBuildings = async () => {
@@ -168,7 +146,7 @@ export function AvailabilityPage({
     };
 
     void loadStaffBuildings();
-  }, [isStaff, shouldLoadData, user]);
+  }, [isStaff, user]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -256,34 +234,6 @@ export function AvailabilityPage({
     ? allRooms.filter((r) => r.buildingId === selectedBuildingId)
     : [];
 
-  const showDataLoadGate =
-    preferences.manualDataLoading &&
-    !sectionAutoLoad &&
-    !hasRequestedDataLoad;
-
-  if (showDataLoadGate) {
-    return (
-      <div className="space-y-4">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Room Availability</h1>
-          <p className="text-gray-600 mt-1">View and manage room availability</p>
-        </div>
-
-        <div className="alert">
-          Manual data loading is enabled for better performance.
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
-            style={{ marginLeft: "var(--space-2)" }}
-            onClick={() => setHasRequestedDataLoad(true)}
-          >
-            Load Availability Data
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-start">
@@ -329,10 +279,6 @@ export function AvailabilityPage({
             Reset View
           </button>
         </div>
-      </div>
-
-      <div className="alert">
-        Data mode: {preferences.manualDataLoading ? "Manual" : "Automatic"}. Admins can update this globally from System Loading settings.
       </div>
 
       {/* Browse by Time View */}

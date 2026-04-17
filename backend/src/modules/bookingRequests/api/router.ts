@@ -1273,13 +1273,6 @@ router.post(
       const sourceContextRequest = sourceRequest ?? bookingLinkedRequest;
       const sourceOwnerRole = await getUserRoleById(sourceContextRequest?.userId ?? null);
 
-      const requiresApprovalOnly =
-        sourceContextRequest !== null &&
-        (
-          sourceContextRequest.status === "APPROVED" ||
-          (sourceContextRequest.status === "PENDING_STAFF" && sourceOwnerRole === "STUDENT")
-        );
-
       const pendingConditions = [
         eq(bookingRequests.userId, actorId),
         eq(bookingRequests.roomId, roomId),
@@ -1347,10 +1340,9 @@ router.post(
         });
       }
 
-      const targetStatus =
-        requiresApprovalOnly || actorRole !== "STUDENT"
-          ? "PENDING_STAFF"
-          : "PENDING_FACULTY";
+      // Student-origin edits that cannot be directly applied should go back
+      // to faculty review first; faculty/staff/admin changes proceed to staff review.
+      const targetStatus = actorRole === "STUDENT" ? "PENDING_FACULTY" : "PENDING_STAFF";
 
       const created = await createBookingRequestWithNotifications({
         actorId,

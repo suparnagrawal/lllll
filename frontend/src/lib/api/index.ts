@@ -23,6 +23,8 @@ export type {
   BookingEventType,
   BookingSource,
   BookingRequest,
+  BookingRequestChangeMode,
+  BookingRequestChangeResponse,
   Booking,
   Holiday,
   HolidayCreateResponse,
@@ -189,6 +191,7 @@ export {
 export {
   getBookingRequests,
   createBookingRequest,
+  changeBookingRequest,
   approveBookingRequest,
   forwardBookingRequest,
   rejectBookingRequest,

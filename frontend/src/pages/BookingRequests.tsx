@@ -5,6 +5,7 @@ import {
   approveBookingRequest,
   approveEditRequest,
   cancelBookingRequest,
+  changeBookingRequest,
   createBookingRequest,
   forwardBookingRequest,
   getFacultyUsers,
@@ -62,7 +63,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../components/ui/select";
-import { useSystemQoLPreferences } from "../hooks/useSystemQoLPreferences";
 
 type StatusFilter = "ALL" | BookingStatus;
 
@@ -273,6 +273,131 @@ function statusBadgeVariant(status: BookingStatus): "default" | "secondary" | "d
   return map[status];
 }
 
+type ConflictGroup = {
+  id: string;
+  roomId: number;
+  requests: BookingRequest[];
+  windowStartAt: string;
+  windowEndAt: string;
+};
+
+function toTimestamp(value: string): number {
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function compareRequestsByStartThenCreated(a: BookingRequest, b: BookingRequest): number {
+  const byStart = toTimestamp(a.startAt) - toTimestamp(b.startAt);
+  if (byStart !== 0) {
+    return byStart;
+  }
+
+  const byEnd = toTimestamp(a.endAt) - toTimestamp(b.endAt);
+  if (byEnd !== 0) {
+    return byEnd;
+  }
+
+  const byCreated = toTimestamp(a.createdAt) - toTimestamp(b.createdAt);
+  if (byCreated !== 0) {
+    return byCreated;
+  }
+
+  return a.id - b.id;
+}
+
+function buildConflictGroupsForReview(requests: BookingRequest[]): ConflictGroup[] {
+  const reviewableRequests = requests.filter(
+    (requestItem) => requestItem.status === "PENDING_STAFF",
+  );
+
+  const requestsByRoom = new Map<number, BookingRequest[]>();
+
+  for (const requestItem of reviewableRequests) {
+    const existing = requestsByRoom.get(requestItem.roomId) ?? [];
+    existing.push(requestItem);
+    requestsByRoom.set(requestItem.roomId, existing);
+  }
+
+  const groups: ConflictGroup[] = [];
+
+  for (const [roomId, roomRequests] of requestsByRoom.entries()) {
+    const sorted = [...roomRequests].sort(compareRequestsByStartThenCreated);
+    let localGroupCounter = 1;
+
+    let cluster: BookingRequest[] = [];
+    let clusterEndTimestamp = -Infinity;
+
+    const flushCluster = () => {
+      if (cluster.length <= 1) {
+        cluster = [];
+        clusterEndTimestamp = -Infinity;
+        return;
+      }
+
+      const sortedCluster = [...cluster].sort(compareRequestsByStartThenCreated);
+      let windowEndRequest = sortedCluster[0];
+      let maxEnd = toTimestamp(windowEndRequest.endAt);
+
+      for (const requestItem of sortedCluster) {
+        const endTs = toTimestamp(requestItem.endAt);
+        if (endTs > maxEnd) {
+          maxEnd = endTs;
+          windowEndRequest = requestItem;
+        }
+      }
+
+      groups.push({
+        id: `${roomId}-${localGroupCounter}`,
+        roomId,
+        requests: sortedCluster,
+        windowStartAt: sortedCluster[0].startAt,
+        windowEndAt: windowEndRequest.endAt,
+      });
+
+      localGroupCounter += 1;
+      cluster = [];
+      clusterEndTimestamp = -Infinity;
+    };
+
+    for (const requestItem of sorted) {
+      const startTs = toTimestamp(requestItem.startAt);
+      const endTs = Math.max(toTimestamp(requestItem.endAt), startTs + 1);
+
+      if (cluster.length === 0) {
+        cluster = [requestItem];
+        clusterEndTimestamp = endTs;
+        continue;
+      }
+
+      if (startTs < clusterEndTimestamp) {
+        cluster.push(requestItem);
+        clusterEndTimestamp = Math.max(clusterEndTimestamp, endTs);
+        continue;
+      }
+
+      flushCluster();
+      cluster = [requestItem];
+      clusterEndTimestamp = endTs;
+    }
+
+    flushCluster();
+  }
+
+  return groups.sort((a, b) => {
+    const byStart = toTimestamp(a.windowStartAt) - toTimestamp(b.windowStartAt);
+    if (byStart !== 0) {
+      return byStart;
+    }
+
+    const bySize = b.requests.length - a.requests.length;
+    if (bySize !== 0) {
+      return bySize;
+    }
+
+    return a.roomId - b.roomId;
+  });
+}
+
 type BookingRequestsPageProps = {
   prefill?: BookingRequestPrefill | null;
   onPrefillApplied?: () => void;
@@ -293,11 +418,7 @@ export function BookingRequestsPage({
   const [initialPreferences] = useState<BookingRequestPreferences>(() =>
     readBookingRequestPreferences(),
   );
-  const { preferences } = useSystemQoLPreferences();
-  const sectionAutoLoad = preferences.autoLoadSections.bookingRequests;
-  const [hasRequestedFullRequests, setHasRequestedFullRequests] = useState(
-    () => !preferences.manualDataLoading || sectionAutoLoad,
-  );
+  const [hasRequestedFullRequests, setHasRequestedFullRequests] = useState(false);
   const { user } = useAuth();
   const { pushToast } = useToast();
   const location = useLocation();
@@ -305,14 +426,9 @@ export function BookingRequestsPage({
   const isAdmin = currentRole === "ADMIN";
   const isStaff = currentRole === "STAFF";
   const isStudent = currentRole === "STUDENT";
+  const canDirectReviewQueue = isAdmin || isStaff;
   const canCreate =
     currentRole === "STUDENT" || currentRole === "FACULTY" || currentRole === "STAFF";
-
-  useEffect(() => {
-    if (!preferences.manualDataLoading || sectionAutoLoad) {
-      setHasRequestedFullRequests(true);
-    }
-  }, [preferences.manualDataLoading, sectionAutoLoad]);
 
   // Get prefill from location state if available
   const locationPrefill = (location.state as any)?.prefill as BookingRequestPrefill | undefined;
@@ -322,18 +438,19 @@ export function BookingRequestsPage({
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [facultyUsers, setFacultyUsers] = useState<FacultyUser[]>([]);
   const [editRequests, setEditRequests] = useState<BookingEditRequest[]>([]);
+  const [reviewQueueRequests, setReviewQueueRequests] = useState<BookingRequest[]>([]);
   const [bookingsById, setBookingsById] = useState<Record<number, Booking>>({});
   const [adminUserNameById, setAdminUserNameById] = useState<Record<number, string>>({});
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(initialPreferences.statusFilter);
 
   const isRecentRequestsMode =
-    preferences.manualDataLoading &&
-    !sectionAutoLoad &&
+    !canDirectReviewQueue &&
     !hasRequestedFullRequests &&
     statusFilter === "ALL";
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editingSourceRequestId, setEditingSourceRequestId] = useState<number | null>(null);
 
   const [roomId, setRoomId] = useState<number | "">(initialPreferences.roomId ?? "");
   const [facultyId, setFacultyId] = useState<number | "">(initialPreferences.facultyId ?? "");
@@ -365,6 +482,134 @@ export function BookingRequestsPage({
   const [finderSelectedEndAt, setFinderSelectedEndAt] = useState("");
   const [finderSelectedError, setFinderSelectedError] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<BookingRequestsSection>("requests");
+  const [showConflictOnly, setShowConflictOnly] = useState(false);
+  const [focusedConflictGroupId, setFocusedConflictGroupId] = useState<string | null>(null);
+
+  const conflictGroups = useMemo(
+    () => (canDirectReviewQueue ? buildConflictGroupsForReview(reviewQueueRequests) : []),
+    [canDirectReviewQueue, reviewQueueRequests],
+  );
+
+  const conflictGroupById = useMemo(
+    () => new Map(conflictGroups.map((group) => [group.id, group])),
+    [conflictGroups],
+  );
+
+  const conflictGroupOrdinalById = useMemo(() => {
+    const ordinalMap = new Map<string, number>();
+    conflictGroups.forEach((group, index) => {
+      ordinalMap.set(group.id, index + 1);
+    });
+    return ordinalMap;
+  }, [conflictGroups]);
+
+  const requestConflictGroupById = useMemo(() => {
+    const mapping = new Map<number, string>();
+
+    for (const group of conflictGroups) {
+      for (const requestItem of group.requests) {
+        mapping.set(requestItem.id, group.id);
+      }
+    }
+
+    return mapping;
+  }, [conflictGroups]);
+
+  const reviewablePendingCount = reviewQueueRequests.length;
+
+  const conflictRequestIdSet = useMemo(
+    () => new Set(requestConflictGroupById.keys()),
+    [requestConflictGroupById],
+  );
+
+  const nonConflictingPendingCount = Math.max(
+    reviewablePendingCount - conflictRequestIdSet.size,
+    0,
+  );
+
+  const requestsForDisplay = useMemo(() => {
+    let filtered = requests;
+
+    if (focusedConflictGroupId) {
+      const focusedGroup = conflictGroupById.get(focusedConflictGroupId);
+
+      if (!focusedGroup) {
+        return [];
+      }
+
+      const focusedIds = new Set(focusedGroup.requests.map((requestItem) => requestItem.id));
+      filtered = filtered.filter((requestItem) => focusedIds.has(requestItem.id));
+    } else if (showConflictOnly && canDirectReviewQueue) {
+      filtered = filtered.filter((requestItem) =>
+        conflictRequestIdSet.has(requestItem.id),
+      );
+    }
+
+    return [...filtered].sort((a, b) => {
+      const groupIdA = requestConflictGroupById.get(a.id) ?? null;
+      const groupIdB = requestConflictGroupById.get(b.id) ?? null;
+
+      if (groupIdA && groupIdB) {
+        if (groupIdA !== groupIdB) {
+          const groupA = conflictGroupById.get(groupIdA);
+          const groupB = conflictGroupById.get(groupIdB);
+
+          if (groupA && groupB) {
+            const byWindow = toTimestamp(groupA.windowStartAt) - toTimestamp(groupB.windowStartAt);
+            if (byWindow !== 0) {
+              return byWindow;
+            }
+
+            const byGroupSize = groupB.requests.length - groupA.requests.length;
+            if (byGroupSize !== 0) {
+              return byGroupSize;
+            }
+          }
+
+          return groupIdA.localeCompare(groupIdB);
+        }
+
+        return compareRequestsByStartThenCreated(a, b);
+      }
+
+      if (groupIdA && !groupIdB) {
+        return -1;
+      }
+
+      if (!groupIdA && groupIdB) {
+        return 1;
+      }
+
+      const byCreated = toTimestamp(b.createdAt) - toTimestamp(a.createdAt);
+      if (byCreated !== 0) {
+        return byCreated;
+      }
+
+      return b.id - a.id;
+    });
+  }, [
+    canDirectReviewQueue,
+    conflictGroupById,
+    conflictRequestIdSet,
+    focusedConflictGroupId,
+    requestConflictGroupById,
+    requests,
+    showConflictOnly,
+  ]);
+
+  const firstVisibleRequestIdByGroup = useMemo(() => {
+    const firstByGroup = new Map<string, number>();
+
+    for (const requestItem of requestsForDisplay) {
+      const groupId = requestConflictGroupById.get(requestItem.id);
+
+      if (groupId && !firstByGroup.has(groupId)) {
+        firstByGroup.set(groupId, requestItem.id);
+      }
+    }
+
+    return firstByGroup;
+  }, [requestConflictGroupById, requestsForDisplay]);
 
   useEffect(() => {
     if (
@@ -374,6 +619,37 @@ export function BookingRequestsPage({
       setActiveSection("requests");
     }
   }, [activeSection, canCreate]);
+
+  useEffect(() => {
+    if (!canDirectReviewQueue) {
+      setShowConflictOnly(false);
+      setFocusedConflictGroupId(null);
+      return;
+    }
+
+    if (focusedConflictGroupId && !conflictGroupById.has(focusedConflictGroupId)) {
+      setFocusedConflictGroupId(null);
+    }
+  }, [canDirectReviewQueue, conflictGroupById, focusedConflictGroupId]);
+
+  useEffect(() => {
+    if (!canDirectReviewQueue) {
+      return;
+    }
+
+    if ((showConflictOnly || focusedConflictGroupId) && statusFilter !== "PENDING_STAFF") {
+      setStatusFilter("PENDING_STAFF");
+    }
+
+    if (showConflictOnly || focusedConflictGroupId) {
+      setHasRequestedFullRequests(true);
+    }
+  }, [
+    canDirectReviewQueue,
+    focusedConflictGroupId,
+    showConflictOnly,
+    statusFilter,
+  ]);
 
   const roomNameById = new Map(rooms.map((r) => [r.id, formatRoomDisplayWithBuildingsArray(r, buildings)]));
   const roomById = useMemo(() => new Map(rooms.map((room) => [room.id, room])), [rooms]);
@@ -409,16 +685,21 @@ export function BookingRequestsPage({
     setLoading(true);
     setError(null);
     try {
-      if (filter === "ALL") {
-        const rows = await getBookingRequests();
-        setRequests(
-          isRecentRequestsMode
-            ? rows.slice(0, RECENT_REQUESTS_LIMIT)
-            : rows,
-        );
-      } else {
-        setRequests(await getBookingRequests(filter));
-      }
+      const [rows, pendingStaffRows] = await Promise.all([
+        filter === "ALL"
+          ? getBookingRequests()
+          : getBookingRequests(filter),
+        canDirectReviewQueue
+          ? getBookingRequests("PENDING_STAFF")
+          : Promise.resolve([] as BookingRequest[]),
+      ]);
+
+      setRequests(
+        filter === "ALL" && isRecentRequestsMode
+          ? rows.slice(0, RECENT_REQUESTS_LIMIT)
+          : rows,
+      );
+      setReviewQueueRequests(pendingStaffRows);
     } catch (e) {
       setError(formatError(e, "Failed to load booking requests"));
     } finally {
@@ -486,7 +767,7 @@ export function BookingRequestsPage({
 
   useEffect(() => {
     void loadRequests(statusFilter);
-  }, [statusFilter, isRecentRequestsMode]);
+  }, [canDirectReviewQueue, statusFilter, isRecentRequestsMode]);
 
   useEffect(() => {
     if (!isAdmin) {
@@ -572,6 +853,7 @@ export function BookingRequestsPage({
     setStartAt(effectivePrefill.startAt);
     setEndAt(effectivePrefill.endAt);
     setPurpose(effectivePrefill.purpose ?? "");
+    setEditingSourceRequestId(null);
     setError(null);
     setPrefillMessage("Form prefilled from availability results.");
     onPrefillApplied?.();
@@ -589,7 +871,26 @@ export function BookingRequestsPage({
     setEventType("OTHER");
     setPurpose("");
     setParticipantCount("");
+    setEditingSourceRequestId(null);
     setPrefillMessage(null);
+  };
+
+  const beginEditRequest = (requestToEdit: BookingRequest) => {
+    setRoomId(requestToEdit.roomId);
+    setFacultyId(requestToEdit.facultyId ?? "");
+    setStartAt(requestToEdit.startAt);
+    setEndAt(requestToEdit.endAt);
+    setEventType(requestToEdit.eventType);
+    setPurpose(requestToEdit.purpose);
+    setParticipantCount(
+      requestToEdit.participantCount === null ? "" : String(requestToEdit.participantCount),
+    );
+    setEditingSourceRequestId(requestToEdit.id);
+    setError(null);
+    setPrefillMessage(
+      `Editing request #${requestToEdit.id}. Save changes to update directly when allowed, otherwise submit for re-approval.`,
+    );
+    setActiveSection("new-request");
   };
 
   const handleOpenFinderSelection = (option: BandFinderOption) => {
@@ -999,27 +1300,61 @@ export function BookingRequestsPage({
         payload.facultyId = Number(facultyId);
       }
 
-      try {
-        await createBookingRequest(payload);
-      } catch (error) {
-        if (!isHolidayWarningError(error)) {
-          throw error;
+      if (editingSourceRequestId !== null) {
+        const applyRequestChange = async (overrideHolidayWarning?: boolean) =>
+          changeBookingRequest({
+            sourceRequestId: editingSourceRequestId,
+            ...payload,
+            ...(overrideHolidayWarning ? { overrideHolidayWarning: true } : {}),
+          });
+
+        let changeResult;
+
+        try {
+          changeResult = await applyRequestChange();
+        } catch (error) {
+          if (!isHolidayWarningError(error)) {
+            throw error;
+          }
+
+          const continueAnyway = window.confirm(buildHolidayWarningPrompt(error));
+
+          if (!continueAnyway) {
+            return;
+          }
+
+          changeResult = await applyRequestChange(true);
         }
 
-        const continueAnyway = window.confirm(buildHolidayWarningPrompt(error));
-
-        if (!continueAnyway) {
-          return;
+        if (changeResult.mode === "UPDATED_EXISTING_REQUEST") {
+          pushToast("success", "Request updated successfully");
+        } else {
+          pushToast("info", "Request changes submitted for re-approval");
         }
+      } else {
+        try {
+          await createBookingRequest(payload);
+        } catch (error) {
+          if (!isHolidayWarningError(error)) {
+            throw error;
+          }
 
-        await createBookingRequest({
-          ...payload,
-          overrideHolidayWarning: true,
-        });
+          const continueAnyway = window.confirm(buildHolidayWarningPrompt(error));
+
+          if (!continueAnyway) {
+            return;
+          }
+
+          await createBookingRequest({
+            ...payload,
+            overrideHolidayWarning: true,
+          });
+        }
       }
 
       clearRequestForm();
       await loadRequests(statusFilter);
+      setActiveSection("requests");
     } catch (e) {
       setError(formatError(e, "Failed to create request"));
     } finally {
@@ -1136,27 +1471,21 @@ export function BookingRequestsPage({
         </p>
       </div>
 
-      <div className="alert">
-        Data mode: {preferences.manualDataLoading ? "Manual" : "Automatic"}. Admins can update this globally from System Loading settings.
-      </div>
-
       {isRecentRequestsMode && (
         <div className="alert">
-          Showing recent booking requests (up to {RECENT_REQUESTS_LIMIT} rows). Use filters for targeted views, or load full history when needed.
+          Showing recent booking requests (up to {RECENT_REQUESTS_LIMIT} rows). Use filters for targeted views, or load more when needed.
           <button
             type="button"
             className="btn btn-ghost btn-sm"
             style={{ marginLeft: "var(--space-2)" }}
             onClick={() => setHasRequestedFullRequests(true)}
           >
-            Load Full Request History
+            Load More Requests
           </button>
         </div>
       )}
 
       {!isRecentRequestsMode &&
-        preferences.manualDataLoading &&
-        !sectionAutoLoad &&
         statusFilter === "ALL" &&
         hasRequestedFullRequests && (
           <div className="alert">
@@ -1235,6 +1564,121 @@ export function BookingRequestsPage({
             Reset Filter
           </Button>
         </div>
+      )}
+
+      {activeSection === "requests" && canDirectReviewQueue && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Conflict Review Queue</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="secondary">
+                Pending Staff Review: {reviewablePendingCount}
+              </Badge>
+              <Badge variant={conflictGroups.length > 0 ? "destructive" : "outline"}>
+                Conflict Groups: {conflictGroups.length}
+              </Badge>
+              <Badge variant={conflictRequestIdSet.size > 0 ? "destructive" : "outline"}>
+                Conflicting Requests: {conflictRequestIdSet.size}
+              </Badge>
+              <Badge variant="outline">
+                Non-Conflicting Pending: {nonConflictingPendingCount}
+              </Badge>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant={showConflictOnly ? "default" : "outline"}
+                onClick={() => {
+                  if (!showConflictOnly) {
+                    setStatusFilter("PENDING_STAFF");
+                    setHasRequestedFullRequests(true);
+                  }
+                  setFocusedConflictGroupId(null);
+                  setShowConflictOnly((current) => !current);
+                }}
+              >
+                {showConflictOnly ? "Show All Requests" : "Show Conflicts Only"}
+              </Button>
+
+              <Button
+                type="button"
+                size="sm"
+                variant={statusFilter === "PENDING_STAFF" ? "default" : "outline"}
+                onClick={() => {
+                  setShowConflictOnly(false);
+                  setFocusedConflictGroupId(null);
+                  setHasRequestedFullRequests(true);
+                  setStatusFilter("PENDING_STAFF");
+                }}
+              >
+                Pending Staff Only
+              </Button>
+
+              {statusFilter !== "ALL" && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setShowConflictOnly(false);
+                    setFocusedConflictGroupId(null);
+                    setStatusFilter("ALL");
+                  }}
+                >
+                  Reset To All Statuses
+                </Button>
+              )}
+
+              {focusedConflictGroupId && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setFocusedConflictGroupId(null)}
+                >
+                  Clear Group Focus
+                </Button>
+              )}
+            </div>
+
+            {conflictGroups.length === 0 ? (
+              <p className="text-sm text-gray-600">
+                No overlapping pending requests right now.
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {conflictGroups.map((group) => {
+                  const ordinal = conflictGroupOrdinalById.get(group.id) ?? 0;
+                  const roomLabel =
+                    roomNameById.get(group.roomId) ?? `Room #${group.roomId}`;
+
+                  return (
+                    <Button
+                      key={group.id}
+                      type="button"
+                      size="sm"
+                      variant={focusedConflictGroupId === group.id ? "default" : "outline"}
+                      onClick={() => {
+                        setStatusFilter("PENDING_STAFF");
+                        setHasRequestedFullRequests(true);
+                        setShowConflictOnly(false);
+                        setFocusedConflictGroupId((current) =>
+                          current === group.id ? null : group.id,
+                        );
+                      }}
+                    >
+                      Group {ordinal}: {roomLabel} ({group.requests.length})
+                    </Button>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       )}
 
       {/* Time-Band Finder */}
@@ -1447,7 +1891,11 @@ export function BookingRequestsPage({
       {canCreate && activeSection === "new-request" && (
         <Card>
           <CardHeader>
-            <CardTitle>New Request</CardTitle>
+            <CardTitle>
+              {editingSourceRequestId === null
+                ? "New Request"
+                : `Edit Request #${editingSourceRequestId}`}
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleCreate} className="space-y-4">
@@ -1595,7 +2043,11 @@ export function BookingRequestsPage({
                     isSubmitting || (isStudent && facultyUsers.length === 0)
                   }
                 >
-                  {isSubmitting ? "Submitting..." : "Submit Request"}
+                  {isSubmitting
+                    ? "Submitting..."
+                    : editingSourceRequestId === null
+                      ? "Submit Request"
+                      : "Save Request Changes"}
                 </Button>
                 <Button
                   type="button"
@@ -1611,7 +2063,7 @@ export function BookingRequestsPage({
                   disabled={isSubmitting}
                   onClick={clearRequestForm}
                 >
-                  Clear Form
+                  {editingSourceRequestId === null ? "Clear Form" : "Cancel Edit"}
                 </Button>
               </div>
             </form>
@@ -1635,14 +2087,18 @@ export function BookingRequestsPage({
       {activeSection === "requests" && loading && (
         <p className="text-gray-600 text-center py-8">Loading requests...</p>
       )}
-      {activeSection === "requests" && !loading && requests.length === 0 && (
-        <p className="text-gray-600 text-center py-8">No booking requests found.</p>
+      {activeSection === "requests" && !loading && requestsForDisplay.length === 0 && (
+        <p className="text-gray-600 text-center py-8">
+          {focusedConflictGroupId || showConflictOnly
+            ? "No booking requests match the current conflict review filters."
+            : "No booking requests found."}
+        </p>
       )}
 
       {/* Requests List */}
-      {activeSection === "requests" && !loading && requests.length > 0 && (
+      {activeSection === "requests" && !loading && requestsForDisplay.length > 0 && (
         <div className="space-y-4">
-          {requests.map((req) => {
+          {requestsForDisplay.map((req) => {
             const isPendingFaculty = req.status === "PENDING_FACULTY";
             const isPendingStaff = req.status === "PENDING_STAFF";
             const isApproved = req.status === "APPROVED";
@@ -1650,6 +2106,18 @@ export function BookingRequestsPage({
             const isOwnRequest = user ? req.userId === user.id : false;
             const isFacultyApprover = user ? req.facultyId === user.id : false;
             const isActing = actingId === req.id;
+            const conflictGroupId = requestConflictGroupById.get(req.id) ?? null;
+            const conflictGroup =
+              conflictGroupId === null
+                ? null
+                : conflictGroupById.get(conflictGroupId) ?? null;
+            const conflictGroupOrdinal =
+              conflictGroupId === null
+                ? null
+                : conflictGroupOrdinalById.get(conflictGroupId) ?? null;
+            const isFirstVisibleInConflictGroup =
+              conflictGroupId !== null &&
+              firstVisibleRequestIdByGroup.get(conflictGroupId) === req.id;
 
             const canForward = currentRole === "FACULTY" && isPendingFaculty;
             const canApprove =
@@ -1662,8 +2130,23 @@ export function BookingRequestsPage({
             const canCancel =
               (currentRole === "ADMIN" || isOwnRequest || isFacultyApprover) &&
               isCancellableStatus;
+            const canEditRequest =
+              ((currentRole === "STUDENT" && isOwnRequest) ||
+                (currentRole === "FACULTY" && (isOwnRequest || isFacultyApprover))) &&
+              isCancellableStatus;
+            const willEditUpdateDirectly =
+              canEditRequest &&
+              req.status !== "APPROVED" &&
+              !(
+                req.status === "PENDING_STAFF" &&
+                (currentRole === "STUDENT" || (currentRole === "FACULTY" && !isOwnRequest))
+              );
+            const editRequestHint = willEditUpdateDirectly
+              ? "Will update directly"
+              : "Will go for re-approval";
 
-            const hasActions = canForward || canApprove || canReject || canCancel;
+            const hasActions =
+              canEditRequest || canForward || canApprove || canReject || canCancel;
             const requestedByLabel =
               req.userId === null
                 ? "-"
@@ -1674,17 +2157,41 @@ export function BookingRequestsPage({
                 : (adminUserNameById[req.facultyId] ?? "Unknown User");
 
             return (
-              <Card key={req.id}>
-                <CardHeader>
-                  <div className="flex items-start justify-between">
-                    <CardTitle className="text-lg">
-                      Room Booking Request
-                    </CardTitle>
-                    <Badge variant={statusBadgeVariant(req.status)}>
-                      {STATUS_LABELS[req.status]}
-                    </Badge>
+              <div key={req.id} className="space-y-2">
+                {conflictGroup && isFirstVisibleInConflictGroup && (
+                  <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="font-semibold text-amber-900">
+                        Conflict Group {conflictGroupOrdinal ?? "-"}
+                      </p>
+                      <Badge variant="destructive">
+                        {conflictGroup.requests.length} overlapping requests
+                      </Badge>
+                    </div>
+                    <p className="mt-1 text-amber-800">
+                      {roomNameById.get(conflictGroup.roomId) ?? `Room #${conflictGroup.roomId}`} · {formatDateTimeDDMMYYYY(conflictGroup.windowStartAt)} to {formatDateTimeDDMMYYYY(conflictGroup.windowEndAt)}
+                    </p>
                   </div>
-                </CardHeader>
+                )}
+
+                <Card>
+                  <CardHeader>
+                    <div className="flex items-start justify-between">
+                      <CardTitle className="text-lg">
+                        Room Booking Request #{req.id}
+                      </CardTitle>
+                      <div className="flex items-center gap-2">
+                        {conflictGroupId !== null && (
+                          <Badge variant="destructive">
+                            Conflict Group {conflictGroupOrdinal ?? "-"}
+                          </Badge>
+                        )}
+                        <Badge variant={statusBadgeVariant(req.status)}>
+                          {STATUS_LABELS[req.status]}
+                        </Badge>
+                      </div>
+                    </div>
+                  </CardHeader>
                 <CardContent className="space-y-4">
                   {/* Request Details */}
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
@@ -1739,6 +2246,20 @@ export function BookingRequestsPage({
                   {/* Actions */}
                   {hasActions && (
                     <div className="border-t pt-4 flex flex-wrap gap-2">
+                      {canEditRequest && (
+                        <div className="flex flex-col gap-1">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={isActing || isSubmitting}
+                            onClick={() => beginEditRequest(req)}
+                          >
+                            Edit Request
+                          </Button>
+                          <p className="text-xs text-gray-500">{editRequestHint}</p>
+                        </div>
+                      )}
                       {canForward && (
                         <Button
                           type="button"
@@ -1798,7 +2319,8 @@ export function BookingRequestsPage({
                     </div>
                   )}
                 </CardContent>
-              </Card>
+                </Card>
+              </div>
             );
           })}
         </div>
