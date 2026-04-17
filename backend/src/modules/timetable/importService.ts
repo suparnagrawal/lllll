@@ -2623,6 +2623,36 @@ async function resetRowsForReallocation(
   };
 }
 
+export async function resetCommittedBatchRowsForReallocation(input: {
+  batchId: number;
+  rowIds: number[];
+}): Promise<{ deletedBookings: number }> {
+  const batchId = Number(input.batchId);
+
+  if (!Number.isInteger(batchId) || batchId <= 0) {
+    throw createServiceError(400, "Invalid batchId");
+  }
+
+  const [batch] = await db
+    .select({
+      id: timetableImportBatches.id,
+      status: timetableImportBatches.status,
+    })
+    .from(timetableImportBatches)
+    .where(eq(timetableImportBatches.id, batchId))
+    .limit(1);
+
+  if (!batch) {
+    throw createServiceError(404, "Import batch not found");
+  }
+
+  if (batch.status !== "COMMITTED") {
+    throw createServiceError(409, "Only committed batches can be reallocated");
+  }
+
+  return resetRowsForReallocation(batchId, input.rowIds ?? []);
+}
+
 export async function recomputeCommittedBatchRows(input: {
   batchId: number;
   rowIds: number[];
