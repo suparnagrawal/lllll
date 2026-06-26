@@ -314,6 +314,32 @@ export default function LoginPage() {
           </CardContent>
         </Card>
 
+        {/* Demo Credentials */}
+        <div className="mt-6 p-4 bg-indigo-50 border border-indigo-100 rounded-lg text-sm text-indigo-900 shadow-sm">
+          <p className="font-semibold mb-2 flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+            Demo Accounts (Password: password123)
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+            <div className="flex flex-col bg-white p-2 rounded border border-indigo-50">
+              <span className="font-medium text-indigo-700">Admin</span>
+              <span className="text-gray-600 font-mono mt-0.5">admin@iitj.ac.in</span>
+            </div>
+            <div className="flex flex-col bg-white p-2 rounded border border-indigo-50">
+              <span className="font-medium text-indigo-700">Staff</span>
+              <span className="text-gray-600 font-mono mt-0.5">staff.ops@iitj.ac.in</span>
+            </div>
+            <div className="flex flex-col bg-white p-2 rounded border border-indigo-50">
+              <span className="font-medium text-indigo-700">Faculty</span>
+              <span className="text-gray-600 font-mono mt-0.5">faculty.cs@iitj.ac.in</span>
+            </div>
+            <div className="flex flex-col bg-white p-2 rounded border border-indigo-50">
+              <span className="font-medium text-indigo-700">Student</span>
+              <span className="text-gray-600 font-mono mt-0.5">student.alice@iitj.ac.in</span>
+            </div>
+          </div>
+        </div>
+
         {/* Footer Links */}
         <div className="mt-8 text-center space-y-4">
           <p className="text-sm text-gray-600">
