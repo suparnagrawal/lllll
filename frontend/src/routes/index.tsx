@@ -38,6 +38,8 @@ const AuthSetupPage = lazy(() => import('../pages/AuthSetupPage'));
 // eslint-disable-next-line react-refresh/only-export-components
 const LoginPage = lazy(() => import('../pages/LoginPage'));
 // eslint-disable-next-line react-refresh/only-export-components
+const DemoPage = lazy(() => import('../pages/DemoPage'));
+// eslint-disable-next-line react-refresh/only-export-components
 const ProfilePage = lazy(() => import('../pages/ProfilePage'));
 // eslint-disable-next-line react-refresh/only-export-components
 const ProfileSetupPage = lazy(() => import('../pages/ProfileSetupPage'));
@@ -143,6 +145,10 @@ export const router = createBrowserRouter([
   {
     path: '/login',
     element: <Suspense fallback={<PageLoader />}><LoginPage /></Suspense>,
+  },
+  {
+    path: '/demo',
+    element: <Suspense fallback={<PageLoader />}><DemoPage /></Suspense>,
   },
   {
     path: '*',

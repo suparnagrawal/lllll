@@ -18,6 +18,7 @@ import {
   startGoogleOAuthLogin,
   setOnUnauthorized,
   refreshAccessToken,
+  demoLogin as apiDemoLogin,
   type SetupRole,
 } from "../lib/api";
 import type { AuthUser } from "../lib/api";
@@ -29,6 +30,7 @@ type AuthContextValue = {
   isLoading: boolean;
   isAuthenticated: boolean;
   login: (email: string, password: string, authProvider?: string) => Promise<void>;
+  demoLogin: (role: string) => Promise<void>;
   loginWithGoogle: () => Promise<void>;
   loginWithToken: (token: string) => Promise<void>;
   completeSetup: (setupToken: string, role: SetupRole, department?: string) => Promise<void>;
@@ -191,6 +193,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(LAST_ACTIVITY_KEY, String(lastActivityRef.current));
   }, []);
 
+  const demoLogin = useCallback(async (role: string) => {
+    const loggedInUser = await apiDemoLogin(role);
+    setUser(loggedInUser);
+    lastActivityRef.current = Date.now();
+    localStorage.setItem(LAST_ACTIVITY_KEY, String(lastActivityRef.current));
+  }, []);
+
   const loginWithGoogle = useCallback(async () => {
     await startGoogleOAuthLogin();
   }, []);
@@ -240,13 +249,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isLoading,
       isAuthenticated: user !== null,
       login,
+      demoLogin,
       loginWithGoogle,
       loginWithToken,
       completeSetup,
       logout,
       refreshToken,
     }),
-    [user, isLoading, login, loginWithGoogle, loginWithToken, completeSetup, logout, refreshToken]
+    [user, isLoading, login, demoLogin, loginWithGoogle, loginWithToken, completeSetup, logout, refreshToken]
   );
 
   return (

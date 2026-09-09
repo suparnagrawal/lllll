@@ -491,4 +491,56 @@ router.post("/refresh", async (req, res) => {
   }
 });
 
+// ------------------------
+// POST /auth/demo-login
+// ------------------------
+router.post("/demo-login", async (req, res) => {
+  try {
+    const role = req.body?.role?.toUpperCase();
+    
+    if (!["ADMIN", "FACULTY", "STUDENT"].includes(role)) {
+      return res.status(400).json({ message: "Invalid demo role" });
+    }
+
+    let email = "";
+    if (role === "ADMIN") email = "admin@iitj.ac.in";
+    if (role === "FACULTY") email = "faculty.cs@iitj.ac.in";
+    if (role === "STUDENT") email = "student.alice@iitj.ac.in";
+
+    const rows = await db
+      .select()
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
+
+    const user = rows[0];
+
+    if (!user) {
+      return res.status(404).json({ message: "Demo user not found" });
+    }
+
+    if (!user.isActive) {
+      return res.status(403).json({ message: "Your account is inactive" });
+    }
+
+    const accessToken = signAuthToken({ id: user.id, role: user.role });
+    const refreshToken = signRefreshToken({ id: user.id, role: user.role as Exclude<typeof user.role, "PENDING_ROLE"> });
+
+    return res.json({
+      accessToken,
+      refreshToken,
+      user: {
+        id: user.id,
+        name: user.displayName ?? user.name,
+        role: user.role,
+      },
+      authProvider: "demo",
+    });
+
+  } catch (error) {
+    logger.error(error);
+    return res.status(500).json({ message: "Demo login failed" });
+  }
+});
+
 export default router;

@@ -123,6 +123,7 @@ export {
 // Auth endpoints
 export {
   login,
+  demoLogin,
   startGoogleOAuthLogin,
   loginWithOAuthToken,
   completeOAuthSetup,

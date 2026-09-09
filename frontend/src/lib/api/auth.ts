@@ -113,3 +113,14 @@ export async function completeOAuthSetup(input: {
 
   return loginResponse.user;
 }
+
+export async function demoLogin(role: string): Promise<AuthUser> {
+  const response = await request<LoginResponse>("/auth/demo-login", {
+    method: "POST",
+    body: JSON.stringify({ role }),
+  });
+
+  setAuthSession(response.accessToken, response.refreshToken, response.user);
+
+  return response.user;
+}
