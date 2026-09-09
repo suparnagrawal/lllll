@@ -2,12 +2,12 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../context/ToastContext';
-import { CalendarDays, CheckCircle2, LayoutDashboard, Search, Settings2, ShieldCheck, Users } from 'lucide-react';
+import { CalendarDays, CheckCircle2, Search, Settings2, ShieldCheck } from 'lucide-react';
 
 export default function DemoPage() {
   const { demoLogin } = useAuth();
   const navigate = useNavigate();
-  const { addToast } = useToast();
+  const { pushToast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
 
   const handleEnterDemo = async () => {
@@ -17,11 +17,10 @@ export default function DemoPage() {
       await demoLogin('ADMIN');
       navigate('/');
     } catch (error) {
-      addToast({
-        title: 'Demo Login Failed',
-        description: error instanceof Error ? error.message : 'Unknown error occurred',
-        type: 'error',
-      });
+      pushToast(
+        'error',
+        error instanceof Error ? error.message : 'Unknown error occurred'
+      );
       setIsLoading(false);
     }
   };
